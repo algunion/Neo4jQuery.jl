@@ -57,7 +57,7 @@ println(result.counters)        # QueryCounters(nodes_created=1, ...)
 
 # Read it back with the @cypher_str macro
 name = "Alice"
-q = cypher"MATCH (p:Person {name: \$name}) RETURN p.name AS name, p.age AS age"
+q = cypher"MATCH (p:Person {name: $name}) RETURN p.name AS name, p.age AS age"
 result = query(conn, q; access_mode=:read)
 println(result[1].name)         # "Alice"
 ```

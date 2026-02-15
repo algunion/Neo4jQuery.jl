@@ -26,6 +26,10 @@ end
 Create a [`CypherQuery`](@ref) from a Cypher string literal, automatically
 capturing local variables referenced with `\$` as query parameters.
 
+Julia does **not** interpolate `\$` inside non-standard string literals, so the
+`\$` is passed through verbatim and the macro can detect it as a Cypher
+parameter reference.
+
 # Example
 ```julia
 name = "Alice"
@@ -39,11 +43,13 @@ The resulting query uses parameterised Cypher, which is both safer (no injection
 and faster (query plan caching).
 """
 macro cypher_str(s)
-    # In non-standard string literals, `\$` is kept verbatim as two chars `\` + `$`.
+    # In non-standard string literals, bare `$` is NOT interpolated by Julia —
+    # it is passed through as a literal character.  The legacy `\$` form (backslash
+    # + dollar) is also supported for backward compatibility.
     # We match both `\$ident` and `$ident` patterns as Cypher parameter references.
     param_names = unique([m.captures[1] for m in eachmatch(r"\\?\$([a-zA-Z_][a-zA-Z0-9_]*)", s)])
 
-    # Clean the statement: strip the backslash before $ so Cypher sees `$name`
+    # Clean the statement: strip any backslash before $ so Cypher sees `$name`
     clean = replace(s, r"\\\$" => "\$")
 
     # Build the parameters dict expression at runtime using the caller's scope

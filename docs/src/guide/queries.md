@@ -22,12 +22,12 @@ result = query(conn,
 
 ### The `@cypher_str` macro
 
-A safer, more ergonomic approach — local variables prefixed with `\$` are automatically captured:
+A safer, more ergonomic approach — local variables prefixed with `$` are automatically captured:
 
 ```julia
 name = "Alice"
 age = 30
-q = cypher"CREATE (p:Person {name: \$name, age: \$age}) RETURN p"
+q = cypher"CREATE (p:Person {name: $name, age: $age}) RETURN p"
 result = query(conn, q)
 ```
 

@@ -33,7 +33,7 @@ end
 
 # Parameterised query
 name = "Alice"
-q = cypher"MATCH (p:Person {name: \$name}) RETURN p"
+q = cypher"MATCH (p:Person {name: $name}) RETURN p"
 result = query(conn, q)
 ```
 
