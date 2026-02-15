@@ -13,7 +13,23 @@ rollback!(tx)
     statement=&quot;CREATE (n:Init) RETURN n&quot;,
     parameters=Dict{String,Any}())</code></pre><h3 id="Final-statement-on-commit"><a class="docs-heading-anchor" href="#Final-statement-on-commit">Final statement on commit</a><a id="Final-statement-on-commit-1"></a><a class="docs-heading-anchor-permalink" href="#Final-statement-on-commit" title="Permalink"></a></h3><p><code>commit!</code> can run a final statement atomically with the commit:</p><pre><code class="language-julia hljs">bookmarks = commit!(tx;
     statement=&quot;CREATE (n:Final) RETURN n&quot;,
-    parameters=Dict{String,Any}())</code></pre><h2 id="Do-block-(recommended)"><a class="docs-heading-anchor" href="#Do-block-(recommended)">Do-block (recommended)</a><a id="Do-block-(recommended)-1"></a><a class="docs-heading-anchor-permalink" href="#Do-block-(recommended)" title="Permalink"></a></h2><p>The safest pattern — auto-commits on success, auto-rolls-back on exception:</p><pre><code class="language-julia hljs">transaction(conn) do tx
+    parameters=Dict{String,Any}())</code></pre><h3 id="Using-@cypher_str-in-transactions"><a class="docs-heading-anchor" href="#Using-@cypher_str-in-transactions">Using <code>@cypher_str</code> in transactions</a><a id="Using-@cypher_str-in-transactions-1"></a><a class="docs-heading-anchor-permalink" href="#Using-@cypher_str-in-transactions" title="Permalink"></a></h3><p>The <code>@cypher_str</code> macro works seamlessly within transactions:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn)
+
+name = &quot;Alice&quot;
+age = 30
+result = query(tx, cypher&quot;CREATE (p:Person {name: $name, age: $age}) RETURN p&quot;)
+
+name = &quot;Bob&quot;
+age = 25
+query(tx, cypher&quot;CREATE (p:Person {name: $name, age: $age}) RETURN p&quot;)
+
+# Create a relationship between them
+query(tx, &quot;&quot;&quot;
+    MATCH (a:Person {name: &#39;Alice&#39;}), (b:Person {name: &#39;Bob&#39;})
+    CREATE (a)-[:KNOWS {since: 2024}]-&gt;(b)
+&quot;&quot;&quot;)
+
+bookmarks = commit!(tx)</code></pre><h2 id="Do-block-(recommended)"><a class="docs-heading-anchor" href="#Do-block-(recommended)">Do-block (recommended)</a><a id="Do-block-(recommended)-1"></a><a class="docs-heading-anchor-permalink" href="#Do-block-(recommended)" title="Permalink"></a></h2><p>The safest pattern — auto-commits on success, auto-rolls-back on exception:</p><pre><code class="language-julia hljs">transaction(conn) do tx
     query(tx, &quot;CREATE (a:Person {name: &#39;Alice&#39;})&quot;)
     query(tx, &quot;CREATE (b:Person {name: &#39;Bob&#39;})&quot;)
     query(tx, &quot;&quot;&quot;
@@ -27,10 +43,34 @@ end</code></pre><p>If any exception occurs inside the block, the transaction is 
     end
 catch e
     # Transaction was rolled back — no :Temp node was created
-end</code></pre><h2 id="Transaction-state"><a class="docs-heading-anchor" href="#Transaction-state">Transaction state</a><a id="Transaction-state-1"></a><a class="docs-heading-anchor-permalink" href="#Transaction-state" title="Permalink"></a></h2><p>The <code>Transaction</code> struct tracks its lifecycle:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn)
+end</code></pre><h3 id="Complete-example-using-do-block"><a class="docs-heading-anchor" href="#Complete-example-using-do-block">Complete example using do-block</a><a id="Complete-example-using-do-block-1"></a><a class="docs-heading-anchor-permalink" href="#Complete-example-using-do-block" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Build a small graph atomically
+transaction(conn) do tx
+    # Create people
+    query(tx, &quot;CREATE (a:Person {name: \$name, age: \$age})&quot;,
+        parameters=Dict{String,Any}(&quot;name&quot; =&gt; &quot;Alice&quot;, &quot;age&quot; =&gt; 30))
+    query(tx, &quot;CREATE (b:Person {name: \$name, age: \$age})&quot;,
+        parameters=Dict{String,Any}(&quot;name&quot; =&gt; &quot;Bob&quot;, &quot;age&quot; =&gt; 25))
+    query(tx, &quot;CREATE (c:Person {name: \$name, age: \$age})&quot;,
+        parameters=Dict{String,Any}(&quot;name&quot; =&gt; &quot;Carol&quot;, &quot;age&quot; =&gt; 35))
+
+    # Create relationships
+    query(tx, &quot;&quot;&quot;
+        MATCH (a:Person {name: &#39;Alice&#39;}), (b:Person {name: &#39;Bob&#39;})
+        CREATE (a)-[:KNOWS {since: 2020}]-&gt;(b)
+    &quot;&quot;&quot;)
+    query(tx, &quot;&quot;&quot;
+        MATCH (a:Person {name: &#39;Alice&#39;}), (c:Person {name: &#39;Carol&#39;})
+        CREATE (a)-[:KNOWS {since: 2022}]-&gt;(c)
+    &quot;&quot;&quot;)
+end
+# All five operations commit together, or none do</code></pre><h2 id="Transaction-state"><a class="docs-heading-anchor" href="#Transaction-state">Transaction state</a><a id="Transaction-state-1"></a><a class="docs-heading-anchor-permalink" href="#Transaction-state" title="Permalink"></a></h2><p>The <code>Transaction</code> struct tracks its lifecycle:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn)
 # tx.committed == false, tx.rolled_back == false
 
 commit!(tx)
 # tx.committed == true
 
-# Subsequent queries on a committed/rolled-back tx will error</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../queries/">« Queries</a><a class="docs-footer-nextpage" href="../streaming/">Streaming »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Sunday 15 February 2026 15:36">Sunday 15 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+# Subsequent queries on a committed/rolled-back tx will error</code></pre><p>Attempting to use a committed or rolled-back transaction raises an error:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn)
+commit!(tx)
+
+# This will throw an error:
+# query(tx, &quot;RETURN 1&quot;)  # &quot;Transaction tx-123 has already been committed&quot;</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../queries/">« Queries</a><a class="docs-footer-nextpage" href="../streaming/">Streaming »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Sunday 15 February 2026 15:53">Sunday 15 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
