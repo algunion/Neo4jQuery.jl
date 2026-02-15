@@ -175,7 +175,20 @@ Recursively compile a Julia WHERE expression into a Cypher condition string.
 - String/number/boolean literals are emitted directly
 - Function calls: `startswith(a, b)` → `a STARTS WITH b`, etc.
 """
-function _condition_to_cypher(expr, params::Vector{Symbol})::String
+function _capture_param!(params::Vector{Symbol}, varname::Symbol,
+    seen::Union{Nothing,Dict{Symbol,Nothing}}=nothing)
+    if seen === nothing
+        varname ∉ params && push!(params, varname)
+        return
+    end
+    if !haskey(seen, varname)
+        seen[varname] = nothing
+        push!(params, varname)
+    end
+end
+
+function _condition_to_cypher(expr, params::Vector{Symbol},
+    seen::Union{Nothing,Dict{Symbol,Nothing}}=nothing)::String
     # Property access: p.age → "p.age"
     if expr isa Expr && expr.head == :.
         obj = expr.args[1]
@@ -187,21 +200,21 @@ function _condition_to_cypher(expr, params::Vector{Symbol})::String
     # Parameter reference: $var → "\$var" and capture
     if expr isa Expr && expr.head == :$
         varname = expr.args[1]::Symbol
-        varname ∉ params && push!(params, varname)
+        _capture_param!(params, varname, seen)
         return "\$$(varname)"
     end
 
     # Boolean AND
     if expr isa Expr && expr.head == :&&
-        lhs = _condition_to_cypher(expr.args[1], params)
-        rhs = _condition_to_cypher(expr.args[2], params)
+        lhs = _condition_to_cypher(expr.args[1], params, seen)
+        rhs = _condition_to_cypher(expr.args[2], params, seen)
         return "$lhs AND $rhs"
     end
 
     # Boolean OR (wrap in parens for precedence safety)
     if expr isa Expr && expr.head == :||
-        lhs = _condition_to_cypher(expr.args[1], params)
-        rhs = _condition_to_cypher(expr.args[2], params)
+        lhs = _condition_to_cypher(expr.args[1], params, seen)
+        rhs = _condition_to_cypher(expr.args[2], params, seen)
         return "($lhs OR $rhs)"
     end
 
@@ -211,20 +224,20 @@ function _condition_to_cypher(expr, params::Vector{Symbol})::String
 
         # Unary NOT: !(expr) → NOT (expr)
         if op == :(!) && length(expr.args) == 2
-            inner = _condition_to_cypher(expr.args[2], params)
+            inner = _condition_to_cypher(expr.args[2], params, seen)
             return "NOT ($inner)"
         end
 
         # Unary negation: -(expr) → -(expr)
         if op == :(-) && length(expr.args) == 2
-            inner = _condition_to_cypher(expr.args[2], params)
+            inner = _condition_to_cypher(expr.args[2], params, seen)
             return "-$inner"
         end
 
         # Binary operators
         if length(expr.args) == 3
-            lhs = _condition_to_cypher(expr.args[2], params)
-            rhs = _condition_to_cypher(expr.args[3], params)
+            lhs = _condition_to_cypher(expr.args[2], params, seen)
+            rhs = _condition_to_cypher(expr.args[3], params, seen)
 
             cypher_op = _julia_op_to_cypher(op)
             if cypher_op !== nothing
@@ -248,13 +261,13 @@ function _condition_to_cypher(expr, params::Vector{Symbol})::String
 
         # IS NULL: isnothing(p.email) → p.email IS NULL
         if op == :isnothing && length(expr.args) == 2
-            inner = _condition_to_cypher(expr.args[2], params)
+            inner = _condition_to_cypher(expr.args[2], params, seen)
             return "$inner IS NULL"
         end
 
         # N-ary function calls: count(x), sum(x), avg(x), etc.
         if length(expr.args) >= 2
-            fn_args = [_condition_to_cypher(a, params) for a in expr.args[2:end]]
+            fn_args = [_condition_to_cypher(a, params, seen) for a in expr.args[2:end]]
             return "$(op)($(join(fn_args, ", ")))"
         end
     end
@@ -262,7 +275,7 @@ function _condition_to_cypher(expr, params::Vector{Symbol})::String
     # Parenthesized expression (Julia sometimes wraps in extra parens)
     if expr isa Expr && expr.head == :block
         inner = _unwrap_block(expr)
-        return _condition_to_cypher(inner, params)
+        return _condition_to_cypher(inner, params, seen)
     end
 
     # ── Literals ─────────────────────────────────────────────────────────────
@@ -299,7 +312,7 @@ function _condition_to_cypher(expr, params::Vector{Symbol})::String
 
     # Vector literal: [a, b, c] → [a, b, c]
     if expr isa Expr && expr.head == :vect
-        items = [_condition_to_cypher(a, params) for a in expr.args]
+        items = [_condition_to_cypher(a, params, seen) for a in expr.args]
         return "[$(join(items, ", "))]"
     end
 
@@ -459,9 +472,14 @@ Compile a SET assignment expression to Cypher.
 Handles: `p.age = \$new_age` → `p.age = \$new_age`
 """
 function _set_to_cypher(expr, params::Vector{Symbol})::String
+    return _set_to_cypher(expr, params, nothing)
+end
+
+function _set_to_cypher(expr, params::Vector{Symbol},
+    seen::Union{Nothing,Dict{Symbol,Nothing}})::String
     if expr isa Expr && expr.head == :(=)
         lhs = _expr_to_cypher(expr.args[1])
-        rhs = _condition_to_cypher(expr.args[2], params)
+        rhs = _condition_to_cypher(expr.args[2], params, seen)
         return "$lhs = $rhs"
     end
     error("Invalid SET expression: $(repr(expr)). Expected: property = value")
@@ -496,8 +514,13 @@ _with_to_cypher(expr) = _return_to_cypher(expr)
 Compile UNWIND: `\$items => :item` → `\$items AS item`
 """
 function _unwind_to_cypher(expr, params::Vector{Symbol})::String
+    return _unwind_to_cypher(expr, params, nothing)
+end
+
+function _unwind_to_cypher(expr, params::Vector{Symbol},
+    seen::Union{Nothing,Dict{Symbol,Nothing}})::String
     if expr isa Expr && expr.head == :call && expr.args[1] == :(=>)
-        source = _condition_to_cypher(expr.args[2], params)
+        source = _condition_to_cypher(expr.args[2], params, seen)
         alias = expr.args[3]
         alias_str = alias isa QuoteNode ? string(alias.value) : string(alias)
         return "$source AS $alias_str"
@@ -513,17 +536,22 @@ end
 Compile LIMIT/SKIP value — integer literal or parameter reference.
 """
 function _limit_skip_to_cypher(expr, params::Vector{Symbol})::String
+    return _limit_skip_to_cypher(expr, params, nothing)
+end
+
+function _limit_skip_to_cypher(expr, params::Vector{Symbol},
+    seen::Union{Nothing,Dict{Symbol,Nothing}})::String
     if expr isa Integer
         return string(expr)
     end
     if expr isa Expr && expr.head == :$
         varname = expr.args[1]::Symbol
-        varname ∉ params && push!(params, varname)
+        _capture_param!(params, varname, seen)
         return "\$$(varname)"
     end
     if expr isa Symbol
         # Could be a variable — treat as a parameter
-        expr ∉ params && push!(params, expr)
+        _capture_param!(params, expr, seen)
         return "\$$(expr)"
     end
     error("LIMIT/SKIP expects an integer or \$variable, got: $(repr(expr))")

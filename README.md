@@ -73,3 +73,17 @@ end access_mode=:read
 ## Documentation
 
 Full documentation is available at [algunion.github.io/Neo4jQuery.jl](https://algunion.github.io/Neo4jQuery.jl/dev/).
+
+## Performance Workflow
+
+Run the DSL micro-benchmarks to validate performance claims and compare changes:
+
+```julia
+julia --project=. benchmark/dsl_microbench.jl
+```
+
+This script reports timing and per-call allocations for:
+
+- `_condition_to_cypher` (expression compilation)
+- `@query` `macroexpand` (DSL expansion cost)
+- `_build_query_body` (runtime request payload assembly)
