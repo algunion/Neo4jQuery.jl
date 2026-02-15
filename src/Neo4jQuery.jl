@@ -20,6 +20,12 @@ include("transactions.jl")
 include("streaming.jl")
 include("env.jl")
 
+# ── DSL (depends on query.jl, types.jl) ────────────────────────────────────
+include("dsl/schema.jl")
+include("dsl/compile.jl")
+include("dsl/query.jl")
+include("dsl/mutations.jl")
+
 # ── Public API ──────────────────────────────────────────────────────────────
 
 # Connection
@@ -48,5 +54,19 @@ export Node, Relationship, Path, CypherPoint, CypherDuration, CypherVector
 
 # Errors
 export Neo4jError, AuthenticationError, Neo4jQueryError, TransactionExpiredError
+
+# ── DSL API ─────────────────────────────────────────────────────────────────
+
+# Schema
+export PropertyDef, NodeSchema, RelSchema
+export @node, @rel
+export get_node_schema, get_rel_schema
+export validate_node_properties, validate_rel_properties
+
+# Query builder
+export @query
+
+# Standalone mutations
+export @create, @merge, @relate
 
 end
