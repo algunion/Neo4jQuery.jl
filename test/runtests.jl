@@ -1,9 +1,13 @@
 using Neo4jQuery
 using Neo4jQuery: materialize_typed, to_typed_json, _build_result, _build_query_body,
-    auth_header, query_url, tx_url
+    auth_header, query_url, tx_url, _parse_neo4j_uri, _parse_wkt, _to_wkt,
+    _parse_offset, _float_str, _materialize_properties, _try_parse, _extract_errors,
+    _props_str
 using JSON
 using Dates
+using TimeZones
 using Base64
+using HTTP
 using Test
 
 # Include DSL tests
@@ -278,6 +282,15 @@ include("jet_tests.jl")
         @test body2["includeCounters"] == true
         @test body2["bookmarks"] == ["bk:1"]
         @test haskey(body2, "parameters")
+
+        # impersonated_user
+        body3 = _build_query_body("RETURN 1", Dict{String,Any}();
+            impersonated_user="other_user")
+        @test body3["impersonatedUser"] == "other_user"
+
+        # write mode (default) should NOT include accessMode
+        body4 = _build_query_body("RETURN 1", Dict{String,Any}(); access_mode=:write)
+        @test !haskey(body4, "accessMode")
     end
 
     # ── Error types ─────────────────────────────────────────────────────────
@@ -290,9 +303,848 @@ include("jet_tests.jl")
 
         qe = Neo4jQueryError("Neo.ClientError.Statement.SyntaxError", "oops")
         @test qe isa Neo4jError
+        buf2 = IOBuffer()
+        showerror(buf2, qe)
+        err_str = String(take!(buf2))
+        @test contains(err_str, "oops")
+        @test contains(err_str, "SyntaxError")
 
         te = TransactionExpiredError("tx expired")
         @test te isa Neo4jError
+        buf3 = IOBuffer()
+        showerror(buf3, te)
+        @test contains(String(take!(buf3)), "tx expired")
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Extended coverage: typed_json edge cases
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "materialize_typed: Point (WKT)" begin
+        pt = materialize_typed(JSON.Object("\$type" => "Point", "_value" => "SRID=4326;POINT (12.5 34.7)"))
+        @test pt isa CypherPoint
+        @test pt.srid == 4326
+        @test pt.coordinates ≈ [12.5, 34.7]
+
+        # 3D point
+        pt3 = materialize_typed(JSON.Object("\$type" => "Point", "_value" => "SRID=9157;POINT (1.0 2.0 3.0)"))
+        @test pt3 isa CypherPoint
+        @test pt3.srid == 9157
+        @test length(pt3.coordinates) == 3
+    end
+
+    @testset "materialize_typed: Path" begin
+        path_data = JSON.Object(
+            "\$type" => "Path",
+            "_value" => [
+                JSON.Object(
+                    "\$type" => "Node",
+                    "_value" => JSON.Object(
+                        "_element_id" => "4:a:0",
+                        "_labels" => ["Person"],
+                        "_properties" => JSON.Object{String,Any}(),
+                    ),
+                ),
+                JSON.Object(
+                    "\$type" => "Relationship",
+                    "_value" => JSON.Object(
+                        "_element_id" => "5:r:0",
+                        "_start_node_element_id" => "4:a:0",
+                        "_end_node_element_id" => "4:b:0",
+                        "_type" => "KNOWS",
+                        "_properties" => JSON.Object{String,Any}(),
+                    ),
+                ),
+                JSON.Object(
+                    "\$type" => "Node",
+                    "_value" => JSON.Object(
+                        "_element_id" => "4:b:0",
+                        "_labels" => ["Person"],
+                        "_properties" => JSON.Object{String,Any}(),
+                    ),
+                ),
+            ],
+        )
+        path = materialize_typed(path_data)
+        @test path isa Path
+        @test length(path.elements) == 3
+        @test path.elements[1] isa Node
+        @test path.elements[2] isa Relationship
+        @test path.elements[3] isa Node
+    end
+
+    @testset "materialize_typed: Vector (CypherVector)" begin
+        vec_data = JSON.Object(
+            "\$type" => "Vector",
+            "_value" => JSON.Object(
+                "coordinatesType" => "float32",
+                "coordinates" => ["1.0", "2.0", "3.0"],
+            ),
+        )
+        vec = materialize_typed(vec_data)
+        @test vec isa CypherVector
+        @test vec.coordinates_type == "float32"
+        @test vec.coordinates == ["1.0", "2.0", "3.0"]
+    end
+
+    @testset "materialize_typed: Unsupported type passthrough" begin
+        result = materialize_typed(JSON.Object("\$type" => "Unsupported", "_value" => "raw_data"))
+        @test result == "raw_data"
+    end
+
+    @testset "materialize_typed: Unknown type passthrough" begin
+        result = materialize_typed(JSON.Object("\$type" => "FutureType", "_value" => "some_data"))
+        @test result == "some_data"
+    end
+
+    @testset "materialize_typed: plain dict recursion" begin
+        # Dict without $type is recursed into
+        result = materialize_typed(JSON.Object{String,Any}("key" => "value", "num" => 42))
+        @test result isa AbstractDict
+        @test result["key"] == "value"
+        @test result["num"] == 42
+    end
+
+    @testset "materialize_typed: AbstractDict dispatch" begin
+        # Regular Dict should be converted
+        result = materialize_typed(Dict{String,Any}("\$type" => "Integer", "_value" => "99"))
+        @test result === 99
+    end
+
+    @testset "materialize_typed: Integer from Number" begin
+        # When _value is already a number (not string)
+        result = materialize_typed(JSON.Object("\$type" => "Integer", "_value" => 42))
+        @test result === Int64(42)
+    end
+
+    @testset "materialize_typed: Float from Number" begin
+        result = materialize_typed(JSON.Object("\$type" => "Float", "_value" => 3.14))
+        @test result === Float64(3.14)
+    end
+
+    @testset "_parse_wkt" begin
+        pt = _parse_wkt("SRID=7203;POINT (1.2 3.4)")
+        @test pt.srid == 7203
+        @test pt.coordinates ≈ [1.2, 3.4]
+
+        # Invalid WKT
+        @test_throws ErrorException _parse_wkt("invalid")
+    end
+
+    @testset "_to_wkt" begin
+        pt = CypherPoint(4326, [12.5, 34.7])
+        @test _to_wkt(pt) == "SRID=4326;POINT (12.5 34.7)"
+    end
+
+    @testset "_parse_offset" begin
+        tz = _parse_offset("12:30:45+01:00")
+        @test tz isa TimeZones.FixedTimeZone
+
+        tz_utc = _parse_offset("12:30:45Z")
+        @test tz_utc isa TimeZones.FixedTimeZone
+
+        @test_throws ErrorException _parse_offset("no-offset-here")
+    end
+
+    @testset "_float_str edge cases" begin
+        @test _float_str(NaN) == "NaN"
+        @test _float_str(Inf) == "Infinity"
+        @test _float_str(-Inf) == "-Infinity"
+        @test _float_str(3.14) == "3.14"
+    end
+
+    @testset "_materialize_properties" begin
+        # Normal case
+        result = _materialize_properties(JSON.Object{String,Any}(
+            "name" => JSON.Object("\$type" => "String", "_value" => "Alice"),
+        ))
+        @test result["name"] == "Alice"
+
+        # Nothing case
+        result2 = _materialize_properties(nothing)
+        @test isempty(result2)
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Extended coverage: to_typed_json serialization
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "to_typed_json: ZonedDateTime" begin
+        zdt = TimeZones.ZonedDateTime(Dates.DateTime(2024, 1, 15, 12, 30), TimeZones.tz"UTC")
+        result = to_typed_json(zdt)
+        @test result["\$type"] == "OffsetDateTime"
+        @test contains(result["_value"], "2024")
+    end
+
+    @testset "to_typed_json: CypherDuration" begin
+        dur = CypherDuration("P1Y2M")
+        result = to_typed_json(dur)
+        @test result["\$type"] == "Duration"
+        @test result["_value"] == "P1Y2M"
+    end
+
+    @testset "to_typed_json: CypherPoint" begin
+        pt = CypherPoint(4326, [12.5, 34.7])
+        result = to_typed_json(pt)
+        @test result["\$type"] == "Point"
+        @test result["_value"] == "SRID=4326;POINT (12.5 34.7)"
+    end
+
+    @testset "to_typed_json: CypherVector" begin
+        vec = CypherVector("float32", ["1.0", "2.0"])
+        result = to_typed_json(vec)
+        @test result["\$type"] == "Vector"
+        @test result["_value"]["coordinatesType"] == "float32"
+    end
+
+    @testset "to_typed_json: Dict" begin
+        result = to_typed_json(Dict("key" => "value", "num" => 42))
+        @test result["\$type"] == "Map"
+        @test result["_value"]["key"]["\$type"] == "String"
+        @test result["_value"]["num"]["\$type"] == "Integer"
+    end
+
+    @testset "to_typed_json: nested List" begin
+        result = to_typed_json([1, "two", 3.0])
+        @test result["\$type"] == "List"
+        values = result["_value"]
+        @test values[1]["\$type"] == "Integer"
+        @test values[2]["\$type"] == "String"
+        @test values[3]["\$type"] == "Float"
+    end
+
+    @testset "to_typed_json: already-typed dict goes through AbstractDict dispatch" begin
+        typed = Dict{String,Any}("\$type" => "Integer", "_value" => "5")
+        result = to_typed_json(typed)
+        # AbstractDict method wraps it as a Map
+        @test result["\$type"] == "Map"
+        @test haskey(result["_value"], "\$type")
+        @test haskey(result["_value"], "_value")
+    end
+
+    @testset "to_typed_json: error on unsupported type" begin
+        @test_throws ErrorException to_typed_json(:some_symbol)
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Extended coverage: Graph types (show methods, property access)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "Node show" begin
+        props = JSON.Object{String,Any}("name" => "Alice", "age" => 30)
+        n = Node("4:xxx:0", ["Person"], props)
+        buf = IOBuffer()
+        show(buf, n)
+        s = String(take!(buf))
+        @test contains(s, "Person")
+        @test contains(s, "name")
+
+        # Empty labels
+        n2 = Node("4:xxx:1", String[], JSON.Object{String,Any}())
+        show(buf, n2)
+        s2 = String(take!(buf))
+        @test contains(s2, "Node(")
+    end
+
+    @testset "Node Symbol indexing" begin
+        props = JSON.Object{String,Any}("name" => "Alice")
+        n = Node("4:xxx:0", ["Person"], props)
+        @test n[:name] == "Alice"
+    end
+
+    @testset "Relationship show" begin
+        props = JSON.Object{String,Any}("since" => 2020)
+        r = Relationship("5:xxx:1", "4:xxx:0", "4:xxx:2", "KNOWS", props)
+        buf = IOBuffer()
+        show(buf, r)
+        s = String(take!(buf))
+        @test contains(s, "KNOWS")
+        @test contains(s, "since")
+    end
+
+    @testset "Relationship Symbol indexing" begin
+        props = JSON.Object{String,Any}("since" => 2020)
+        r = Relationship("5:xxx:1", "4:xxx:0", "4:xxx:2", "KNOWS", props)
+        @test r[:since] == 2020
+    end
+
+    @testset "Relationship propertynames" begin
+        props = JSON.Object{String,Any}("since" => 2020, "weight" => 1.0)
+        r = Relationship("5:xxx:1", "4:xxx:0", "4:xxx:2", "KNOWS", props)
+        pnames = propertynames(r)
+        @test :type in pnames
+        @test :since in pnames
+        @test :weight in pnames
+        @test :element_id in pnames
+    end
+
+    @testset "Path show" begin
+        n1 = Node("4:a:0", ["A"], JSON.Object{String,Any}())
+        r1 = Relationship("5:r:0", "4:a:0", "4:b:0", "R", JSON.Object{String,Any}())
+        n2 = Node("4:b:0", ["B"], JSON.Object{String,Any}())
+        p = Path([n1, r1, n2])
+        buf = IOBuffer()
+        show(buf, p)
+        s = String(take!(buf))
+        @test contains(s, "2 nodes")
+        @test contains(s, "1 relationship")
+    end
+
+    @testset "CypherPoint show" begin
+        pt = CypherPoint(4326, [12.5, 34.7])
+        buf = IOBuffer()
+        show(buf, pt)
+        s = String(take!(buf))
+        @test contains(s, "4326")
+        @test contains(s, "12.5")
+    end
+
+    @testset "CypherDuration show" begin
+        d = CypherDuration("P1Y2M")
+        buf = IOBuffer()
+        show(buf, d)
+        s = String(take!(buf))
+        @test contains(s, "P1Y2M")
+    end
+
+    @testset "CypherVector show" begin
+        v = CypherVector("float32", ["1.0", "2.0", "3.0"])
+        buf = IOBuffer()
+        show(buf, v)
+        s = String(take!(buf))
+        @test contains(s, "float32")
+        @test contains(s, "3d")
+    end
+
+    @testset "_props_str" begin
+        props = JSON.Object{String,Any}()
+        @test _props_str(props) == "{}"
+
+        props2 = JSON.Object{String,Any}("name" => "Alice")
+        @test contains(_props_str(props2), "name")
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Extended coverage: QueryResult (show, indexing, iteration)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "QueryResult show" begin
+        parsed = JSON.Object(
+            "data" => JSON.Object(
+                "fields" => ["x"],
+                "values" => [[JSON.Object("\$type" => "Integer", "_value" => "1")]],
+            ),
+            "bookmarks" => String[],
+        )
+        result = _build_result(parsed)
+        buf = IOBuffer()
+        show(buf, result)
+        s = String(take!(buf))
+        @test contains(s, "1 field")
+        @test contains(s, "1 row")
+
+        buf2 = IOBuffer()
+        show(buf2, MIME"text/plain"(), result)
+        s2 = String(take!(buf2))
+        @test contains(s2, "Fields: x")
+    end
+
+    @testset "QueryResult UnitRange indexing" begin
+        parsed = JSON.Object(
+            "data" => JSON.Object(
+                "fields" => ["x"],
+                "values" => [
+                    [JSON.Object("\$type" => "Integer", "_value" => "1")],
+                    [JSON.Object("\$type" => "Integer", "_value" => "2")],
+                    [JSON.Object("\$type" => "Integer", "_value" => "3")],
+                ],
+            ),
+            "bookmarks" => String[],
+        )
+        result = _build_result(parsed)
+        @test length(result[1:2]) == 2
+        @test result[1:2][1].x == 1
+        @test result[1:2][2].x == 2
+    end
+
+    @testset "QueryResult size/firstindex/lastindex/eltype" begin
+        parsed = JSON.Object(
+            "data" => JSON.Object(
+                "fields" => ["x"],
+                "values" => [
+                    [JSON.Object("\$type" => "Integer", "_value" => "1")],
+                    [JSON.Object("\$type" => "Integer", "_value" => "2")],
+                ],
+            ),
+            "bookmarks" => String[],
+        )
+        result = _build_result(parsed)
+        @test size(result) == (2,)
+        @test firstindex(result) == 1
+        @test lastindex(result) == 2
+        @test eltype(QueryResult) == NamedTuple
+    end
+
+    @testset "QueryResult with counters" begin
+        parsed = JSON.Object(
+            "data" => JSON.Object(
+                "fields" => ["x"],
+                "values" => [[JSON.Object("\$type" => "Integer", "_value" => "1")]],
+            ),
+            "bookmarks" => ["bk:1"],
+            "counters" => JSON.Object(
+                "containsUpdates" => true,
+                "nodesCreated" => 3,
+                "nodesDeleted" => 1,
+                "propertiesSet" => 5,
+                "relationshipsCreated" => 2,
+                "relationshipsDeleted" => 0,
+                "labelsAdded" => 3,
+                "labelsRemoved" => 0,
+                "indexesAdded" => 0,
+                "indexesRemoved" => 0,
+                "constraintsAdded" => 0,
+                "constraintsRemoved" => 0,
+                "containsSystemUpdates" => false,
+                "systemUpdates" => 0,
+            ),
+        )
+        result = _build_result(parsed)
+        @test result.counters !== nothing
+        @test result.counters.nodes_created == 3
+        @test result.counters.nodes_deleted == 1
+        @test result.counters.relationships_created == 2
+
+        # Show with changes
+        buf = IOBuffer()
+        show(buf, result.counters)
+        s = String(take!(buf))
+        @test contains(s, "nodes_created=3")
+        @test contains(s, "nodes_deleted=1")
+
+        # text/plain show for result with counters
+        buf2 = IOBuffer()
+        show(buf2, MIME"text/plain"(), result)
+        s2 = String(take!(buf2))
+        @test contains(s2, "QueryResult")
+    end
+
+    @testset "QueryCounters show - no changes" begin
+        obj = JSON.Object(
+            "containsUpdates" => false,
+            "nodesCreated" => 0, "nodesDeleted" => 0,
+            "propertiesSet" => 0, "relationshipsCreated" => 0,
+            "relationshipsDeleted" => 0, "labelsAdded" => 0,
+            "labelsRemoved" => 0, "indexesAdded" => 0,
+            "indexesRemoved" => 0, "constraintsAdded" => 0,
+            "constraintsRemoved" => 0, "containsSystemUpdates" => false,
+            "systemUpdates" => 0,
+        )
+        c = Neo4jQuery.QueryCounters(obj)
+        buf = IOBuffer()
+        show(buf, c)
+        @test String(take!(buf)) == "QueryCounters(no changes)"
+    end
+
+    @testset "QueryCounters show - extensive changes" begin
+        obj = JSON.Object(
+            "containsUpdates" => true,
+            "nodesCreated" => 5, "nodesDeleted" => 2,
+            "propertiesSet" => 10, "relationshipsCreated" => 3,
+            "relationshipsDeleted" => 1, "labelsAdded" => 5,
+            "labelsRemoved" => 1, "indexesAdded" => 1,
+            "indexesRemoved" => 0, "constraintsAdded" => 1,
+            "constraintsRemoved" => 0, "containsSystemUpdates" => false,
+            "systemUpdates" => 0,
+        )
+        c = Neo4jQuery.QueryCounters(obj)
+        @test c.relationships_deleted == 1
+        @test c.labels_removed == 1
+        @test c.indexes_added == 1
+        @test c.constraints_added == 1
+        buf = IOBuffer()
+        show(buf, c)
+        s = String(take!(buf))
+        @test contains(s, "labels_removed=1")
+        @test contains(s, "indexes_added=1")
+        @test contains(s, "constraints_added=1")
+    end
+
+    @testset "QueryResult with notifications" begin
+        parsed = JSON.Object(
+            "data" => JSON.Object(
+                "fields" => ["x"],
+                "values" => [[JSON.Object("\$type" => "Integer", "_value" => "1")]],
+            ),
+            "bookmarks" => String[],
+            "notifications" => [
+                JSON.Object(
+                    "code" => "Neo.ClientNotification.Statement.CartesianProduct",
+                    "title" => "Cartesian product",
+                    "description" => "This query builds a cartesian product",
+                    "severity" => "WARNING",
+                    "category" => "PERFORMANCE",
+                ),
+            ],
+        )
+        result = _build_result(parsed)
+        @test length(result.notifications) == 1
+        @test result.notifications[1].code == "Neo.ClientNotification.Statement.CartesianProduct"
+        @test result.notifications[1].severity == "WARNING"
+
+        # Notification show
+        buf = IOBuffer()
+        show(buf, result.notifications[1])
+        s = String(take!(buf))
+        @test contains(s, "WARNING")
+        @test contains(s, "CartesianProduct")
+
+        # text/plain show with notifications
+        buf2 = IOBuffer()
+        show(buf2, MIME"text/plain"(), result)
+        s2 = String(take!(buf2))
+        @test contains(s2, "Notifications:")
+    end
+
+    @testset "QueryResult text/plain show: many rows truncation" begin
+        values = [[JSON.Object("\$type" => "Integer", "_value" => string(i))] for i in 1:15]
+        parsed = JSON.Object(
+            "data" => JSON.Object(
+                "fields" => ["x"],
+                "values" => values,
+            ),
+            "bookmarks" => String[],
+        )
+        result = _build_result(parsed)
+        buf = IOBuffer()
+        show(buf, MIME"text/plain"(), result)
+        s = String(take!(buf))
+        @test contains(s, "15 rows")
+        @test contains(s, "… and 5 more rows")
+    end
+
+    @testset "QueryResult show plural/singular" begin
+        # Single field, single row
+        parsed = JSON.Object(
+            "data" => JSON.Object(
+                "fields" => ["x"],
+                "values" => [[JSON.Object("\$type" => "Integer", "_value" => "1")]],
+            ),
+            "bookmarks" => String[],
+        )
+        result = _build_result(parsed)
+        buf = IOBuffer()
+        show(buf, result)
+        s = String(take!(buf))
+        @test contains(s, "1 field,")
+        @test contains(s, "1 row)")
+
+        # Multiple fields and rows
+        parsed2 = JSON.Object(
+            "data" => JSON.Object(
+                "fields" => ["x", "y"],
+                "values" => [
+                    [JSON.Object("\$type" => "Integer", "_value" => "1"),
+                        JSON.Object("\$type" => "Integer", "_value" => "2")],
+                    [JSON.Object("\$type" => "Integer", "_value" => "3"),
+                        JSON.Object("\$type" => "Integer", "_value" => "4")],
+                ],
+            ),
+            "bookmarks" => String[],
+        )
+        result2 = _build_result(parsed2)
+        buf2 = IOBuffer()
+        show(buf2, result2)
+        s2 = String(take!(buf2))
+        @test contains(s2, "2 fields")
+        @test contains(s2, "2 rows")
+    end
+
+    @testset "QueryResult empty data" begin
+        parsed = JSON.Object("bookmarks" => String[])
+        result = _build_result(parsed)
+        @test length(result) == 0
+        @test isempty(result)
+        @test isempty(result.fields)
+    end
+
+    @testset "Notification defaults" begin
+        # Notification with missing optional fields
+        obj = JSON.Object{String,Any}(
+            "code" => "test.code",
+        )
+        n = Notification(obj)
+        @test n.code == "test.code"
+        @test n.title == ""
+        @test n.severity == ""
+        @test n.position === nothing
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Extended coverage: Connection
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "Neo4jConnection show" begin
+        conn = Neo4jConnection("http://localhost:7474", "neo4j", BasicAuth("x", "y"))
+        buf = IOBuffer()
+        show(buf, conn)
+        s = String(take!(buf))
+        @test contains(s, "localhost:7474")
+        @test contains(s, "neo4j")
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Extended coverage: CypherQuery show
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "CypherQuery show" begin
+        q1 = CypherQuery("RETURN 1", Dict{String,Any}())
+        buf = IOBuffer()
+        show(buf, q1)
+        s = String(take!(buf))
+        @test contains(s, "RETURN 1")
+        @test contains(s, "0 parameters")
+
+        q2 = CypherQuery("MATCH (n) WHERE n.name = \$name", Dict{String,Any}("name" => "Alice"))
+        show(buf, q2)
+        s2 = String(take!(buf))
+        @test contains(s2, "1 parameter")
+        @test !contains(s2, "parameters")  # singular
+    end
+
+    @testset "@cypher_str with multiple params" begin
+        x = 1
+        y = "hello"
+        z = 3.14
+        q = cypher"MATCH (n) WHERE n.x = $x AND n.y = $y AND n.z = $z RETURN n"
+        @test q isa CypherQuery
+        @test q.parameters["x"] == 1
+        @test q.parameters["y"] == "hello"
+        @test q.parameters["z"] == 3.14
+    end
+
+    @testset "@cypher_str with no params" begin
+        q = cypher"RETURN 1"
+        @test q isa CypherQuery
+        @test isempty(q.parameters)
+        @test q.statement == "RETURN 1"
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Extended coverage: URI parsing
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "_parse_neo4j_uri" begin
+        # neo4j+s → https, 443
+        scheme, host, port = _parse_neo4j_uri("neo4j+s://myhost.databases.neo4j.io")
+        @test scheme == "https"
+        @test host == "myhost.databases.neo4j.io"
+        @test port == 443
+
+        # neo4j+ssc → https, 443
+        scheme2, host2, port2 = _parse_neo4j_uri("neo4j+ssc://myhost.io")
+        @test scheme2 == "https"
+        @test port2 == 443
+
+        # neo4j → http, 7474
+        scheme3, host3, port3 = _parse_neo4j_uri("neo4j://localhost")
+        @test scheme3 == "http"
+        @test host3 == "localhost"
+        @test port3 == 7474
+
+        # bolt+s → https, 443
+        scheme4, _, port4 = _parse_neo4j_uri("bolt+s://myhost.io")
+        @test scheme4 == "https"
+        @test port4 == 443
+
+        # bolt+ssc → https, 443
+        scheme5, _, port5 = _parse_neo4j_uri("bolt+ssc://myhost.io")
+        @test scheme5 == "https"
+        @test port5 == 443
+
+        # bolt → http, 7474
+        scheme6, _, port6 = _parse_neo4j_uri("bolt://localhost")
+        @test scheme6 == "http"
+        @test port6 == 7474
+
+        # Explicit port overrides default
+        scheme7, host7, port7 = _parse_neo4j_uri("neo4j+s://myhost.io:7687")
+        @test scheme7 == "https"
+        @test port7 == 7687
+
+        # Invalid URI
+        @test_throws ErrorException _parse_neo4j_uri("http://not-a-neo4j-uri")
+        @test_throws ErrorException _parse_neo4j_uri("garbage")
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Extended coverage: dotenv
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "dotenv" begin
+        # File not found
+        @test_throws ErrorException dotenv("/nonexistent/.env")
+
+        # Create a temp .env file
+        tmpdir = mktempdir()
+        envfile = joinpath(tmpdir, ".env")
+        write(
+            envfile,
+            """
+# This is a comment
+TEST_KEY1=value1
+TEST_KEY2="quoted value"
+TEST_KEY3='single quoted'
+
+TEST_KEY4=no_quotes
+"""
+        )
+
+        vars = dotenv(envfile; overwrite=true)
+        @test vars["TEST_KEY1"] == "value1"
+        @test vars["TEST_KEY2"] == "quoted value"
+        @test vars["TEST_KEY3"] == "single quoted"
+        @test vars["TEST_KEY4"] == "no_quotes"
+        @test ENV["TEST_KEY1"] == "value1"
+
+        # Test overwrite=false (should not overwrite existing)
+        ENV["TEST_KEY1"] = "existing"
+        vars2 = dotenv(envfile; overwrite=false)
+        @test ENV["TEST_KEY1"] == "existing"
+
+        # Clean up
+        delete!(ENV, "TEST_KEY1")
+        delete!(ENV, "TEST_KEY2")
+        delete!(ENV, "TEST_KEY3")
+        delete!(ENV, "TEST_KEY4")
+        rm(tmpdir; recursive=true)
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Extended coverage: StreamingResult (show, summary, eltype)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "StreamingResult show" begin
+        # Construct a minimal StreamingResult (no actual HTTP response)
+        # We use a dummy IOBuffer and response
+        sr = Neo4jQuery.StreamingResult(
+            ["name", "age"],
+            (:name, :age),
+            HTTP.Response(200),
+            IOBuffer(),
+            nothing,
+            false,
+            nothing,
+        )
+        buf = IOBuffer()
+        show(buf, sr)
+        s = String(take!(buf))
+        @test contains(s, "streaming")
+        @test contains(s, "name")
+
+        # Done state
+        sr._done = true
+        show(buf, sr)
+        s2 = String(take!(buf))
+        @test contains(s2, "consumed")
+    end
+
+    @testset "StreamingResult show: empty fields" begin
+        sr = Neo4jQuery.StreamingResult(
+            String[], (), HTTP.Response(200), IOBuffer(), nothing, true, nothing,
+        )
+        buf = IOBuffer()
+        show(buf, sr)
+        s = String(take!(buf))
+        @test contains(s, "consumed")
+        @test !contains(s, "fields")
+    end
+
+    @testset "StreamingResult summary: no summary yet" begin
+        sr = Neo4jQuery.StreamingResult(
+            String[], (), HTTP.Response(200), IOBuffer(), nothing, false, nothing,
+        )
+        s = Neo4jQuery.summary(sr)
+        @test isempty(s.bookmarks)
+        @test s.counters === nothing
+        @test isempty(s.notifications)
+    end
+
+    @testset "StreamingResult IteratorSize and eltype" begin
+        @test Base.IteratorSize(Neo4jQuery.StreamingResult) == Base.SizeUnknown()
+        @test Base.eltype(Neo4jQuery.StreamingResult) == NamedTuple
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Extended coverage: Transaction state validation
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "Transaction show" begin
+        conn = Neo4jConnection("http://localhost:7474", "neo4j", BasicAuth("x", "y"))
+        tx = Neo4jQuery.Transaction(conn, "tx-123", "2025-01-01T00:00:00Z", nothing, false, false)
+        buf = IOBuffer()
+        show(buf, tx)
+        s = String(take!(buf))
+        @test contains(s, "tx-123")
+        @test contains(s, "open")
+
+        # Committed
+        tx.committed = true
+        show(buf, tx)
+        s2 = String(take!(buf))
+        @test contains(s2, "committed")
+
+        # Rolled back
+        tx.committed = false
+        tx.rolled_back = true
+        show(buf, tx)
+        s3 = String(take!(buf))
+        @test contains(s3, "rolled_back")
+    end
+
+    @testset "Transaction _assert_open" begin
+        conn = Neo4jConnection("http://localhost:7474", "neo4j", BasicAuth("x", "y"))
+
+        # Committed transaction
+        tx1 = Neo4jQuery.Transaction(conn, "tx-1", "", nothing, true, false)
+        @test_throws ErrorException Neo4jQuery._assert_open(tx1)
+
+        # Rolled back transaction
+        tx2 = Neo4jQuery.Transaction(conn, "tx-2", "", nothing, false, true)
+        @test_throws ErrorException Neo4jQuery._assert_open(tx2)
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Extended coverage: _extract_errors / _try_parse
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "_extract_errors" begin
+        # No errors key
+        @test isempty(_extract_errors(JSON.Object{String,Any}()))
+
+        # Empty errors array
+        @test isempty(_extract_errors(JSON.Object{String,Any}("errors" => [])))
+
+        # Non-array errors value
+        @test isempty(_extract_errors(JSON.Object{String,Any}("errors" => "not an array")))
+
+        # With errors
+        errs = _extract_errors(JSON.Object{String,Any}(
+            "errors" => [JSON.Object{String,Any}("code" => "err.code", "message" => "msg")],
+        ))
+        @test length(errs) == 1
+        @test errs[1]["code"] == "err.code"
+    end
+
+    @testset "_try_parse" begin
+        resp = HTTP.Response(200; body=Vector{UInt8}("{\"key\": \"value\"}"))
+        result = _try_parse(resp)
+        @test result["key"] == "value"
+
+        # Empty body
+        resp2 = HTTP.Response(200; body=UInt8[])
+        result2 = _try_parse(resp2)
+        @test isempty(result2)
     end
 
     # ════════════════════════════════════════════════════════════════════════

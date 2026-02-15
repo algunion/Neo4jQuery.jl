@@ -67,3 +67,69 @@ vars = dotenv(".env"; overwrite=false)
 ```
 
 Supports comments (`#`), quoted values, and `export` prefix. Existing `ENV` keys are preserved unless `overwrite=true`.
+
+### `.env` file format
+
+```env
+# Comment lines are ignored
+NEO4J_URI=neo4j+s://xxx.databases.neo4j.io
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=secret
+NEO4J_DATABASE=neo4j
+
+# Quoted values (quotes are stripped)
+NEO4J_PASSWORD="my secret password"
+NEO4J_PASSWORD='my secret password'
+
+# "export" prefix is supported
+export NEO4J_URI=neo4j://localhost
+```
+
+## URI scheme mapping
+
+The scheme in `NEO4J_URI` is mapped to HTTP or HTTPS:
+
+| URI Scheme     | Protocol | Default Port |
+| :------------- | :------- | :----------- |
+| `neo4j://`     | HTTP     | 7474         |
+| `bolt://`      | HTTP     | 7474         |
+| `http://`      | HTTP     | 7474         |
+| `neo4j+s://`   | HTTPS    | 7473         |
+| `neo4j+ssc://` | HTTPS    | 7473         |
+| `bolt+s://`    | HTTPS    | 7473         |
+| `bolt+ssc://`  | HTTPS    | 7473         |
+| `https://`     | HTTPS    | 7473         |
+
+## Custom authentication
+
+To implement a custom auth strategy, define a struct that subtypes `AbstractAuth` and implement `auth_header`:
+
+```julia
+struct ApiKeyAuth <: Neo4jQuery.AbstractAuth
+    key::String
+end
+
+Neo4jQuery.auth_header(a::ApiKeyAuth) = "ApiKey $(a.key)"
+
+conn = connect("localhost", "neo4j"; auth=ApiKeyAuth("my-api-key"))
+```
+
+## Verifying a connection
+
+`connect` hits the discovery endpoint on construction. If the server is unreachable, it will throw an error immediately:
+
+```julia
+try
+    conn = connect("localhost", "neo4j"; auth=BasicAuth("neo4j", "pw"))
+    println("Connected to: ", conn.host)
+catch e
+    println("Connection failed: ", e)
+end
+```
+
+## Displaying a connection
+
+```julia
+conn = connect("localhost", "neo4j"; auth=BasicAuth("neo4j", "pw"))
+println(conn)  # Neo4jConnection(http://localhost:7474, db=neo4j)
+```

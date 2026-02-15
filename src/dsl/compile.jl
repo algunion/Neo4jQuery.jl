@@ -246,17 +246,17 @@ function _condition_to_cypher(expr, params::Vector{Symbol})::String
             return "$(op)($lhs, $rhs)"
         end
 
+        # IS NULL: isnothing(p.email) → p.email IS NULL
+        if op == :isnothing && length(expr.args) == 2
+            inner = _condition_to_cypher(expr.args[2], params)
+            return "$inner IS NULL"
+        end
+
         # N-ary function calls: count(x), sum(x), avg(x), etc.
         if length(expr.args) >= 2
             fn_args = [_condition_to_cypher(a, params) for a in expr.args[2:end]]
             return "$(op)($(join(fn_args, ", ")))"
         end
-    end
-
-    # IS NULL / IS NOT NULL: isnothing(p.email) → p.email IS NULL
-    if expr isa Expr && expr.head == :call && expr.args[1] == :isnothing && length(expr.args) == 2
-        inner = _condition_to_cypher(expr.args[2], params)
-        return "$inner IS NULL"
     end
 
     # Parenthesized expression (Julia sometimes wraps in extra parens)

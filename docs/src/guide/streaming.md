@@ -54,10 +54,68 @@ s = summary(sr)
 !!! warning
     `summary` is only available after the stream has been fully consumed. Calling it mid-stream will block until all remaining rows are read.
 
+## Collecting rows
+
+You can materialize the entire stream with `collect`:
+
+```julia
+sr = stream(conn, "MATCH (p:Person) RETURN p.name AS name, p.age AS age")
+rows = collect(sr)
+
+# rows is a Vector; use normal Julia operations
+names = [r.name for r in rows]
+ages  = [r.age  for r in rows]
+```
+
+## Streaming with parameters
+
+```julia
+sr = stream(conn, "MATCH (p:Person) WHERE p.age > \$min_age RETURN p.name",
+    parameters=Dict{String,Any}("min_age" => 25))
+
+for row in sr
+    println(row.name)
+end
+```
+
+## Streaming inside a transaction
+
+Streaming works within explicit transactions for multi-step workflows:
+
+```julia
+transaction(conn) do tx
+    # Step 1: create nodes
+    query(tx, "CREATE (p:Person {name: 'Diana', age: 28})")
+
+    # Step 2: stream results from the same transaction
+    sr = stream(tx, "MATCH (p:Person) RETURN p.name AS name")
+    for row in sr
+        println("Found: ", row.name)
+    end
+end
+```
+
 ## `CypherQuery` support
 
 ```julia
 name = "Alice"
 q = cypher"MATCH (p:Person {name: $name}) RETURN p"
 sr = stream(conn, q)
+
+for row in sr
+    println(row.p)
+end
 ```
+
+## StreamingResult details
+
+A `StreamingResult` tracks its consumption state:
+
+| Field      | Type     | Description                                       |
+| :--------- | :------- | :------------------------------------------------ |
+| `fields`   | `Vector` | Column names                                      |
+| `consumed` | `Bool`   | `true` after all rows have been read              |
+| `_summary` | internal | Populated after consumption; access via `summary` |
+
+The iterator protocol (`Base.iterate`) is implemented, so streaming results
+work with `for` loops, `collect`, comprehensions, and any iterator combinator.

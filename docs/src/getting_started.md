@@ -52,7 +52,7 @@ result = query(conn,
     parameters=Dict{String,Any}("name" => "Alice", "age" => 30);
     include_counters=true)
 
-println(result[1].p)           # Node("4:xxx:0", ["Person"], ...)
+println(result[1].p)           # Node(:Person {name: "Alice", age: 30})
 println(result.counters)        # QueryCounters(nodes_created=1, ...)
 
 # Read it back with the @cypher_str macro
@@ -61,6 +61,43 @@ q = cypher"MATCH (p:Person {name: $name}) RETURN p.name AS name, p.age AS age"
 result = query(conn, q; access_mode=:read)
 println(result[1].name)         # "Alice"
 ```
+
+## Quick DSL Example
+
+The DSL lets you write graph queries in Julia syntax:
+
+```julia
+# Define your data model
+@node Person begin
+    name::String
+    age::Int
+end
+
+@rel KNOWS begin
+    since::Int
+end
+
+# Create nodes
+alice = @create conn Person(name="Alice", age=30)
+bob   = @create conn Person(name="Bob", age=25)
+
+# Create a relationship between them
+rel = @relate conn alice => KNOWS(since=2024) => bob
+
+# Query the graph
+min_age = 20
+result = @query conn begin
+    @match (p:Person)-[r:KNOWS]->(friend:Person)
+    @where p.name == "Alice" && friend.age > $min_age
+    @return friend.name => :name, r.since => :since
+end access_mode=:read
+
+for row in result
+    println(row.name, " — known since ", row.since)
+end
+```
+
+See [DSL](@ref dsl) for the full guide with advanced examples.
 
 ## What's Next?
 
