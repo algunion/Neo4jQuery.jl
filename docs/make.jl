@@ -24,6 +24,7 @@ makedocs(;
             "Transactions" => "guide/transactions.md",
             "Streaming" => "guide/streaming.md",
             "DSL" => "guide/dsl.md",
+            "Biomedical Case Study" => "guide/biomedical_case_study.md",
         ],
         "API Reference" => "api.md",
     ],
