@@ -58,6 +58,6 @@ s = summary(sr)
 
 ```julia
 name = "Alice"
-q = cypher"MATCH (p:Person {name: \$name}) RETURN p"
+q = cypher"MATCH (p:Person {name: $name}) RETURN p"
 sr = stream(conn, q)
 ```

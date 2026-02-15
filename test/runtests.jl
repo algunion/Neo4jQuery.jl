@@ -37,7 +37,7 @@ include("jet_tests.jl")
 
     @testset "@cypher_str macro" begin
         name = "Alice"
-        q = cypher"MATCH (n) WHERE n.name = \$name RETURN n"
+        q = cypher"MATCH (n) WHERE n.name = $name RETURN n"
         @test q isa CypherQuery
         @test q.statement == "MATCH (n) WHERE n.name = \$name RETURN n"
         @test q.parameters["name"] == "Alice"
@@ -355,7 +355,7 @@ include("jet_tests.jl")
             # ── Parameterised query with @cypher_str ────────────────────────
             @testset "@cypher_str live query" begin
                 name = "Alice"
-                q = cypher"MATCH (p:Person {name: \$name}) RETURN p.age AS age"
+                q = cypher"MATCH (p:Person {name: $name}) RETURN p.age AS age"
                 result = query(conn, q; access_mode=:read)
                 @test length(result) == 1
                 @test result[1].age == 30
