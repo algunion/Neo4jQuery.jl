@@ -15,7 +15,20 @@ include("dsl_tests.jl")
 
 # Quality assurance and type stability
 include("aqua_tests.jl")
-include("jet_tests.jl")
+
+# JET is only compatible with Julia 1.12.x — install and run conditionally
+if v"1.12" <= VERSION < v"1.13"
+    try
+        using Pkg
+        Pkg.add("JET")
+        using JET
+        include("jet_tests.jl")
+    catch e
+        @warn "Skipping JET tests (failed to install or load)" VERSION exception = e
+    end
+else
+    @warn "Skipping JET tests (only compatible with Julia 1.12)" VERSION
+end
 
 @testset "Neo4jQuery.jl" begin
 
