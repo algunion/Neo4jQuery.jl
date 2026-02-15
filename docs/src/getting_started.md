@@ -53,7 +53,7 @@ result = query(conn,
     include_counters=true)
 
 println(result[1].p)           # Node(:Person {name: "Alice", age: 30})
-println(result.counters)        # QueryCounters(nodes_created=1, ...)
+println(result.counters)        # QueryCounters(nodes_created=1, properties_set=2, labels_added=1)
 
 # Read it back with the @cypher_str macro
 name = "Alice"

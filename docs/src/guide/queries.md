@@ -173,7 +173,7 @@ p.elements             # Vector of alternating Node and Relationship objects
 result = query(conn, "RETURN point({latitude: 51.5, longitude: -0.1}) AS pt")
 pt = result[1].pt      # CypherPoint
 pt.srid                # 4326
-pt.coordinates         # [51.5, -0.1]
+pt.coordinates         # [-0.1, 51.5]  (longitude, latitude)
 ```
 
 ### Duration values

@@ -44,12 +44,19 @@ commit!(tx)
 After fully consuming the stream, call `summary` to get metadata:
 
 ```julia
+import Neo4jQuery: summary   # required — Base.summary shadows the export
+
 sr = stream(conn, "MATCH (p:Person) RETURN p")
 rows = collect(sr)   # consume all rows
 
 s = summary(sr)
 # s.bookmarks, s.counters, s.notifications, etc.
 ```
+
+!!! note
+    `summary` must be explicitly imported with `import Neo4jQuery: summary`
+    because `Base.summary` takes precedence over the re-exported name.
+    Alternatively, use the qualified form `Neo4jQuery.summary(sr)`.
 
 !!! warning
     `summary` is only available after the stream has been fully consumed. Calling it mid-stream will block until all remaining rows are read.
@@ -70,7 +77,7 @@ ages  = [r.age  for r in rows]
 ## Streaming with parameters
 
 ```julia
-sr = stream(conn, "MATCH (p:Person) WHERE p.age > \$min_age RETURN p.name",
+sr = stream(conn, "MATCH (p:Person) WHERE p.age > \$min_age RETURN p.name AS name",
     parameters=Dict{String,Any}("min_age" => 25))
 
 for row in sr
