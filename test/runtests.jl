@@ -1165,11 +1165,16 @@ TEST_KEY4=no_quotes
     # ════════════════════════════════════════════════════════════════════════
 
     env_file = joinpath(@__DIR__, "..", ".env")
-    run_integration = isfile(env_file)
+    has_env_file = isfile(env_file)
+
+    required_live_keys = ("NEO4J_URI", "NEO4J_USERNAME", "NEO4J_PASSWORD")
+    has_env_credentials = all(k -> haskey(ENV, k) && !isempty(get(ENV, k, "")), required_live_keys)
+
+    run_integration = has_env_file || has_env_credentials
 
     if run_integration
         @testset "Integration (live DB)" begin
-            conn = connect_from_env(path=env_file)
+            conn = has_env_file ? connect_from_env(path=env_file) : connect_from_env()
 
             # ── Purge all data at start ─────────────────────────────────────
             @testset "Purge" begin
@@ -1399,8 +1404,13 @@ TEST_KEY4=no_quotes
                 end
                 @test length(result) >= 5
             end
+
+            # ── Biomedical graph live integration suite ───────────────────────
+            @testset "Biomedical graph (live DB)" begin
+                include("biomedical_graph_test.jl")
+            end
         end
     else
-        @warn "Skipping integration tests — no .env file found at $env_file"
+        @warn "Skipping integration tests — provide .env or set NEO4J_URI/NEO4J_USERNAME/NEO4J_PASSWORD in ENV" env_file
     end
 end

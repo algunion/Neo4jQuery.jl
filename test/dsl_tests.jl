@@ -31,6 +31,33 @@ function _find_cypher_string(ex)
     return nothing
 end
 
+"""
+Extract parameter names from `Dict{String,Any}("name" => value, ...)` inside
+an expanded `@query` expression, preserving insertion order.
+"""
+function _extract_param_names_from_expansion(ex)
+    names = String[]
+    _collect_param_names!(names, ex)
+    return names
+end
+
+function _collect_param_names!(names::Vector{String}, ex)
+    if ex isa Expr
+        is_pair_call = ex.head == :call && length(ex.args) == 3 && (
+                           ex.args[1] == :(=>) ||
+                           ex.args[1] == Base.:(=>) ||
+                           (ex.args[1] isa GlobalRef && ex.args[1].name == Symbol("=>"))
+                       )
+        if is_pair_call && ex.args[2] isa String
+            push!(names, ex.args[2])
+        end
+        for arg in ex.args
+            _collect_param_names!(names, arg)
+        end
+    end
+    return nothing
+end
+
 # ════════════════════════════════════════════════════════════════════════════
 # DSL Test Suite
 #
@@ -386,6 +413,16 @@ end
         end
         cypher_str = _extract_cypher_from_expansion(ex)
         @test cypher_str == "MATCH (p:Person) WHERE p.age > \$min_age RETURN p.name AS name"
+
+        # Parameter capture order is deterministic and duplicates are removed
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @where p.age > $min_age && p.score > $min_age
+            @set p.delta = $delta
+            @limit $min_age
+            @return p
+        end
+        @test _extract_param_names_from_expansion(ex) == ["min_age", "delta"]
 
         # Full query with all main clauses
         ex = @macroexpand @query conn begin

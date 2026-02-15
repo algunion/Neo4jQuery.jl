@@ -108,6 +108,7 @@ macro query(conn, block, kwargs...)
     clauses = _parse_query_block(block)
     cypher_parts = String[]
     param_syms = Symbol[]
+    param_seen = Dict{Symbol,Nothing}()
 
     # Track SET clauses to merge them; flush before RETURN/ORDER BY/SKIP/LIMIT
     set_parts = String[]
@@ -126,7 +127,7 @@ macro query(conn, block, kwargs...)
         elseif kind == :optional_match
             push!(cypher_parts, "OPTIONAL MATCH " * _match_to_cypher(args[1]))
         elseif kind == :where
-            push!(cypher_parts, "WHERE " * _condition_to_cypher(args[1], param_syms))
+            push!(cypher_parts, "WHERE " * _condition_to_cypher(args[1], param_syms, param_seen))
         elseif kind == :return
             _flush_set!()
             distinct, items = _extract_distinct(args)
@@ -138,13 +139,13 @@ macro query(conn, block, kwargs...)
             prefix = distinct ? "WITH DISTINCT " : "WITH "
             push!(cypher_parts, prefix * _with_to_cypher(items))
         elseif kind == :unwind
-            push!(cypher_parts, "UNWIND " * _unwind_to_cypher(args[1], param_syms))
+            push!(cypher_parts, "UNWIND " * _unwind_to_cypher(args[1], param_syms, param_seen))
         elseif kind == :create
             push!(cypher_parts, "CREATE " * _match_to_cypher(args[1]))
         elseif kind == :merge_clause
             push!(cypher_parts, "MERGE " * _match_to_cypher(args[1]))
         elseif kind == :set
-            push!(set_parts, _set_to_cypher(args[1], param_syms))
+            push!(set_parts, _set_to_cypher(args[1], param_syms, param_seen))
         elseif kind == :remove
             push!(cypher_parts, "REMOVE " * _delete_to_cypher(args[1]))
         elseif kind == :delete
@@ -156,14 +157,14 @@ macro query(conn, block, kwargs...)
             push!(cypher_parts, "ORDER BY " * _orderby_to_cypher(args))
         elseif kind == :skip
             _flush_set!()
-            push!(cypher_parts, "SKIP " * _limit_skip_to_cypher(args[1], param_syms))
+            push!(cypher_parts, "SKIP " * _limit_skip_to_cypher(args[1], param_syms, param_seen))
         elseif kind == :limit
             _flush_set!()
-            push!(cypher_parts, "LIMIT " * _limit_skip_to_cypher(args[1], param_syms))
+            push!(cypher_parts, "LIMIT " * _limit_skip_to_cypher(args[1], param_syms, param_seen))
         elseif kind == :on_create_set
-            push!(cypher_parts, "ON CREATE SET " * _set_to_cypher(args[1], param_syms))
+            push!(cypher_parts, "ON CREATE SET " * _set_to_cypher(args[1], param_syms, param_seen))
         elseif kind == :on_match_set
-            push!(cypher_parts, "ON MATCH SET " * _set_to_cypher(args[1], param_syms))
+            push!(cypher_parts, "ON MATCH SET " * _set_to_cypher(args[1], param_syms, param_seen))
         else
             error("Unknown clause kind in @query: $kind")
         end
@@ -175,8 +176,7 @@ macro query(conn, block, kwargs...)
     cypher_str = join(cypher_parts, " ")
 
     # Generate parameter capture expressions
-    unique_params = unique(param_syms)
-    param_pairs = [:($(string(s)) => $(esc(s))) for s in unique_params]
+    param_pairs = [:($(string(s)) => $(esc(s))) for s in param_syms]
 
     # Process kwargs (access_mode, include_counters, etc.)
     kw_exprs = map(kwargs) do kw
