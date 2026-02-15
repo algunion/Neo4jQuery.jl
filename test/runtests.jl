@@ -10,6 +10,9 @@ using Base64
 using HTTP
 using Test
 
+include("test_utils.jl")
+using .TestGraphUtils
+
 # Include DSL tests
 include("dsl_tests.jl")
 
@@ -1178,11 +1181,10 @@ TEST_KEY4=no_quotes
 
             # ── Purge all data at start ─────────────────────────────────────
             @testset "Purge" begin
-                # Delete all relationships first, then all nodes
-                query(conn, "MATCH ()-[r]->() DELETE r")
-                result = query(conn, "MATCH (n) DETACH DELETE n"; include_counters=true)
-                @test result isa QueryResult
-                @info "Database purged" counters = result.counters
+                counts = purge_db!(conn; verify=true)
+                @test counts.nodes == 0
+                @test counts.relationships == 0
+                @info "Database purged" counts
             end
 
             # ── Implicit transaction: create & read nodes ───────────────────
