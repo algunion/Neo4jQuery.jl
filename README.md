@@ -87,3 +87,24 @@ This script reports timing and per-call allocations for:
 - `_condition_to_cypher` (expression compilation)
 - `@query` `macroexpand` (DSL expansion cost)
 - `_build_query_body` (runtime request payload assembly)
+
+## Coverage (including live Aura tests)
+
+Unit and offline tests run by default:
+
+```julia
+julia --project=. --code-coverage=user -e 'using Pkg; Pkg.test()'
+```
+
+To include live Aura integration paths in coverage, export credentials and run tests:
+
+```bash
+export NEO4J_URI=neo4j+s://xxxx.databases.neo4j.io
+export NEO4J_USERNAME=neo4j
+export NEO4J_PASSWORD=your-password
+export NEO4J_DATABASE=neo4j
+
+julia --project=. --code-coverage=user -e 'using Pkg; Pkg.test()'
+```
+
+CI now includes a dedicated live Aura coverage job (`test-live-aura`) that runs with these secrets.
