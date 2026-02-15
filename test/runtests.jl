@@ -6,6 +6,9 @@ using Dates
 using Base64
 using Test
 
+# Include DSL tests
+include("dsl_tests.jl")
+
 @testset "Neo4jQuery.jl" begin
 
     # ── Auth ────────────────────────────────────────────────────────────────
