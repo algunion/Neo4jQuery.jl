@@ -46,6 +46,30 @@ bookmarks = commit!(tx;
     parameters=Dict{String,Any}())
 ```
 
+### Using `@cypher_str` in transactions
+
+The `@cypher_str` macro works seamlessly within transactions:
+
+```julia
+tx = begin_transaction(conn)
+
+name = "Alice"
+age = 30
+result = query(tx, cypher"CREATE (p:Person {name: $name, age: $age}) RETURN p")
+
+name = "Bob"
+age = 25
+query(tx, cypher"CREATE (p:Person {name: $name, age: $age}) RETURN p")
+
+# Create a relationship between them
+query(tx, """
+    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    CREATE (a)-[:KNOWS {since: 2024}]->(b)
+""")
+
+bookmarks = commit!(tx)
+```
+
 ## Do-block (recommended)
 
 The safest pattern — auto-commits on success, auto-rolls-back on exception:
@@ -74,6 +98,32 @@ catch e
 end
 ```
 
+### Complete example using do-block
+
+```julia
+# Build a small graph atomically
+transaction(conn) do tx
+    # Create people
+    query(tx, "CREATE (a:Person {name: \$name, age: \$age})",
+        parameters=Dict{String,Any}("name" => "Alice", "age" => 30))
+    query(tx, "CREATE (b:Person {name: \$name, age: \$age})",
+        parameters=Dict{String,Any}("name" => "Bob", "age" => 25))
+    query(tx, "CREATE (c:Person {name: \$name, age: \$age})",
+        parameters=Dict{String,Any}("name" => "Carol", "age" => 35))
+
+    # Create relationships
+    query(tx, """
+        MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+        CREATE (a)-[:KNOWS {since: 2020}]->(b)
+    """)
+    query(tx, """
+        MATCH (a:Person {name: 'Alice'}), (c:Person {name: 'Carol'})
+        CREATE (a)-[:KNOWS {since: 2022}]->(c)
+    """)
+end
+# All five operations commit together, or none do
+```
+
 ## Transaction state
 
 The `Transaction` struct tracks its lifecycle:
@@ -86,4 +136,14 @@ commit!(tx)
 # tx.committed == true
 
 # Subsequent queries on a committed/rolled-back tx will error
+```
+
+Attempting to use a committed or rolled-back transaction raises an error:
+
+```julia
+tx = begin_transaction(conn)
+commit!(tx)
+
+# This will throw an error:
+# query(tx, "RETURN 1")  # "Transaction tx-123 has already been committed"
 ```
