@@ -9,6 +9,10 @@ using Test
 # Include DSL tests
 include("dsl_tests.jl")
 
+# Quality assurance and type stability
+include("aqua_tests.jl")
+include("jet_tests.jl")
+
 @testset "Neo4jQuery.jl" begin
 
     # ── Auth ────────────────────────────────────────────────────────────────

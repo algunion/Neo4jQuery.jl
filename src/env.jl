@@ -30,7 +30,9 @@ function dotenv(path::AbstractString=".env"; overwrite::Bool=false)
         m === nothing && continue
 
         key = m.captures[1]
-        val = strip(m.captures[2])
+        val = m.captures[2]
+        (key === nothing || val === nothing) && continue
+        val = strip(val)
 
         # Strip surrounding quotes
         if length(val) >= 2
