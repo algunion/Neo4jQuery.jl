@@ -16,13 +16,20 @@
 using Neo4jQuery
 using Test
 
+if !isdefined(@__MODULE__, :TestGraphUtils)
+    include("test_utils.jl")
+end
+using .TestGraphUtils
+
 # ── Connection ───────────────────────────────────────────────────────────────
 # Uses NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_DATABASE from ENV
 
 conn = connect_from_env()
 
 # Purge existing graph between runs (do NOT purge at the end).
-query(conn, "MATCH (n) DETACH DELETE n")
+purge_counts = purge_db!(conn; verify=true)
+@test purge_counts.nodes == 0
+@test purge_counts.relationships == 0
 
 # ════════════════════════════════════════════════════════════════════════════
 # PART 1 — Schema Declarations
@@ -959,20 +966,26 @@ end
 
 @testset "Biomedical Graph — Integrity Checks" begin
 
-    # Total node count
-    result = @query conn begin
-        @match (n)
-        @return count(n) => :total
-    end access_mode = :read
+    counts = graph_counts(conn)
 
-    total_nodes = result[1].total
+    total_nodes = counts.nodes
     @test total_nodes >= 70  # We created ~75+ nodes
 
-    # Total relationship count (raw Cypher — DSL requires typed relationships)
-    result = query(conn, "MATCH ()-[r]->() RETURN count(r) AS total"; access_mode=:read)
-
-    total_rels = result[1].total
+    total_rels = counts.relationships
     @test total_rels >= 80  # We created ~90+ relationships
+
+    # No exact duplicate relationships (same start, type, properties, end)
+    @test duplicate_relationship_group_count(conn) == 0
+
+    # BRCA1 EXPRESSES edges are unique per tissue
+    brca1_expr = query(conn, """
+        MATCH (:Gene {symbol: 'BRCA1'})-[r:EXPRESSES]->(:Protein {uniprot_id: 'P38398'})
+        RETURN count(r) AS edge_count,
+               count(DISTINCT r.tissue) AS distinct_tissues
+    """; access_mode=:read)
+
+    @test brca1_expr[1].edge_count == 2
+    @test brca1_expr[1].edge_count == brca1_expr[1].distinct_tissues
 
     # Check all label types exist
     for label in ["Disease", "Gene", "Protein", "Drug", "ClinicalTrial",
