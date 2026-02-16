@@ -25,6 +25,7 @@ include("dsl/schema.jl")
 include("dsl/compile.jl")
 include("dsl/query.jl")
 include("dsl/mutations.jl")
+include("dsl/graph.jl")
 
 # ── Public API ──────────────────────────────────────────────────────────────
 
@@ -68,5 +69,8 @@ export @query
 
 # Standalone mutations
 export @create, @merge, @relate
+
+# Graph DSL (hyper-ergonomic)
+export @graph
 
 end

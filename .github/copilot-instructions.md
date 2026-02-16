@@ -159,3 +159,11 @@ This is development as controlled conjecture and refutation. Code
 survives by resisting falsification.
 
 Speculation is cheap. Experiments are decisive.
+
+## Grounding Reporting and Syncrhonization
+
+When learning from external sources, create a `grounding/` directory at the project root. For each truth source, create a markdown file with:
+- A summary of key insights.
+- A mapping of relevant concepts to project constructs.
+
+Keep these files up to date as the project evolves. They serve as a shared reference for the team and help maintain alignment with external realities.
