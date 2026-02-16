@@ -6,18 +6,24 @@ query(tx, &quot;CREATE (a:Account {name: \$name})&quot;,
 query(tx, &quot;CREATE (a:Account {name: \$name})&quot;,
     parameters=Dict{String,Any}(&quot;name&quot; =&gt; &quot;Checking&quot;))
 
-bookmarks = commit!(tx)</code></pre><h3 id="Rollback"><a class="docs-heading-anchor" href="#Rollback">Rollback</a><a id="Rollback-1"></a><a class="docs-heading-anchor-permalink" href="#Rollback" title="Permalink"></a></h3><pre><code class="language-julia hljs">tx = begin_transaction(conn)
+bookmarks = commit!(tx)
+println(&quot;Committed with &quot;, length(bookmarks), &quot; bookmark(s)&quot;)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Committed with 1 bookmark(s)</code></pre><h3 id="Rollback"><a class="docs-heading-anchor" href="#Rollback">Rollback</a><a id="Rollback-1"></a><a class="docs-heading-anchor-permalink" href="#Rollback" title="Permalink"></a></h3><pre><code class="language-julia hljs">tx = begin_transaction(conn)
 query(tx, &quot;CREATE (n:Temp)&quot;)
 rollback!(tx)
-# The Temp node never persists</code></pre><h3 id="Initial-statement"><a class="docs-heading-anchor" href="#Initial-statement">Initial statement</a><a id="Initial-statement-1"></a><a class="docs-heading-anchor-permalink" href="#Initial-statement" title="Permalink"></a></h3><p><code>begin_transaction</code> accepts an optional initial statement:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn;
+println(&quot;Rolled back — Temp node never persists&quot;)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Rolled back — Temp node never persists</code></pre><h3 id="Initial-statement"><a class="docs-heading-anchor" href="#Initial-statement">Initial statement</a><a id="Initial-statement-1"></a><a class="docs-heading-anchor-permalink" href="#Initial-statement" title="Permalink"></a></h3><p><code>begin_transaction</code> accepts an optional initial statement:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn;
     statement=&quot;CREATE (n:Init) RETURN n&quot;,
-    parameters=Dict{String,Any}())</code></pre><h3 id="Final-statement-on-commit"><a class="docs-heading-anchor" href="#Final-statement-on-commit">Final statement on commit</a><a id="Final-statement-on-commit-1"></a><a class="docs-heading-anchor-permalink" href="#Final-statement-on-commit" title="Permalink"></a></h3><p><code>commit!</code> can run a final statement atomically with the commit:</p><pre><code class="language-julia hljs">bookmarks = commit!(tx;
+    parameters=Dict{String,Any}())
+commit!(tx)
+println(&quot;Transaction with initial statement committed&quot;)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Transaction with initial statement committed</code></pre><h3 id="Final-statement-on-commit"><a class="docs-heading-anchor" href="#Final-statement-on-commit">Final statement on commit</a><a id="Final-statement-on-commit-1"></a><a class="docs-heading-anchor-permalink" href="#Final-statement-on-commit" title="Permalink"></a></h3><p><code>commit!</code> can run a final statement atomically with the commit:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn)
+bookmarks = commit!(tx;
     statement=&quot;CREATE (n:Final) RETURN n&quot;,
-    parameters=Dict{String,Any}())</code></pre><h3 id="Using-@cypher_str-in-transactions"><a class="docs-heading-anchor" href="#Using-@cypher_str-in-transactions">Using <code>@cypher_str</code> in transactions</a><a id="Using-@cypher_str-in-transactions-1"></a><a class="docs-heading-anchor-permalink" href="#Using-@cypher_str-in-transactions" title="Permalink"></a></h3><p>The <code>@cypher_str</code> macro works seamlessly within transactions:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn)
+    parameters=Dict{String,Any}())
+println(&quot;Committed with final statement, &quot;, length(bookmarks), &quot; bookmark(s)&quot;)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Committed with final statement, 1 bookmark(s)</code></pre><h3 id="Using-@cypher_str-in-transactions"><a class="docs-heading-anchor" href="#Using-@cypher_str-in-transactions">Using <code>@cypher_str</code> in transactions</a><a id="Using-@cypher_str-in-transactions-1"></a><a class="docs-heading-anchor-permalink" href="#Using-@cypher_str-in-transactions" title="Permalink"></a></h3><p>The <code>@cypher_str</code> macro works seamlessly within transactions:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn)
 
 name = &quot;Alice&quot;
 age = 30
 result = query(tx, cypher&quot;CREATE (p:Person {name: $name, age: $age}) RETURN p&quot;)
+println(&quot;Created: &quot;, result[1].p)
 
 name = &quot;Bob&quot;
 age = 25
@@ -29,48 +35,56 @@ query(tx, &quot;&quot;&quot;
     CREATE (a)-[:KNOWS {since: 2024}]-&gt;(b)
 &quot;&quot;&quot;)
 
-bookmarks = commit!(tx)</code></pre><h2 id="Do-block-(recommended)"><a class="docs-heading-anchor" href="#Do-block-(recommended)">Do-block (recommended)</a><a id="Do-block-(recommended)-1"></a><a class="docs-heading-anchor-permalink" href="#Do-block-(recommended)" title="Permalink"></a></h2><p>The safest pattern — auto-commits on success, auto-rolls-back on exception:</p><pre><code class="language-julia hljs">transaction(conn) do tx
-    query(tx, &quot;CREATE (a:Person {name: &#39;Alice&#39;})&quot;)
-    query(tx, &quot;CREATE (b:Person {name: &#39;Bob&#39;})&quot;)
+bookmarks = commit!(tx)
+println(&quot;Transaction committed&quot;)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Created: Node(:Person {name: &quot;Alice&quot;, age: 30})
+Transaction committed</code></pre><h2 id="Do-block-(recommended)"><a class="docs-heading-anchor" href="#Do-block-(recommended)">Do-block (recommended)</a><a id="Do-block-(recommended)-1"></a><a class="docs-heading-anchor-permalink" href="#Do-block-(recommended)" title="Permalink"></a></h2><p>The safest pattern — auto-commits on success, auto-rolls-back on exception:</p><pre><code class="language-julia hljs">transaction(conn) do tx
+    query(tx, &quot;CREATE (a:Person {name: &#39;Diana&#39;})&quot;)
+    query(tx, &quot;CREATE (b:Person {name: &#39;Edgar&#39;})&quot;)
     query(tx, &quot;&quot;&quot;
-        MATCH (a:Person {name: &#39;Alice&#39;}), (b:Person {name: &#39;Bob&#39;})
+        MATCH (a:Person {name: &#39;Diana&#39;}), (b:Person {name: &#39;Edgar&#39;})
         CREATE (a)-[:KNOWS]-&gt;(b)
     &quot;&quot;&quot;)
-end</code></pre><p>If any exception occurs inside the block, the transaction is automatically rolled back before the exception propagates:</p><pre><code class="language-julia hljs">try
+end
+println(&quot;Do-block transaction committed&quot;)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Do-block transaction committed</code></pre><p>If any exception occurs inside the block, the transaction is automatically rolled back before the exception propagates:</p><pre><code class="language-julia hljs">try
     transaction(conn) do tx
         query(tx, &quot;CREATE (n:Temp)&quot;)
         error(&quot;something went wrong&quot;)
     end
 catch e
-    # Transaction was rolled back — no :Temp node was created
-end</code></pre><h3 id="Complete-example-using-do-block"><a class="docs-heading-anchor" href="#Complete-example-using-do-block">Complete example using do-block</a><a id="Complete-example-using-do-block-1"></a><a class="docs-heading-anchor-permalink" href="#Complete-example-using-do-block" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Build a small graph atomically
+    println(&quot;Caught: &quot;, e.msg)
+    println(&quot;Transaction was rolled back — no :Temp node was created&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Caught: something went wrong
+Transaction was rolled back — no :Temp node was created</code></pre><h3 id="Complete-example-using-do-block"><a class="docs-heading-anchor" href="#Complete-example-using-do-block">Complete example using do-block</a><a id="Complete-example-using-do-block-1"></a><a class="docs-heading-anchor-permalink" href="#Complete-example-using-do-block" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Build a small graph atomically
 transaction(conn) do tx
     # Create people
     query(tx, &quot;CREATE (a:Person {name: \$name, age: \$age})&quot;,
-        parameters=Dict{String,Any}(&quot;name&quot; =&gt; &quot;Alice&quot;, &quot;age&quot; =&gt; 30))
+        parameters=Dict{String,Any}(&quot;name&quot; =&gt; &quot;Fay&quot;, &quot;age&quot; =&gt; 30))
     query(tx, &quot;CREATE (b:Person {name: \$name, age: \$age})&quot;,
-        parameters=Dict{String,Any}(&quot;name&quot; =&gt; &quot;Bob&quot;, &quot;age&quot; =&gt; 25))
+        parameters=Dict{String,Any}(&quot;name&quot; =&gt; &quot;George&quot;, &quot;age&quot; =&gt; 25))
     query(tx, &quot;CREATE (c:Person {name: \$name, age: \$age})&quot;,
-        parameters=Dict{String,Any}(&quot;name&quot; =&gt; &quot;Carol&quot;, &quot;age&quot; =&gt; 35))
+        parameters=Dict{String,Any}(&quot;name&quot; =&gt; &quot;Helen&quot;, &quot;age&quot; =&gt; 35))
 
     # Create relationships
     query(tx, &quot;&quot;&quot;
-        MATCH (a:Person {name: &#39;Alice&#39;}), (b:Person {name: &#39;Bob&#39;})
+        MATCH (a:Person {name: &#39;Fay&#39;}), (b:Person {name: &#39;George&#39;})
         CREATE (a)-[:KNOWS {since: 2020}]-&gt;(b)
     &quot;&quot;&quot;)
     query(tx, &quot;&quot;&quot;
-        MATCH (a:Person {name: &#39;Alice&#39;}), (c:Person {name: &#39;Carol&#39;})
+        MATCH (a:Person {name: &#39;Fay&#39;}), (c:Person {name: &#39;Helen&#39;})
         CREATE (a)-[:KNOWS {since: 2022}]-&gt;(c)
     &quot;&quot;&quot;)
 end
-# All five operations commit together, or none do</code></pre><h2 id="Transaction-state"><a class="docs-heading-anchor" href="#Transaction-state">Transaction state</a><a id="Transaction-state-1"></a><a class="docs-heading-anchor-permalink" href="#Transaction-state" title="Permalink"></a></h2><p>The <code>Transaction</code> struct tracks its lifecycle:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn)
-# tx.committed == false, tx.rolled_back == false
+println(&quot;All five operations committed together&quot;)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">All five operations committed together</code></pre><h2 id="Transaction-state"><a class="docs-heading-anchor" href="#Transaction-state">Transaction state</a><a id="Transaction-state-1"></a><a class="docs-heading-anchor-permalink" href="#Transaction-state" title="Permalink"></a></h2><p>The <code>Transaction</code> struct tracks its lifecycle:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn)
+println(&quot;Committed: &quot;, tx.committed, &quot;, Rolled back: &quot;, tx.rolled_back)
 
 commit!(tx)
-# tx.committed == true
-
-# Subsequent queries on a committed/rolled-back tx will error</code></pre><p>Attempting to use a committed or rolled-back transaction raises an error:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn)
+println(&quot;Committed: &quot;, tx.committed)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Committed: false, Rolled back: false
+Committed: true</code></pre><p>Attempting to use a committed or rolled-back transaction raises an error:</p><pre><code class="language-julia hljs">tx = begin_transaction(conn)
 commit!(tx)
 
 # This will throw an error:
-# query(tx, &quot;RETURN 1&quot;)  # &quot;Transaction tx-123 has already been committed&quot;</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../queries/">« Queries</a><a class="docs-footer-nextpage" href="../streaming/">Streaming »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Monday 16 February 2026 11:19">Monday 16 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+try
+    query(tx, &quot;RETURN 1&quot;)
+catch e
+    println(&quot;Error: &quot;, e)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Error: ErrorException(&quot;Transaction ee3b has already been committed&quot;)</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../queries/">« Queries</a><a class="docs-footer-nextpage" href="../streaming/">Streaming »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Monday 16 February 2026 12:02">Monday 16 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

@@ -5,62 +5,55 @@ Pkg.add(url=&quot;https://github.com/algunion/Neo4jQuery.jl&quot;)</code></pre><
 conn = connect(&quot;localhost&quot;, &quot;neo4j&quot;;
     port=7474,
     auth=BasicAuth(&quot;neo4j&quot;, &quot;password&quot;),
-    scheme=&quot;http&quot;)</code></pre><p>Or load credentials from environment variables / a <code>.env</code> file:</p><pre><code class="language-julia hljs"># .env file:
-# NEO4J_URI=neo4j+s://xxxx.databases.neo4j.io
-# NEO4J_USERNAME=neo4j
-# NEO4J_PASSWORD=secret
-# NEO4J_DATABASE=neo4j
-
-conn = connect_from_env(path=&quot;.env&quot;)</code></pre><p>See <a href="../guide/connections/#connections">Connections</a> for full details.</p><h2 id="Your-First-Query"><a class="docs-heading-anchor" href="#Your-First-Query">Your First Query</a><a id="Your-First-Query-1"></a><a class="docs-heading-anchor-permalink" href="#Your-First-Query" title="Permalink"></a></h2><pre><code class="language-julia hljs"># Create a node
+    scheme=&quot;http&quot;)</code></pre><p>Or load credentials from environment variables / a <code>.env</code> file:</p><pre><code class="language-julia hljs">conn = connect_from_env()
+println(conn)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Neo4jConnection(https://d1ed3238.databases.neo4j.io:443/db/neo4j)</code></pre><p>See <a href="../guide/connections/#connections">Connections</a> for full details.</p><h2 id="Your-First-Query"><a class="docs-heading-anchor" href="#Your-First-Query">Your First Query</a><a id="Your-First-Query-1"></a><a class="docs-heading-anchor-permalink" href="#Your-First-Query" title="Permalink"></a></h2><pre><code class="language-julia hljs"># Create a node
 result = query(conn,
     &quot;CREATE (p:Person {name: \$name, age: \$age}) RETURN p&quot;,
     parameters=Dict{String,Any}(&quot;name&quot; =&gt; &quot;Alice&quot;, &quot;age&quot; =&gt; 30);
     include_counters=true)
 
-println(result[1].p)           # Node(:Person {name: &quot;Alice&quot;, age: 30})
-println(result.counters)        # QueryCounters(nodes_created=1, properties_set=2, labels_added=1)
-
-# Read it back with the @cypher_str macro
+println(result[1].p)
+println(result.counters)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Node(:Person {name: &quot;Alice&quot;, age: 30})
+QueryCounters(nodes_created=1, properties_set=2, labels_added=1)</code></pre><pre><code class="language-julia hljs"># Read it back with the @cypher_str macro
 name = &quot;Alice&quot;
 q = cypher&quot;MATCH (p:Person {name: $name}) RETURN p.name AS name, p.age AS age&quot;
 result = query(conn, q; access_mode=:read)
-println(result[1].name)         # &quot;Alice&quot;</code></pre><h2 id="Quick-DSL-Example"><a class="docs-heading-anchor" href="#Quick-DSL-Example">Quick DSL Example</a><a id="Quick-DSL-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Quick-DSL-Example" title="Permalink"></a></h2><p>The DSL lets you write graph queries in Julia syntax:</p><pre><code class="language-julia hljs"># Define your data model
-@node Person begin
+println(result[1].name)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Alice</code></pre><h2 id="Quick-DSL-Example"><a class="docs-heading-anchor" href="#Quick-DSL-Example">Quick DSL Example</a><a id="Quick-DSL-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Quick-DSL-Example" title="Permalink"></a></h2><p>The DSL lets you write graph queries in Julia syntax:</p><pre><code class="language-julia hljs">@node Person begin
     name::String
     age::Int
 end
 
 @rel KNOWS begin
     since::Int
-end
-
-# Create nodes
-alice = @create conn Person(name=&quot;Alice&quot;, age=30)
-bob   = @create conn Person(name=&quot;Bob&quot;, age=25)
+end</code></pre><pre><code class="language-julia hljs"># Create nodes
+alice = @create conn Person(name=&quot;Alice2&quot;, age=30)
+bob   = @create conn Person(name=&quot;Bob2&quot;, age=25)
 
 # Create a relationship between them
-rel = @relate conn alice =&gt; KNOWS(since=2024) =&gt; bob
-
-# Query the graph
+rel = @relate conn alice =&gt; KNOWS(since=2024) =&gt; bob</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Relationship(:KNOWS {since: 2024})</code></pre><pre><code class="language-julia hljs"># Query the graph
 min_age = 20
 result = @cypher conn begin
     p::Person &gt;&gt; r::KNOWS &gt;&gt; friend::Person
-    where(p.name == &quot;Alice&quot;, friend.age &gt; $min_age)
+    where(p.name == &quot;Alice2&quot;, friend.age &gt; $min_age)
     ret(friend.name =&gt; :name, r.since =&gt; :since)
     order(r.since, :desc)
 end
 
 for row in result
     println(row.name, &quot; — known since &quot;, row.since)
-end
-
-# Or as a one-liner comprehension
-result = @cypher conn [p.name for p in Person if p.age &gt; 20]
-
-# Mutations with auto-SET
-@cypher conn begin
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Bob2 — known since 2024</code></pre><pre><code class="language-julia hljs"># Or as a one-liner comprehension
+result = @cypher conn [p.name for p in Person if p.age &gt; 20]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 3 rows
+ Fields: p.name
+  [1] (var&quot;p.name&quot; = &quot;Alice2&quot;,)
+  [2] (var&quot;p.name&quot; = &quot;Alice&quot;,)
+  [3] (var&quot;p.name&quot; = &quot;Bob2&quot;,)
+</code></pre><pre><code class="language-julia hljs"># Mutations with auto-SET
+result = @cypher conn begin
     p::Person
-    where(p.name == &quot;Alice&quot;)
+    where(p.name == &quot;Alice2&quot;)
     p.age = 31
     ret(p)
-end</code></pre><p>See <a href="../guide/dsl/#dsl">DSL</a> for the full guide with advanced examples.</p><h2 id="What&#39;s-Next?"><a class="docs-heading-anchor" href="#What&#39;s-Next?">What&#39;s Next?</a><a id="What&#39;s-Next?-1"></a><a class="docs-heading-anchor-permalink" href="#What&#39;s-Next?" title="Permalink"></a></h2><ul><li><a href="../guide/queries/#queries">Queries</a> — parameterised queries, counters, bookmarks</li><li><a href="../guide/transactions/#transactions">Transactions</a> — explicit begin/commit/rollback and do-block API</li><li><a href="../guide/streaming/#streaming">Streaming</a> — memory-efficient row-by-row iteration</li><li><a href="../guide/dsl/#dsl">DSL</a> — <code>@cypher</code>, <code>@create</code>, <code>@merge</code>, <code>@relate</code> macros</li><li><a href="../api/#api-reference">API Reference</a> — full function and type documentation</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Home</a><a class="docs-footer-nextpage" href="../guide/connections/">Connections »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Monday 16 February 2026 11:19">Monday 16 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 1 row
+ Fields: p
+  [1] (p = Node(:Person {name: &quot;Alice2&quot;, age: 31}),)
+</code></pre><p>See <a href="../guide/dsl/#dsl">DSL</a> for the full guide with advanced examples.</p><h2 id="What&#39;s-Next?"><a class="docs-heading-anchor" href="#What&#39;s-Next?">What&#39;s Next?</a><a id="What&#39;s-Next?-1"></a><a class="docs-heading-anchor-permalink" href="#What&#39;s-Next?" title="Permalink"></a></h2><ul><li><a href="../guide/queries/#queries">Queries</a> — parameterised queries, counters, bookmarks</li><li><a href="../guide/transactions/#transactions">Transactions</a> — explicit begin/commit/rollback and do-block API</li><li><a href="../guide/streaming/#streaming">Streaming</a> — memory-efficient row-by-row iteration</li><li><a href="../guide/dsl/#dsl">DSL</a> — <code>@cypher</code>, <code>@create</code>, <code>@merge</code>, <code>@relate</code> macros</li><li><a href="../api/#api-reference">API Reference</a> — full function and type documentation</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Home</a><a class="docs-footer-nextpage" href="../guide/connections/">Connections »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Monday 16 February 2026 12:02">Monday 16 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
