@@ -1447,4 +1447,4 @@ end
         @test _rel_type_to_string(QuoteNode(:KNOWS)) == ":KNOWS"
         @test _rel_type_to_string(Meta.parse("r:KNOWS")) == "r:KNOWS"
     end
-
+end

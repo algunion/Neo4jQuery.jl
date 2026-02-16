@@ -472,6 +472,31 @@ end
     @test node["name"] == "Alice"
 end
 
+@testset "dsl.md — step 9: UNWIND batch" begin
+    people = [
+        Dict("name" => "Dave", "age" => 28),
+        Dict("name" => "Eve", "age" => 22),
+        Dict("name" => "Frank", "age" => 40),
+    ]
+
+    result = @cypher conn begin
+        unwind($people => :person)
+        create((p:Person))
+        p.name = person.name
+        p.age = person.age
+        ret(p)
+    end
+
+    @test length(result) == 3
+
+    # Verify the nodes exist in the database
+    check = query(conn, "MATCH (p:Person) WHERE p.name IN ['Dave', 'Eve', 'Frank'] RETURN p.name AS name ORDER BY name"; access_mode=:read)
+    @test length(check) == 3
+    @test check[1].name == "Dave"
+    @test check[2].name == "Eve"
+    @test check[3].name == "Frank"
+end
+
 @testset "dsl.md — step 10: OPTIONAL MATCH" begin
     result = @cypher conn begin
         p::Person
@@ -500,6 +525,31 @@ end
     end
 
     @test length(result) <= page_size
+end
+
+@testset "dsl.md — step 12: delete and remove" begin
+    # Delete Frank (created in step 9)
+    target = "Frank"
+    @cypher conn begin
+        (p:Person)
+        where(p.name == $target)
+        detach_delete(p)
+    end
+
+    # Verify Frank is gone
+    check = query(conn, "MATCH (p:Person {name: 'Frank'}) RETURN p"; access_mode=:read)
+    @test length(check) == 0
+
+    # Remove a property
+    @cypher conn begin
+        p::Person
+        remove(p.email)
+        ret(p)
+    end
+
+    # Verify email was removed from Alice
+    check2 = query(conn, "MATCH (p:Person {name: 'Alice'}) RETURN p.email AS email"; access_mode=:read)
+    @test check2[1].email === nothing
 end
 
 @testset "dsl.md — step 13: complex WHERE" begin
@@ -611,12 +661,139 @@ end
     @test length(result) >= 1
 end
 
-@testset "dsl.md — step 22: aggregation" begin
-    result = @cypher conn begin
-        p::Person
-        ret(count(p) => :total, avg(p.age) => :avg_age)
+# Step 21: LOAD CSV — compile-time only (requires server-side file access)
+# The Cypher generation is verified in cypher_dsl_tests.jl ("Compile — LOAD CSV")
+# Live execution requires Neo4j server config for file:// access
+
+@testset "dsl.md — step 21: LOAD CSV (compile-time)" begin
+    using Neo4jQuery: _parse_cypher_block, _compile_cypher_block
+
+    # Verify plain LOAD CSV compiles correctly
+    block = Meta.parse("""
+    begin
+        load_csv("file:///data/people.csv" => :row)
+        create(p::Person)
+        p.name = row
+        ret(p)
     end
-    @test result[1].total >= 3
+    """)
+    cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+    @test contains(cypher, "LOAD CSV FROM 'file:///data/people.csv' AS row")
+    @test contains(cypher, "CREATE (p:Person)")
+
+    # Verify LOAD CSV WITH HEADERS compiles correctly
+    block2 = Meta.parse("""
+    begin
+        load_csv_headers("file:///data/people.csv" => :row)
+        create(p::Person)
+        p.name = row.name
+        p.age = row.age
+    end
+    """)
+    cypher2, _ = _compile_cypher_block(_parse_cypher_block(block2))
+    @test contains(cypher2, "LOAD CSV WITH HEADERS FROM 'file:///data/people.csv' AS row")
+    @test contains(cypher2, "SET p.name = row.name, p.age = row.age")
+end
+
+@testset "dsl.md — step 22: FOREACH" begin
+    # Apply batch property update using FOREACH
+    # collect() is an aggregating function — needs WITH first
+    names = ["Alice", "Bob", "Carol"]
+    @cypher conn begin
+        p::Person
+        where(in(p.name, $names))
+        with(collect(p) => :people)
+        foreach(people => :n, begin
+            n.verified = true
+        end)
+    end
+
+    # Verify the property was set
+    check = query(conn, "MATCH (p:Person) WHERE p.name IN ['Alice', 'Bob', 'Carol'] RETURN p.name AS name, p.verified AS verified ORDER BY name"; access_mode=:read)
+    @test length(check) >= 3
+    @test all(r -> r.verified == true, check)
+end
+
+@testset "dsl.md — step 23: index and constraint management" begin
+    # Clean up any leftover indexes/constraints from previous runs
+    try
+        query(conn, "DROP INDEX person_email_idx IF EXISTS")
+    catch
+    end
+    try
+        query(conn, "DROP CONSTRAINT person_name_required IF EXISTS")
+    catch
+    end
+
+    # Create unnamed index
+    @cypher conn begin
+        create_index(:Person, :name)
+    end
+
+    # Named index
+    @cypher conn begin
+        create_index(:Person, :email, :person_email_idx)
+    end
+
+    # Verify indexes exist
+    idx_check = query(conn, "SHOW INDEXES YIELD name, labelsOrTypes, properties WHERE 'Person' IN labelsOrTypes RETURN name, properties"; access_mode=:read)
+    idx_names = [r.name for r in idx_check]
+    @test "person_email_idx" in idx_names
+
+    # Drop named index
+    @cypher conn begin
+        drop_index(:person_email_idx)
+    end
+
+    # Verify drop
+    idx_check2 = query(conn, "SHOW INDEXES YIELD name WHERE name = 'person_email_idx' RETURN name"; access_mode=:read)
+    @test length(idx_check2) == 0
+
+    # Uniqueness constraint
+    @cypher conn begin
+        create_constraint(:Person, :email, :unique)
+    end
+
+    # NOT NULL constraint (named)
+    @cypher conn begin
+        create_constraint(:Person, :name, :not_null, :person_name_required)
+    end
+
+    # Verify constraints exist
+    con_check = query(conn, "SHOW CONSTRAINTS YIELD name RETURN name"; access_mode=:read)
+    con_names = [r.name for r in con_check]
+    @test "person_name_required" in con_names
+
+    # Drop named constraint
+    @cypher conn begin
+        drop_constraint(:person_name_required)
+    end
+
+    # Verify drop
+    con_check2 = query(conn, "SHOW CONSTRAINTS YIELD name WHERE name = 'person_name_required' RETURN name"; access_mode=:read)
+    @test length(con_check2) == 0
+
+    # Clean up the unnamed uniqueness constraint
+    try
+        # Find and drop the auto-named uniqueness constraint on Person.email
+        remaining = query(conn, "SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties WHERE 'Person' IN labelsOrTypes AND 'email' IN properties RETURN name"; access_mode=:read)
+        for r in remaining
+            query(conn, "DROP CONSTRAINT $(r.name) IF EXISTS")
+        end
+    catch
+    end
+
+    # Clean up the unnamed index on Person.name
+    try
+        remaining_idx = query(conn, "SHOW INDEXES YIELD name, labelsOrTypes, properties WHERE 'Person' IN labelsOrTypes AND 'name' IN properties AND name <> 'index_343aff4e' RETURN name"; access_mode=:read)
+        for r in remaining_idx
+            try
+                query(conn, "DROP INDEX $(r.name) IF EXISTS")
+            catch
+            end
+        end
+    catch
+    end
 end
 
 # ════════════════════════════════════════════════════════════════════════════
