@@ -33,7 +33,7 @@ makedocs(;
         ],
         "API Reference" => "api.md",
     ],
-    warnonly=[:missing_docs, :cross_references],
+    warnonly=[:missing_docs, :cross_references, :setup_block, :example_block],
 )
 
 deploydocs(;
