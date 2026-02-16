@@ -1561,6 +1561,16 @@ TEST_KEY4=no_quotes
             @testset "Biomedical graph (live DB)" begin
                 include("biomedical_graph_test.jl")
             end
+
+            # ── @graph DSL live integration suite ─────────────────────────────
+            @testset "@graph DSL live integration" begin
+                include("graph_dsl_live_test.jl")
+            end
+
+            # ── Documentation code snippet verification ───────────────────────
+            @testset "Documentation snippets (live DB)" begin
+                include("doc_snippets_test.jl")
+            end
         end
     else
         @warn "Skipping integration tests — provide .env or set NEO4J_URI/NEO4J_USERNAME/NEO4J_PASSWORD in ENV" env_file

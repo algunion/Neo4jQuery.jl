@@ -472,7 +472,7 @@ end
 # Find names matching a pattern
 result = @query conn begin
     @match (p:Person)
-    @where matches(p.name, "^A.*e$")
+    @where matches(p.name, "^A.*e\$")
     @return p.name => :name
 end
 ```
