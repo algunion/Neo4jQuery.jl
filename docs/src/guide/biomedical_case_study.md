@@ -21,6 +21,96 @@ The full runnable scripts are:
 - [`test/biomedical_graph_test.jl`](https://github.com/algunion/Neo4jQuery.jl/blob/main/test/biomedical_graph_test.jl) — `@create` / `@relate` standalone macro examples
 - [`test/biomedical_graph_dsl_test.jl`](https://github.com/algunion/Neo4jQuery.jl/blob/main/test/biomedical_graph_dsl_test.jl) — `@cypher` DSL examples
 
+```@setup bio
+using Neo4jQuery
+conn = connect_from_env()
+query(conn, "MATCH (n) DETACH DELETE n")
+
+# Seed a representative biomedical graph for live query examples
+query(conn, """
+CREATE (bc:Disease {name: 'Breast Cancer', icd10_code: 'C50', category: 'Oncology', chronic: true})
+CREATE (lc:Disease {name: 'Non-Small Cell Lung Cancer', icd10_code: 'C34.9', category: 'Oncology', chronic: true})
+CREATE (ad:Disease {name: 'Alzheimer Disease', icd10_code: 'G30', category: 'Neurology', chronic: true})
+
+CREATE (brca1:Gene {symbol: 'BRCA1', full_name: 'BRCA1 DNA Repair Associated', chromosome: '17q21.31', locus: '17q21'})
+CREATE (tp53:Gene {symbol: 'TP53', full_name: 'Tumor Protein P53', chromosome: '17p13.1', locus: '17p13'})
+CREATE (egfr:Gene {symbol: 'EGFR', full_name: 'Epidermal Growth Factor Receptor', chromosome: '7p11.2', locus: '7p11'})
+
+CREATE (p53:Protein {uniprot_id: 'P04637', name: 'Cellular tumor antigen p53', molecular_weight: 43653.0})
+CREATE (egfr_p:Protein {uniprot_id: 'P00533', name: 'EGFR protein', molecular_weight: 134277.0})
+CREATE (brca1_p:Protein {uniprot_id: 'P38398', name: 'BRCA1 protein', molecular_weight: 207721.0})
+
+CREATE (pw1:Pathway {name: 'DNA Damage Response', kegg_id: 'hsa03440', category: 'DNA Repair'})
+CREATE (pw2:Pathway {name: 'EGFR Signaling', kegg_id: 'hsa04012', category: 'Signal Transduction'})
+
+CREATE (trast:Drug {name: 'Trastuzumab', trade_name: 'Herceptin', mechanism: 'HER2 monoclonal antibody', approved_year: 1998})
+CREATE (erlot:Drug {name: 'Erlotinib', trade_name: 'Tarceva', mechanism: 'EGFR tyrosine kinase inhibitor', approved_year: 2004})
+CREATE (olap:Drug {name: 'Olaparib', trade_name: 'Lynparza', mechanism: 'PARP inhibitor', approved_year: 2014})
+CREATE (pemb:Drug {name: 'Pembrolizumab', trade_name: 'Keytruda', mechanism: 'PD-1 checkpoint inhibitor', approved_year: 2014})
+
+CREATE (pt1:Patient {patient_id: 'PT-2024-001', age: 55, sex: 'Female', ethnicity: 'Caucasian'})
+CREATE (pt2:Patient {patient_id: 'PT-2024-002', age: 62, sex: 'Male', ethnicity: 'Asian'})
+
+CREATE (h1:Hospital {name: 'Memorial Sloan Kettering', city: 'New York', country: 'USA', beds: 514})
+CREATE (h2:Hospital {name: 'MD Anderson Cancer Center', city: 'Houston', country: 'USA', beds: 650})
+
+CREATE (ph1:Physician {name: 'Dr. Sarah Chen', specialty: 'Oncology', license_no: 'NY-12345'})
+CREATE (ph2:Physician {name: 'Dr. James Wilson', specialty: 'Neurology', license_no: 'TX-67890'})
+CREATE (ph3:Physician {name: 'Dr. Maria Garcia', specialty: 'Oncology', license_no: 'NY-11111'})
+
+CREATE (ct1:ClinicalTrial {trial_id: 'NCT-001', title: 'HER2+ Breast Cancer Phase III', phase: 'Phase III', status: 'Recruiting', start_year: 2023, enrollment: 500})
+
+CREATE (s1:Symptom {name: 'Fatigue', severity_scale: '1-10', body_system: 'Systemic'})
+CREATE (s2:Symptom {name: 'Nausea', severity_scale: '1-10', body_system: 'GI'})
+CREATE (s3:Symptom {name: 'Cardiotoxicity', severity_scale: '1-5', body_system: 'Cardiac'})
+
+CREATE (bm1:Biomarker {name: 'HER2', biomarker_type: 'Protein', unit: 'IHC score'})
+CREATE (bm2:Biomarker {name: 'BRCA1 mutation', biomarker_type: 'Genetic', unit: 'variant'})
+
+CREATE (pub1:Publication {doi: '10.1000/bc2024', title: 'HER2 Targeted Therapy Advances', journal: 'Nature Medicine', year: 2024})
+
+// Relationships
+CREATE (brca1)-[:ASSOCIATED_WITH {score: 0.95, source: 'ClinVar'}]->(bc)
+CREATE (tp53)-[:ASSOCIATED_WITH {score: 0.90, source: 'ClinVar'}]->(bc)
+CREATE (tp53)-[:ASSOCIATED_WITH {score: 0.85, source: 'GWAS'}]->(lc)
+CREATE (egfr)-[:ASSOCIATED_WITH {score: 0.92, source: 'GWAS'}]->(lc)
+
+CREATE (brca1)-[:ENCODES {transcript_id: 'NM_007294'}]->(brca1_p)
+CREATE (tp53)-[:ENCODES {transcript_id: 'NM_000546'}]->(p53)
+CREATE (egfr)-[:ENCODES {transcript_id: 'NM_005228'}]->(egfr_p)
+
+CREATE (brca1_p)-[:PARTICIPATES_IN {role: 'key_component'}]->(pw1)
+CREATE (p53)-[:PARTICIPATES_IN {role: 'regulator'}]->(pw1)
+CREATE (egfr_p)-[:PARTICIPATES_IN {role: 'receptor'}]->(pw2)
+
+CREATE (trast)-[:TREATS {efficacy: 0.85, evidence_level: '1A'}]->(bc)
+CREATE (olap)-[:TREATS {efficacy: 0.78, evidence_level: '1B'}]->(bc)
+CREATE (erlot)-[:TREATS {efficacy: 0.72, evidence_level: '1A'}]->(lc)
+CREATE (pemb)-[:TREATS {efficacy: 0.65, evidence_level: '2A'}]->(lc)
+
+CREATE (trast)-[:TARGETS {action: 'inhibit', binding_affinity: 0.95}]->(egfr_p)
+CREATE (erlot)-[:TARGETS {action: 'inhibit', binding_affinity: 0.88}]->(egfr_p)
+
+CREATE (pt1)-[:DIAGNOSED_WITH {diagnosis_date: '2024-01-15', stage: 'Stage II'}]->(bc)
+CREATE (pt2)-[:DIAGNOSED_WITH {diagnosis_date: '2024-03-01', stage: 'Stage III'}]->(lc)
+CREATE (pt1)-[:ENROLLED_IN {enrollment_date: '2024-02-01', arm: 'Treatment'}]->(ct1)
+
+CREATE (ph1)-[:LOCATED_AT {department: 'Oncology'}]->(h1)
+CREATE (ph2)-[:LOCATED_AT {department: 'Neurology'}]->(h2)
+CREATE (ph3)-[:LOCATED_AT {department: 'Oncology'}]->(h1)
+
+CREATE (trast)-[:HAS_SIDE_EFFECT {frequency: 'common', severity: 'moderate'}]->(s3)
+CREATE (trast)-[:HAS_SIDE_EFFECT {frequency: 'common', severity: 'mild'}]->(s2)
+CREATE (erlot)-[:HAS_SIDE_EFFECT {frequency: 'common', severity: 'mild'}]->(s1)
+CREATE (erlot)-[:HAS_SIDE_EFFECT {frequency: 'occasional', severity: 'mild'}]->(s2)
+
+CREATE (bm1)-[:INDICATES {threshold: 3.0, direction: 'positive'}]->(bc)
+CREATE (bm2)-[:INDICATES {threshold: 0.0, direction: 'positive'}]->(bc)
+
+CREATE (pub1)-[:PUBLISHED_IN {contribution: 'primary'}]->(bc)
+""")
+```
+
 ---
 
 ## Domain model
@@ -61,30 +151,34 @@ CREATE (d:Disease {name: "Breast Cancer", icd10_code: "C50", category: "Oncology
 
 ### `@cypher` DSL — schema declarations
 
-```julia
-using Neo4jQuery
-
+```@example bio
 @node Disease begin
     name::String
     icd10_code::String
     category::String
     chronic::Bool
 end
+```
 
+```@example bio
 @node Gene begin
     symbol::String
     full_name::String
     chromosome::String
     locus::String = ""       # optional, with default
 end
+```
 
+```@example bio
 @node Protein begin
     uniprot_id::String
     name::String
     molecular_weight::Float64
     function_desc::String = ""
 end
+```
 
+```@example bio
 @node Drug begin
     name::String
     trade_name::String
@@ -92,15 +186,72 @@ end
     approved_year::Int
     phase::String = "approved"
 end
+```
 
+```@example bio
 @node Patient begin
     patient_id::String
     age::Int
     sex::String
     ethnicity::String = ""
 end
+```
 
-# Relationships get schemas too
+Additional node schemas:
+
+```@example bio
+@node ClinicalTrial begin
+    trial_id::String
+    title::String
+    phase::String
+    status::String
+    start_year::Int
+    enrollment::Int
+end
+
+@node Hospital begin
+    name::String
+    city::String
+    country::String
+    beds::Int
+end
+
+@node Physician begin
+    name::String
+    specialty::String
+    license_no::String
+end
+
+@node Pathway begin
+    name::String
+    kegg_id::String
+    category::String
+end
+
+@node Symptom begin
+    name::String
+    severity_scale::String
+    body_system::String
+end
+
+@node Biomarker begin
+    name::String
+    biomarker_type::String
+    unit::String
+end
+
+@node Publication begin
+    doi::String
+    title::String
+    journal::String
+    year::Int
+end
+nothing # hide
+```
+
+Relationship schemas:
+
+```@example bio
 @rel ASSOCIATED_WITH begin
     score::Float64
     source::String
@@ -120,6 +271,62 @@ end
     diagnosis_date::String
     stage::String = ""
 end
+
+@rel ENCODES begin
+    transcript_id::String
+end
+
+@rel PARTICIPATES_IN begin
+    role::String
+end
+
+@rel ENROLLED_IN begin
+    enrollment_date::String
+    arm::String
+end
+
+@rel LOCATED_AT begin
+    department::String
+end
+
+@rel INDICATES begin
+    threshold::Float64
+    direction::String
+end
+
+@rel PUBLISHED_IN begin
+    contribution::String
+end
+
+@rel HAS_SIDE_EFFECT begin
+    frequency::String
+    severity::String
+end
+
+@rel EXPRESSES begin
+    tissue::String
+    expression_level::Float64
+end
+
+@rel INHIBITS begin
+    ic50::Float64
+    mechanism::String = ""
+end
+
+@rel PRESCRIBED_BY begin
+    prescription_date::String
+end
+
+@rel PRESENTS_WITH begin
+    onset::String
+    frequency::String = ""
+end
+
+@rel INTERACTS_WITH begin
+    interaction_type::String
+    confidence::Float64
+end
+nothing # hide
 ```
 
 Schemas enable **runtime validation** — misspelled properties, missing required fields, and type mismatches are caught immediately. The `@cypher` macro uses the same schema registry.
@@ -145,19 +352,23 @@ RETURN drug
 
 ### Julia DSL — `@create` macro
 
-```julia
+```@example bio
 breast_cancer = @create conn Disease(
     name="Breast Cancer",
     icd10_code="C50",
     category="Oncology",
     chronic=true
 )
+```
 
+```@example bio
 brca1 = @create conn Gene(
     symbol="BRCA1", full_name="BRCA1 DNA Repair Associated",
     chromosome="17q21.31", locus="17q21"
 )
+```
 
+```@example bio
 trastuzumab = @create conn Drug(
     name="Trastuzumab", trade_name="Herceptin",
     mechanism="HER2 monoclonal antibody", approved_year=1998
@@ -229,10 +440,11 @@ RETURN r
 
 ### Julia DSL — `@relate` macro
 
-```julia
-# Nodes already in scope from @create — @relate uses elementId() automatically
+```@example bio
 @relate conn brca1 => ASSOCIATED_WITH(score=0.95, source="ClinVar") => breast_cancer
+```
 
+```@example bio
 @relate conn trastuzumab => TREATS(efficacy=0.85, evidence_level="1A") => breast_cancer
 ```
 
@@ -278,7 +490,7 @@ ORDER BY g.symbol
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 disease_name = "Breast Cancer"
 result = @cypher conn begin
     g::Gene >> ::ASSOCIATED_WITH >> d::Disease
@@ -306,7 +518,7 @@ ORDER BY drug.name
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 target_disease = "Breast Cancer"
 result = @cypher conn begin
     drug::Drug >> ::TARGETS >> prot::Protein >> ::PARTICIPATES_IN >> pw::Pathway
@@ -333,7 +545,7 @@ ORDER BY d.name, pt.patient_id
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 result = @cypher conn begin
     pt::Patient >> dx::DIAGNOSED_WITH >> d::Disease
     optional(pt >> e::ENROLLED_IN >> ct::ClinicalTrial)
@@ -359,7 +571,7 @@ ORDER BY drug_count DESC
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 result = @cypher conn begin
     drug::Drug >> t::TREATS >> d::Disease
     with(d.name => :disease, count(drug) => :drug_count, avg(t.efficacy) => :mean_efficacy)
@@ -383,7 +595,7 @@ ORDER BY d1.name
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 result = @cypher conn begin
     d1::Drug >> ::HAS_SIDE_EFFECT >> s::Symptom
     d2::Drug >> ::HAS_SIDE_EFFECT >> s
@@ -410,7 +622,7 @@ ORDER BY t.efficacy DESC
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 pid = "PT-2024-001"
 result = @cypher conn begin
     pt::Patient >> dx::DIAGNOSED_WITH >> d::Disease
@@ -439,7 +651,7 @@ ORDER BY disease_count DESC
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 min_diseases = 2
 result = @cypher conn begin
     g::Gene >> a::ASSOCIATED_WITH >> d::Disease
@@ -463,7 +675,7 @@ ORDER BY physician_count DESC
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 result = @cypher conn begin
     ph::Physician >> ::LOCATED_AT >> h::Hospital
     ret(h.name => :hospital, collect(ph.specialty) => :specialties,
@@ -486,7 +698,7 @@ ORDER BY bm.name, drug.name
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 result = @cypher conn begin
     bm::Biomarker >> ::INDICATES >> d::Disease
     drug::Drug >> ::TREATS >> d
@@ -511,7 +723,7 @@ ORDER BY d.name, g.symbol
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 result = @cypher conn begin
     bm::Biomarker >> ::INDICATES >> d::Disease
     g::Gene >> ::ASSOCIATED_WITH >> d
@@ -539,7 +751,7 @@ RETURN drug.name AS drug, event.name AS event, event.grade AS grade
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 adverse_events = [
     Dict("drug_name" => "Trastuzumab", "event" => "Cardiotoxicity", "grade" => 2),
     Dict("drug_name" => "Erlotinib", "event" => "Rash", "grade" => 1),
@@ -571,7 +783,7 @@ ORDER BY g.symbol
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 result = @cypher conn begin
     g::Gene >> ::ASSOCIATED_WITH >> d::Disease
     where(startswith(g.chromosome, "17"), d.category == "Oncology")
@@ -596,7 +808,7 @@ ORDER BY n_drugs DESC
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 result = @cypher conn begin
     drug::Drug >> t::TREATS >> d::Disease
     with(d, count(drug) => :n_drugs, avg(t.efficacy) => :avg_eff)
@@ -621,7 +833,7 @@ ORDER BY pub.year DESC
 ```
 
 **`@cypher` DSL:**
-```julia
+```@example bio
 result = @cypher conn begin
     pub::Publication >> ::PUBLISHED_IN >> d::Disease
     drug::Drug >> ::TREATS >> d
