@@ -142,19 +142,63 @@ What was tested before and what was added, with rationale.
 
 ---
 
+## Extended Cypher Feature Coverage (newly added)
+
+All features below are now **implemented and tested** in both unit and
+integration contexts.
+
+### Pattern extensions (compile.jl + tests)
+| Feature                 | Unit tests                                         | Integration tests (@query)             |
+| ----------------------- | -------------------------------------------------- | -------------------------------------- |
+| Left-arrow `<--`        | `_match_to_cypher` ×3                              | @query left arrow, with WHERE          |
+| Typed left `<-[r:T]-`   | `_match_to_cypher` ×3, `_is_left_arrow_pattern` ×3 | @query typed left arrow                |
+| Undirected `-[r:T]-`    | `_match_to_cypher` ×3, `_is_undirected_pattern` ×3 | @query undirected rel                  |
+| Variable-length `*1..3` | `_rel_bracket_to_cypher` ×4                        | @query variable-length + in undirected |
+
+### WHERE condition extensions
+| Feature           | Unit tests                                      | Integration tests            |
+| ----------------- | ----------------------------------------------- | ---------------------------- |
+| Regex `matches()` | `_condition_to_cypher` ×3                       | @query regex in WHERE        |
+| CASE/WHEN         | `_case_to_cypher` ×7, `_condition_to_cypher` ×4 | @query CASE in RETURN, WHERE |
+| EXISTS subquery   | `_condition_to_cypher` ×3                       | @query EXISTS, NOT EXISTS    |
+
+### New clause types
+| Feature               | Unit tests                   | Integration tests           |
+| --------------------- | ---------------------------- | --------------------------- |
+| UNION                 | —                            | @query UNION ×2             |
+| UNION ALL             | —                            | @query UNION ALL ×1         |
+| CALL subquery         | `_compile_subquery_block` ×1 | @query CALL subquery ×4     |
+| LOAD CSV              | `_loadcsv_to_cypher` ×2      | @query LOAD CSV ×1          |
+| LOAD CSV WITH HEADERS | —                            | @query LOAD CSV HEADERS ×1  |
+| FOREACH               | `_foreach_to_cypher` ×3      | @query FOREACH ×2           |
+| CREATE INDEX          | `_index_to_cypher` ×3        | @query CREATE INDEX ×2      |
+| DROP INDEX            | `_index_to_cypher` ×1        | @query DROP INDEX ×1        |
+| CREATE CONSTRAINT     | `_constraint_to_cypher` ×1   | @query CREATE CONSTRAINT ×1 |
+| DROP CONSTRAINT       | `_constraint_to_cypher` ×1   | @query DROP CONSTRAINT ×1   |
+
+### Helper functions
+| Function                 | Tests |
+| ------------------------ | ----- |
+| `_get_symbol`            | 2     |
+| `_rel_type_to_string`    | 2     |
+| `_expr_to_cypher` (CASE) | 4     |
+
+### Combined scenario tests
+- Variable-length + WHERE + regex
+- Undirected + CASE in RETURN
+- EXISTS + regex combined WHERE
+- Mutual friends via left-arrow (idiomatic)
+- Left arrow with WHERE + params
+
+---
+
 ## Known Uncovered Areas (out of current DSL scope)
 
 These Cypher features are **not supported** by the DSL and therefore not tested:
 
-- Left-arrow patterns (`<-`)
-- Variable-length relationships (`[*1..3]`)
-- Undirected relationships (`-[]-`)
-- Inline property patterns in MATCH (`{name: $v}`)
-- `UNION` / `UNION ALL`
-- `CALL` subqueries
-- `LOAD CSV`
-- `FOREACH`
-- Regex matching (`=~`)
-- `CASE` / `WHEN` / `THEN` / `ELSE` / `END` expressions
-- `EXISTS {}` subqueries
-- Index/constraint commands
+- Inline property patterns in MATCH (`{name: $v}`) — Julia parser
+  cannot parse `{…}` as an expression; use `@where` instead
+- Shortest path functions (`shortestPath`, `allShortestPaths`)
+- `MERGE` on relationship patterns within `@query` (only node patterns)
+- Procedure calls via `CALL db.xxx()` (distinct from CALL subqueries)
+- Map projections and list comprehensions

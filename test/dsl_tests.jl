@@ -3,7 +3,13 @@ using Neo4jQuery: _node_to_cypher, _rel_bracket_to_cypher, _match_to_cypher,
     _condition_to_cypher, _return_to_cypher, _orderby_to_cypher,
     _set_to_cypher, _delete_to_cypher, _with_to_cypher, _unwind_to_cypher,
     _limit_skip_to_cypher, _escape_cypher_string, _parse_schema_block,
-    _parse_query_block, _NODE_SCHEMAS, _REL_SCHEMAS
+    _parse_query_block, _NODE_SCHEMAS, _REL_SCHEMAS,
+    # New helpers for extended Cypher features
+    _case_to_cypher, _rel_type_to_string,
+    _loadcsv_to_cypher, _foreach_to_cypher, _compile_foreach_body,
+    _index_to_cypher, _constraint_to_cypher, _compile_subquery_block,
+    _is_undirected_pattern, _is_left_arrow_pattern, _left_arrow_to_cypher,
+    _get_symbol, _expr_to_cypher
 using Test
 
 # ── Test helpers (must be before @testset) ──────────────────────────────────
@@ -18,7 +24,9 @@ end
 
 function _find_cypher_string(ex)
     if ex isa String
-        if any(kw -> contains(ex, kw), ["MATCH", "RETURN", "CREATE", "MERGE", "UNWIND", "WITH"])
+        if any(kw -> contains(ex, kw), ["MATCH", "RETURN", "CREATE", "MERGE", "UNWIND", "WITH",
+            "UNION", "CALL", "LOAD CSV", "FOREACH",
+            "DROP INDEX", "DROP CONSTRAINT"])
             return ex
         end
     end
@@ -1822,6 +1830,564 @@ end
         @test contains(cypher_str, "MATCH (b:Person)-[:KNOWS]->(mutual:Person)")
         @test contains(cypher_str, "a.name = \$person_a")
         @test contains(cypher_str, "b.name = \$person_b")
+    end
+
+    # ════════════════════════════════════════════════════════════════════════
+    # NEW FEATURE TESTS — Extended Cypher DSL
+    # ════════════════════════════════════════════════════════════════════════
+
+    # ── Left-arrow patterns ─────────────────────────────────────────────────
+    @testset "_match_to_cypher: left arrow <--" begin
+        # Simple left arrow: (a) <-- (b) → (a)<--(b)
+        ex = Meta.parse("(a) <-- (b)")
+        @test _match_to_cypher(ex) == "(a)<--(b)"
+
+        # Labeled left arrow: (a:A) <-- (b:B)
+        ex = Meta.parse("(a:A) <-- (b:B)")
+        @test _match_to_cypher(ex) == "(a:A)<--(b:B)"
+
+        # Anonymous labels: (:A) <-- (:B)
+        ex = Meta.parse("(:A) <-- (:B)")
+        @test _match_to_cypher(ex) == "(:A)<--(:B)"
+    end
+
+    @testset "_match_to_cypher: typed left arrow <-[]-" begin
+        # Typed left arrow: (a)<-[r:T]-(b)
+        ex = Meta.parse("(a)<-[r:T]-(b)")
+        @test _match_to_cypher(ex) == "(a)<-[r:T]-(b)"
+
+        # With labels: (a:A)<-[r:KNOWS]-(b:B)
+        ex = Meta.parse("(a:A)<-[r:KNOWS]-(b:B)")
+        @test _match_to_cypher(ex) == "(a:A)<-[r:KNOWS]-(b:B)"
+
+        # Anonymous rel: (a:A)<-[:KNOWS]-(b:B)
+        ex = Meta.parse("(a:A)<-[:KNOWS]-(b:B)")
+        @test _match_to_cypher(ex) == "(a:A)<-[:KNOWS]-(b:B)"
+    end
+
+    @testset "_is_left_arrow_pattern detection" begin
+        # (a)<-[r:T]-(b) should be detected
+        ex = Meta.parse("(a)<-[r:T]-(b)")
+        @test _is_left_arrow_pattern(ex) == true
+
+        # (a)-[r:T]->(b) should NOT be detected as left arrow
+        ex = Meta.parse("(a)-[r:T]->(b)")
+        @test _is_left_arrow_pattern(ex) == false
+
+        # Simple symbol
+        @test _is_left_arrow_pattern(:a) == false
+    end
+
+    # ── Undirected relationships ────────────────────────────────────────────
+    @testset "_match_to_cypher: undirected -[]-" begin
+        # (a)-[r:T]-(b) → undirected
+        ex = Meta.parse("(a)-[r:T]-(b)")
+        @test _match_to_cypher(ex) == "(a)-[r:T]-(b)"
+
+        # With labels
+        ex = Meta.parse("(a:A)-[r:KNOWS]-(b:B)")
+        @test _match_to_cypher(ex) == "(a:A)-[r:KNOWS]-(b:B)"
+
+        # Anonymous rel type
+        ex = Meta.parse("(a)-[:KNOWS]-(b)")
+        @test _match_to_cypher(ex) == "(a)-[:KNOWS]-(b)"
+    end
+
+    @testset "_is_undirected_pattern detection" begin
+        # (a)-[r:T]-(b) should be detected
+        ex = Meta.parse("(a)-[r:T]-(b)")
+        @test _is_undirected_pattern(ex) == true
+
+        # (a)-[r:T]->(b) should NOT be undirected (it's a right arrow)
+        ex = Meta.parse("(a)-[r:T]->(b)")
+        @test _is_undirected_pattern(ex) == false
+
+        # Symbol
+        @test _is_undirected_pattern(:a) == false
+    end
+
+    # ── Variable-length relationships ───────────────────────────────────────
+    @testset "_rel_bracket_to_cypher: variable-length" begin
+        # [r:T, 1, 3] → "r:T*1..3"
+        ex = Meta.parse("[r:T, 1, 3]")
+        @test _rel_bracket_to_cypher(ex) == "r:T*1..3"
+
+        # [:T, 1, 3] → ":T*1..3"
+        ex = Meta.parse("[:T, 1, 3]")
+        @test _rel_bracket_to_cypher(ex) == ":T*1..3"
+
+        # [r:T, 2] → "r:T*2"  (exact length)
+        ex = Meta.parse("[r:T, 2]")
+        @test _rel_bracket_to_cypher(ex) == "r:T*2"
+
+        # [:KNOWS, 1, 5] → ":KNOWS*1..5"
+        ex = Meta.parse("[:KNOWS, 1, 5]")
+        @test _rel_bracket_to_cypher(ex) == ":KNOWS*1..5"
+    end
+
+    @testset "_match_to_cypher: variable-length in full pattern" begin
+        # (a)-[r:KNOWS, 1, 3]->(b) → (a)-[r:KNOWS*1..3]->(b)
+        ex = Meta.parse("(a)-[r:KNOWS, 1, 3]->(b)")
+        @test _match_to_cypher(ex) == "(a)-[r:KNOWS*1..3]->(b)"
+
+        # (a)-[:KNOWS, 0, 5]->(b) → (a)-[:KNOWS*0..5]->(b)
+        ex = Meta.parse("(a)-[:KNOWS, 0, 5]->(b)")
+        @test _match_to_cypher(ex) == "(a)-[:KNOWS*0..5]->(b)"
+
+        # Variable-length in undirected
+        ex = Meta.parse("(a)-[r:KNOWS, 1, 3]-(b)")
+        @test _match_to_cypher(ex) == "(a)-[r:KNOWS*1..3]-(b)"
+    end
+
+    # ── Regex matching ──────────────────────────────────────────────────────
+    @testset "_condition_to_cypher: regex matches()" begin
+        # matches(p.name, "Alice") → p.name =~ 'Alice'
+        ex = Meta.parse("matches(p.name, \"Alice\")")
+        params = Symbol[]
+        @test _condition_to_cypher(ex, params) == "p.name =~ 'Alice'"
+
+        # Case-insensitive regex
+        ex = Meta.parse("matches(p.name, \"(?i)alice\")")
+        params = Symbol[]
+        @test _condition_to_cypher(ex, params) == "p.name =~ '(?i)alice'"
+
+        # With parameter
+        ex = Meta.parse("matches(p.name, \$pattern)")
+        params = Symbol[]
+        @test _condition_to_cypher(ex, params) == "p.name =~ \$pattern"
+        @test :pattern in params
+    end
+
+    # ── CASE/WHEN (if/elseif/else → CASE) ──────────────────────────────────
+    @testset "_condition_to_cypher: CASE/WHEN" begin
+        # Simple if/else
+        ex = Meta.parse("if p.age > 18; \"adult\"; else; \"minor\"; end")
+        params = Symbol[]
+        result = _condition_to_cypher(ex, params)
+        @test contains(result, "CASE")
+        @test contains(result, "WHEN p.age > 18 THEN 'adult'")
+        @test contains(result, "ELSE 'minor'")
+        @test contains(result, "END")
+    end
+
+    @testset "_case_to_cypher" begin
+        # if/elseif/else → CASE WHEN ... THEN ... END
+        ex = Meta.parse("""
+            if p.age > 18
+                "adult"
+            elseif p.age > 12
+                "teen"
+            else
+                "child"
+            end
+        """)
+        params = Symbol[]
+        result = _case_to_cypher(ex, params)
+        @test contains(result, "CASE")
+        @test contains(result, "WHEN p.age > 18 THEN 'adult'")
+        @test contains(result, "WHEN p.age > 12 THEN 'teen'")
+        @test contains(result, "ELSE 'child'")
+        @test contains(result, "END")
+
+        # if without else
+        ex = Meta.parse("if p.active; \"yes\"; end")
+        params = Symbol[]
+        result = _case_to_cypher(ex, params)
+        @test contains(result, "WHEN p.active THEN 'yes'")
+        @test contains(result, "END")
+    end
+
+    @testset "_expr_to_cypher: CASE in RETURN/WITH" begin
+        # CASE expression in RETURN position
+        ex = Meta.parse("""
+            if p.age > 18
+                "adult"
+            else
+                "minor"
+            end
+        """)
+        result = _expr_to_cypher(ex)
+        @test contains(result, "CASE")
+        @test contains(result, "WHEN p.age > 18 THEN 'adult'")
+        @test contains(result, "ELSE 'minor'")
+        @test contains(result, "END")
+    end
+
+    # ── EXISTS subqueries ───────────────────────────────────────────────────
+    @testset "_condition_to_cypher: EXISTS" begin
+        # exists((p)-[:KNOWS]->(q)) → EXISTS { MATCH (p)-[:KNOWS]->(q) }
+        ex = Meta.parse("exists((p)-[:KNOWS]->(q))")
+        params = Symbol[]
+        result = _condition_to_cypher(ex, params)
+        @test result == "EXISTS { MATCH (p)-[:KNOWS]->(q) }"
+
+        # exists with labeled nodes
+        ex = Meta.parse("exists((p:Person)-[:KNOWS]->(q:Person))")
+        params = Symbol[]
+        result = _condition_to_cypher(ex, params)
+        @test result == "EXISTS { MATCH (p:Person)-[:KNOWS]->(q:Person) }"
+
+        # NOT exists()
+        ex = Meta.parse("!(exists((p)-[:KNOWS]->(q)))")
+        params = Symbol[]
+        result = _condition_to_cypher(ex, params)
+        @test result == "NOT (EXISTS { MATCH (p)-[:KNOWS]->(q) })"
+    end
+
+    # ── LOAD CSV compilation ────────────────────────────────────────────────
+    @testset "_loadcsv_to_cypher" begin
+        # Basic LOAD CSV
+        ex = Meta.parse("\"http://example.com/data.csv\" => :row")
+        params = Symbol[]
+        @test _loadcsv_to_cypher(ex, params) == "'http://example.com/data.csv' AS row"
+
+        # With parameter URL
+        ex = Meta.parse("\$url => :row")
+        params = Symbol[]
+        result = _loadcsv_to_cypher(ex, params)
+        @test result == "\$url AS row"
+        @test :url in params
+    end
+
+    # ── Index / Constraint compilation ──────────────────────────────────────
+    @testset "_index_to_cypher" begin
+        # CREATE INDEX unnamed
+        args = Any[QuoteNode(:Person), QuoteNode(:name)]
+        @test _index_to_cypher(:create, args) == "CREATE INDEX FOR (n:Person) ON (n.name)"
+
+        # CREATE INDEX named
+        args = Any[QuoteNode(:Person), QuoteNode(:name), QuoteNode(:idx_name)]
+        @test _index_to_cypher(:create, args) == "CREATE INDEX idx_name FOR (n:Person) ON (n.name)"
+
+        # DROP INDEX
+        args = Any[QuoteNode(:idx_name)]
+        @test _index_to_cypher(:drop, args) == "DROP INDEX idx_name IF EXISTS"
+    end
+
+    @testset "_constraint_to_cypher" begin
+        # CREATE CONSTRAINT unique
+        args = Any[QuoteNode(:Person), QuoteNode(:email), QuoteNode(:unique)]
+        @test _constraint_to_cypher(:create, args) ==
+              "CREATE CONSTRAINT FOR (n:Person) REQUIRE n.email IS UNIQUE"
+
+        # DROP CONSTRAINT
+        args = Any[QuoteNode(:my_constraint)]
+        @test _constraint_to_cypher(:drop, args) == "DROP CONSTRAINT my_constraint IF EXISTS"
+    end
+
+    # ── FOREACH compilation ─────────────────────────────────────────────────
+    @testset "_foreach_to_cypher" begin
+        # FOREACH (x IN expr | SET x.prop = val)
+        # _foreach_to_cypher expects a Vector of args: [var, QuoteNode(:in), expr, block]
+        block = Meta.parse("begin; @set x.prop = true; end")
+        args = Any[:x, QuoteNode(:in), :items, block]
+        params = Symbol[]
+        seen = Dict{Symbol,Nothing}()
+        result = _foreach_to_cypher(args, params, seen)
+        @test contains(result, "FOREACH")
+        @test contains(result, "x IN items")
+        @test contains(result, "SET x.prop = true")
+    end
+
+    # ── CALL subquery compilation ───────────────────────────────────────────
+    @testset "_compile_subquery_block" begin
+        block = Meta.parse("begin; @match (n:Person); @return n; end")
+        params = Symbol[]
+        seen = Dict{Symbol,Nothing}()
+        result = _compile_subquery_block(block, params, seen)
+        @test result == "MATCH (n:Person) RETURN n"
+    end
+
+    # ── _get_symbol helper ──────────────────────────────────────────────────
+    @testset "_get_symbol" begin
+        @test _get_symbol(QuoteNode(:foo)) == :foo
+        @test _get_symbol(:foo) == :foo
+    end
+
+    # ── _rel_type_to_string helper ──────────────────────────────────────────
+    @testset "_rel_type_to_string" begin
+        @test _rel_type_to_string(QuoteNode(:KNOWS)) == ":KNOWS"
+        @test _rel_type_to_string(Meta.parse("r:KNOWS")) == "r:KNOWS"
+    end
+
+    # ════════════════════════════════════════════════════════════════════════
+    # NEW @query MACRO INTEGRATION TESTS
+    # ════════════════════════════════════════════════════════════════════════
+
+    @testset "@query: left arrow pattern" begin
+        ex = @macroexpand @query conn begin
+            @match (a:Person) <-- (b:Person)
+            @return a.name, b.name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "MATCH (a:Person)<--(b:Person)")
+        @test contains(cypher_str, "RETURN a.name, b.name")
+    end
+
+    @testset "@query: typed left arrow pattern" begin
+        ex = @macroexpand @query conn begin
+            @match (a:Person) < -[:KNOWS] - (b:Person)
+            @return a.name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "(a:Person)<-[:KNOWS]-(b:Person)")
+    end
+
+    @testset "@query: undirected relationship" begin
+        ex = @macroexpand @query conn begin
+            @match (a:Person) - [r:KNOWS] - (b:Person)
+            @return a.name, b.name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "(a:Person)-[r:KNOWS]-(b:Person)")
+    end
+
+    @testset "@query: variable-length relationship" begin
+        ex = @macroexpand @query conn begin
+            @match (a:Person) - [r:KNOWS, 1, 3] -> (b:Person)
+            @return a.name, b.name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "(a:Person)-[r:KNOWS*1..3]->(b:Person)")
+    end
+
+    @testset "@query: regex in WHERE" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @where matches(p.name, "(?i)alice")
+            @return p
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "WHERE p.name =~ '(?i)alice'")
+    end
+
+    @testset "@query: CASE/WHEN in RETURN" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @return if p.age > 18
+                "adult"
+            else
+                "minor"
+            end => :category
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "CASE")
+        @test contains(cypher_str, "WHEN p.age > 18 THEN 'adult'")
+        @test contains(cypher_str, "ELSE 'minor'")
+        @test contains(cypher_str, "END AS category")
+    end
+
+    @testset "@query: CASE/WHEN in WHERE" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @where if p.age > 18
+                p.status == "active"
+            else
+                p.status == "pending"
+            end
+            @return p
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "CASE")
+        @test contains(cypher_str, "WHEN p.age > 18 THEN p.status = 'active'")
+    end
+
+    @testset "@query: EXISTS in WHERE" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @where exists((p) - [:KNOWS] -> (q:Person))
+            @return p.name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "EXISTS { MATCH (p)-[:KNOWS]->(q:Person) }")
+    end
+
+    @testset "@query: NOT EXISTS in WHERE" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @where !(exists((p) - [:KNOWS] -> (q:Person)))
+            @return p.name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "NOT (EXISTS { MATCH (p)-[:KNOWS]->(q:Person) })")
+    end
+
+    @testset "@query: UNION" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @return p.name => :name
+            @union
+            @match (c:Company)
+            @return c.name => :name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "RETURN p.name AS name UNION MATCH (c:Company)")
+        @test contains(cypher_str, "RETURN c.name AS name")
+    end
+
+    @testset "@query: UNION ALL" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @return p.name => :name
+            @union_all
+            @match (c:Company)
+            @return c.name => :name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "UNION ALL")
+    end
+
+    @testset "@query: CALL subquery" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @call begin
+                @match (p) - [:KNOWS] -> (friend:Person)
+                @return count(friend) => :cnt
+            end
+            @return p.name, cnt
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "CALL {")
+        @test contains(cypher_str, "MATCH (p)-[:KNOWS]->(friend:Person)")
+        @test contains(cypher_str, "RETURN count(friend) AS cnt")
+        @test contains(cypher_str, "}")
+    end
+
+    @testset "@query: LOAD CSV" begin
+        ex = @macroexpand @query conn begin
+            @load_csv "http://example.com/data.csv" => :row
+            @return row
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "LOAD CSV FROM 'http://example.com/data.csv' AS row")
+    end
+
+    @testset "@query: LOAD CSV WITH HEADERS" begin
+        ex = @macroexpand @query conn begin
+            @load_csv_headers "http://example.com/data.csv" => :row
+            @return row
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "LOAD CSV WITH HEADERS FROM 'http://example.com/data.csv' AS row")
+    end
+
+    @testset "@query: FOREACH" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @foreach x :in p.tags begin
+                @set x.reviewed = true
+            end
+            @return p
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "FOREACH")
+        @test contains(cypher_str, "x IN p.tags")
+    end
+
+    @testset "@query: CREATE INDEX" begin
+        ex = @macroexpand @query conn begin
+            @create_index :Person :name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "CREATE INDEX FOR (n:Person) ON (n.name)")
+    end
+
+    @testset "@query: CREATE INDEX named" begin
+        ex = @macroexpand @query conn begin
+            @create_index :Person :name :idx_person_name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "CREATE INDEX idx_person_name FOR (n:Person) ON (n.name)")
+    end
+
+    @testset "@query: DROP INDEX" begin
+        ex = @macroexpand @query conn begin
+            @drop_index :idx_person_name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "DROP INDEX idx_person_name IF EXISTS")
+    end
+
+    @testset "@query: CREATE CONSTRAINT" begin
+        ex = @macroexpand @query conn begin
+            @create_constraint :Person :email :unique
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "CREATE CONSTRAINT FOR (n:Person) REQUIRE n.email IS UNIQUE")
+    end
+
+    @testset "@query: DROP CONSTRAINT" begin
+        ex = @macroexpand @query conn begin
+            @drop_constraint :my_constraint
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "DROP CONSTRAINT my_constraint IF EXISTS")
+    end
+
+    # ── Combined scenarios ──────────────────────────────────────────────────
+
+    @testset "@query: left arrow with WHERE" begin
+        ex = @macroexpand @query conn begin
+            @match (a:Person) <-- (b:Person)
+            @where a.name == $name
+            @return b.name => :source
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "MATCH (a:Person)<--(b:Person)")
+        @test contains(cypher_str, "WHERE a.name = \$name")
+    end
+
+    @testset "@query: variable-length + WHERE + regex" begin
+        ex = @macroexpand @query conn begin
+            @match (a:Person) - [:KNOWS, 1, 3] -> (b:Person)
+            @where matches(b.name, "(?i)bob")
+            @return a.name, b.name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "[:KNOWS*1..3]")
+        @test contains(cypher_str, "b.name =~ '(?i)bob'")
+    end
+
+    @testset "@query: undirected + CASE in RETURN" begin
+        ex = @macroexpand @query conn begin
+            @match (a:Person) - [r:KNOWS] - (b:Person)
+            @return a.name, if r.since > 2020
+                "new"
+            else
+                "old"
+            end => :status
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "(a:Person)-[r:KNOWS]-(b:Person)")
+        @test contains(cypher_str, "CASE")
+        @test contains(cypher_str, "END AS status")
+    end
+
+    @testset "@query: EXISTS + regex combined WHERE" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @where exists((p) - [:WORKS_AT] -> (c:Company)) && matches(p.name, "^A")
+            @return p
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "EXISTS { MATCH (p)-[:WORKS_AT]->(c:Company) }")
+        @test contains(cypher_str, "p.name =~ '^A'")
+        @test contains(cypher_str, "AND")
+    end
+
+    @testset "@query: mutual friends via left-arrow (idiomatic)" begin
+        # Idiomatic mutual friend query using left-arrow:
+        # (a)<-[:KNOWS]-(mutual)-[:KNOWS]->(b)
+        # In our DSL, expressed as two MATCH clauses with left and right arrows
+        ex = @macroexpand @query conn begin
+            @match (mutual:Person) - [:KNOWS] -> (a:Person)
+            @match (mutual) - [:KNOWS] -> (b:Person)
+            @where a.name == $person_a && b.name == $person_b && a != b
+            @return mutual.name => :mutual_friend
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "MATCH (mutual:Person)-[:KNOWS]->(a:Person)")
+        @test contains(cypher_str, "MATCH (mutual)-[:KNOWS]->(b:Person)")
     end
 
 end  # @testset "DSL"
