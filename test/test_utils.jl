@@ -35,12 +35,24 @@ end
 """
     purge_db!(conn; verify=true) -> NamedTuple
 
-Delete all graph data via `MATCH (n) DETACH DELETE n`.
+Delete **all** graph data, indexes, and constraints.
+
+Drops constraints first (some own backing indexes), then standalone indexes,
+then all nodes/relationships via `MATCH (n) DETACH DELETE n`.
 
 Returns `(nodes=<Int>, relationships=<Int>)` measured immediately after the purge.
 If `verify=true`, throws an error unless both counts are zero.
 """
 function purge_db!(conn; verify::Bool=true)
+    # Drop all constraints first (some own backing indexes)
+    for row in query(conn, "SHOW CONSTRAINTS YIELD name")
+        query(conn, "DROP CONSTRAINT $(row.name) IF EXISTS")
+    end
+    # Drop standalone indexes (skip constraint-owned ones)
+    for row in query(conn, "SHOW INDEXES YIELD name, owningConstraint WHERE owningConstraint IS NULL")
+        query(conn, "DROP INDEX $(row.name) IF EXISTS")
+    end
+    # Delete all nodes and relationships
     query(conn, "MATCH (n) DETACH DELETE n")
     counts = graph_counts(conn)
     if verify && (counts.nodes != 0 || counts.relationships != 0)

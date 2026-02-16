@@ -715,14 +715,12 @@ end
 end
 
 @testset "dsl.md — step 23: index and constraint management" begin
-    # Clean up any leftover indexes/constraints from previous runs
-    try
-        query(conn, "DROP INDEX person_email_idx IF EXISTS")
-    catch
+    # Clean up any leftover indexes/constraints on Person from previous runs
+    for row in query(conn, "SHOW CONSTRAINTS YIELD name, labelsOrTypes WHERE 'Person' IN labelsOrTypes RETURN name"; access_mode=:read)
+        query(conn, "DROP CONSTRAINT $(row.name) IF EXISTS")
     end
-    try
-        query(conn, "DROP CONSTRAINT person_name_required IF EXISTS")
-    catch
+    for row in query(conn, "SHOW INDEXES YIELD name, labelsOrTypes, owningConstraint WHERE 'Person' IN labelsOrTypes AND owningConstraint IS NULL RETURN name"; access_mode=:read)
+        query(conn, "DROP INDEX $(row.name) IF EXISTS")
     end
 
     # Create unnamed index
@@ -773,26 +771,12 @@ end
     con_check2 = query(conn, "SHOW CONSTRAINTS YIELD name WHERE name = 'person_name_required' RETURN name"; access_mode=:read)
     @test length(con_check2) == 0
 
-    # Clean up the unnamed uniqueness constraint
-    try
-        # Find and drop the auto-named uniqueness constraint on Person.email
-        remaining = query(conn, "SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties WHERE 'Person' IN labelsOrTypes AND 'email' IN properties RETURN name"; access_mode=:read)
-        for r in remaining
-            query(conn, "DROP CONSTRAINT $(r.name) IF EXISTS")
-        end
-    catch
+    # Clean up all remaining Person constraints and indexes
+    for r in query(conn, "SHOW CONSTRAINTS YIELD name, labelsOrTypes WHERE 'Person' IN labelsOrTypes RETURN name"; access_mode=:read)
+        query(conn, "DROP CONSTRAINT $(r.name) IF EXISTS")
     end
-
-    # Clean up the unnamed index on Person.name
-    try
-        remaining_idx = query(conn, "SHOW INDEXES YIELD name, labelsOrTypes, properties WHERE 'Person' IN labelsOrTypes AND 'name' IN properties AND name <> 'index_343aff4e' RETURN name"; access_mode=:read)
-        for r in remaining_idx
-            try
-                query(conn, "DROP INDEX $(r.name) IF EXISTS")
-            catch
-            end
-        end
-    catch
+    for r in query(conn, "SHOW INDEXES YIELD name, labelsOrTypes, owningConstraint WHERE 'Person' IN labelsOrTypes AND owningConstraint IS NULL RETURN name"; access_mode=:read)
+        query(conn, "DROP INDEX $(r.name) IF EXISTS")
     end
 end
 
