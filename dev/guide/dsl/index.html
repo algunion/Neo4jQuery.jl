@@ -267,27 +267,29 @@ end</code></pre><h3 id="Step-20:-CALL-subqueries"><a class="docs-heading-anchor"
     end)
     ret(p.name =&gt; :name, friend_count)
     order(friend_count, :desc)
-end</code></pre><h3 id="Step-21:-LOAD-CSV"><a class="docs-heading-anchor" href="#Step-21:-LOAD-CSV">Step 21: LOAD CSV</a><a id="Step-21:-LOAD-CSV-1"></a><a class="docs-heading-anchor-permalink" href="#Step-21:-LOAD-CSV" title="Permalink"></a></h3><p>Import data from CSV files:</p><pre><code class="language-julia hljs">@cypher conn begin
-    load_csv(&quot;file:///data/people.csv&quot; =&gt; :row)
-    create((p:Person))
-    p.name = row[0]
-    p.age = row[1]
-end
-
-# With headers
+end</code></pre><h3 id="Step-21:-LOAD-CSV"><a class="docs-heading-anchor" href="#Step-21:-LOAD-CSV">Step 21: LOAD CSV</a><a id="Step-21:-LOAD-CSV-1"></a><a class="docs-heading-anchor-permalink" href="#Step-21:-LOAD-CSV" title="Permalink"></a></h3><p>Import data from CSV files. The <code>WITH HEADERS</code> variant is recommended as it maps columns by name:</p><pre><code class="language-julia hljs"># With headers (recommended)
 @cypher conn begin
     load_csv_headers(&quot;file:///data/people.csv&quot; =&gt; :row)
-    create((p:Person))
+    create(p::Person)
     p.name = row.name
     p.age = row.age
-end</code></pre><h3 id="Step-22:-FOREACH"><a class="docs-heading-anchor" href="#Step-22:-FOREACH">Step 22: FOREACH</a><a id="Step-22:-FOREACH-1"></a><a class="docs-heading-anchor-permalink" href="#Step-22:-FOREACH" title="Permalink"></a></h3><p>Apply updates over a collection:</p><pre><code class="language-julia hljs">names = [&quot;Alice&quot;, &quot;Bob&quot;, &quot;Carol&quot;]
+end
+
+# Without headers (row is a raw list)
+@cypher conn begin
+    load_csv(&quot;file:///data/people.csv&quot; =&gt; :row)
+    create(p::Person)
+    p.name = row
+    ret(p)
+end</code></pre><div class="admonition is-info" id="Note-fb6bbdf2d2d8da13"><header class="admonition-header">Note<a class="admonition-anchor" href="#Note-fb6bbdf2d2d8da13" title="Permalink"></a></header><div class="admonition-body"><p>LOAD CSV requires the CSV file to be accessible from the Neo4j server. For <code>file://</code> URLs, the server must be configured with <code>server.directories.import</code>.</p></div></div><h3 id="Step-22:-FOREACH"><a class="docs-heading-anchor" href="#Step-22:-FOREACH">Step 22: FOREACH</a><a id="Step-22:-FOREACH-1"></a><a class="docs-heading-anchor-permalink" href="#Step-22:-FOREACH" title="Permalink"></a></h3><p>Apply updates over a collection:</p><pre><code class="language-julia hljs">names = [&quot;Alice&quot;, &quot;Bob&quot;, &quot;Carol&quot;]
 @cypher conn begin
     p::Person
     where(in(p.name, $names))
-    foreach(n, :in, collect(p), begin
-        set(n.verified = true)
+    with(collect(p) =&gt; :people)
+    foreach(people =&gt; :n, begin
+        n.verified = true
     end)
-end</code></pre><p>FOREACH body supports <code>set()</code>, <code>create()</code>, <code>merge()</code>, <code>delete()</code>, <code>detach_delete()</code>, <code>remove()</code>, and nested <code>foreach()</code>.</p><h3 id="Step-23:-Index-and-constraint-management"><a class="docs-heading-anchor" href="#Step-23:-Index-and-constraint-management">Step 23: Index and constraint management</a><a id="Step-23:-Index-and-constraint-management-1"></a><a class="docs-heading-anchor-permalink" href="#Step-23:-Index-and-constraint-management" title="Permalink"></a></h3><pre><code class="language-julia hljs">@cypher conn begin
+end</code></pre><p>FOREACH body supports property assignments (auto-SET), <code>create()</code>, <code>merge()</code>, <code>delete()</code>, <code>detach_delete()</code>, <code>remove()</code>, and nested <code>foreach()</code>.</p><h3 id="Step-23:-Index-and-constraint-management"><a class="docs-heading-anchor" href="#Step-23:-Index-and-constraint-management">Step 23: Index and constraint management</a><a id="Step-23:-Index-and-constraint-management-1"></a><a class="docs-heading-anchor-permalink" href="#Step-23:-Index-and-constraint-management" title="Permalink"></a></h3><pre><code class="language-julia hljs">@cypher conn begin
     create_index(:Person, :name)
 end
 
@@ -336,4 +338,4 @@ rel = @relate conn alice =&gt; KNOWS(since=2024) =&gt; bob
 # Returns: Relationship
 
 println(rel.type)      # &quot;KNOWS&quot;
-println(rel[&quot;since&quot;])  # 2024</code></pre><p>Matches nodes by <code>elementId()</code> and validates against the <code>KNOWS</code> schema (if registered).</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../streaming/">« Streaming</a><a class="docs-footer-nextpage" href="../biomedical_case_study/">Biomedical Case Study »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Monday 16 February 2026 10:48">Monday 16 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+println(rel[&quot;since&quot;])  # 2024</code></pre><p>Matches nodes by <code>elementId()</code> and validates against the <code>KNOWS</code> schema (if registered).</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../streaming/">« Streaming</a><a class="docs-footer-nextpage" href="../biomedical_case_study/">Biomedical Case Study »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Monday 16 February 2026 11:19">Monday 16 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
