@@ -25,70 +25,83 @@ This means:
 
 ## Supported Clauses
 
-| DSL Clause        | Cypher Output              | Params captured? |
-| ----------------- | -------------------------- | ---------------- |
-| `@match`          | `MATCH <pattern>`          | No               |
-| `@optional_match` | `OPTIONAL MATCH <pattern>` | No               |
-| `@where`          | `WHERE <condition>`        | Yes              |
-| `@return`         | `RETURN <items>`           | No               |
-| `@with`           | `WITH <items>`             | No               |
-| `@unwind`         | `UNWIND <expr> AS <alias>` | Yes              |
-| `@create`         | `CREATE <pattern>`         | No               |
-| `@merge`          | `MERGE <pattern>`          | No               |
-| `@set`            | `SET <assignments>`        | Yes              |
-| `@remove`         | `REMOVE <items>`           | No               |
-| `@delete`         | `DELETE <items>`           | No               |
-| `@detach_delete`  | `DETACH DELETE <items>`    | No               |
-| `@orderby`        | `ORDER BY <exprs>`         | No               |
-| `@skip`           | `SKIP <n>`                 | Yes (if `$var`)  |
-| `@limit`          | `LIMIT <n>`                | Yes (if `$var`)  |
-| `@on_create_set`  | `ON CREATE SET <…>`        | Yes              |
-| `@on_match_set`   | `ON MATCH SET <…>`         | Yes              |
+| DSL Clause           | Cypher Output                                  | Params captured? |
+| -------------------- | ---------------------------------------------- | ---------------- |
+| `@match`             | `MATCH <pattern>`                              | No               |
+| `@optional_match`    | `OPTIONAL MATCH <pattern>`                     | No               |
+| `@where`             | `WHERE <condition>`                            | Yes              |
+| `@return`            | `RETURN <items>`                               | No               |
+| `@with`              | `WITH <items>`                                 | No               |
+| `@unwind`            | `UNWIND <expr> AS <alias>`                     | Yes              |
+| `@create`            | `CREATE <pattern>`                             | No               |
+| `@merge`             | `MERGE <pattern>`                              | No               |
+| `@set`               | `SET <assignments>`                            | Yes              |
+| `@remove`            | `REMOVE <items>`                               | No               |
+| `@delete`            | `DELETE <items>`                               | No               |
+| `@detach_delete`     | `DETACH DELETE <items>`                        | No               |
+| `@orderby`           | `ORDER BY <exprs>`                             | No               |
+| `@skip`              | `SKIP <n>`                                     | Yes (if `$var`)  |
+| `@limit`             | `LIMIT <n>`                                    | Yes (if `$var`)  |
+| `@on_create_set`     | `ON CREATE SET <…>`                            | Yes              |
+| `@on_match_set`      | `ON MATCH SET <…>`                             | Yes              |
+| `@union`             | `UNION`                                        | No               |
+| `@union_all`         | `UNION ALL`                                    | No               |
+| `@call begin…end`    | `CALL { <subquery> }`                          | Yes (in body)    |
+| `@load_csv`          | `LOAD CSV FROM <url> AS <var>`                 | Yes (if `$url`)  |
+| `@load_csv_headers`  | `LOAD CSV WITH HEADERS FROM <url> AS <var>`    | Yes (if `$url`)  |
+| `@foreach`           | `FOREACH (<var> IN <expr> \| <body>)`          | Yes (in body)    |
+| `@create_index`      | `CREATE INDEX [name] FOR (n:L) ON (n.prop)`    | No               |
+| `@drop_index`        | `DROP INDEX <name> IF EXISTS`                  | No               |
+| `@create_constraint` | `CREATE CONSTRAINT FOR (n:L) REQUIRE n.p IS …` | No               |
+| `@drop_constraint`   | `DROP CONSTRAINT <name> IF EXISTS`             | No               |
 
 ---
 
 ## Pattern Syntax Mapping
 
-| Julia DSL                          | Cypher                                |
-| ---------------------------------- | ------------------------------------- |
-| `(p:Person)`                       | `(p:Person)`                          |
-| `(:Person)`                        | `(:Person)`                           |
-| `(p)`                              | `(p)`                                 |
-| `(a) --> (b)`                      | `(a)-->(b)`                           |
-| `(a)-[r:KNOWS]->(b)`               | `(a)-[r:KNOWS]->(b)`                  |
-| `(:A)-[:R]->(:B)`                  | `(:A)-[:R]->(:B)`                     |
-| `(a)-[r:R]->(b)-[s:S]->(c)`        | `(a)-[r:R]->(b)-[s:S]->(c)` (chained) |
-| `(a:A), (b:B)` (tuple in `@match`) | `(a:A), (b:B)` (multiple patterns)    |
+| Julia DSL                          | Cypher                                 |
+| ---------------------------------- | -------------------------------------- |
+| `(p:Person)`                       | `(p:Person)`                           |
+| `(:Person)`                        | `(:Person)`                            |
+| `(p)`                              | `(p)`                                  |
+| `(a) --> (b)`                      | `(a)-->(b)`                            |
+| `(a) <-- (b)`                      | `(a)<--(b)`                            |
+| `(a)-[r:KNOWS]->(b)`               | `(a)-[r:KNOWS]->(b)`                   |
+| `(a)<-[r:KNOWS]-(b)`               | `(a)<-[r:KNOWS]-(b)`                   |
+| `(a)-[r:KNOWS]-(b)`                | `(a)-[r:KNOWS]-(b)` (undirected)       |
+| `(a)-[r:KNOWS, 1, 3]->(b)`         | `(a)-[r:KNOWS*1..3]->(b)` (var-length) |
+| `(a)-[r:KNOWS, 2]->(b)`            | `(a)-[r:KNOWS*2]->(b)` (exact length)  |
+| `(:A)-[:R]->(:B)`                  | `(:A)-[:R]->(:B)`                      |
+| `(a)-[r:R]->(b)-[s:S]->(c)`        | `(a)-[r:R]->(b)-[s:S]->(c)` (chained)  |
+| `(a:A), (b:B)` (tuple in `@match`) | `(a:A), (b:B)` (multiple patterns)     |
 
 ### Known Limitations
 
-- **Left-arrow (`<-`) patterns are not supported.** The Julia parser
-  treats `<-` differently; the DSL only generates `-->` or `-[…]->`.
-  Workaround: use two separate `@match` clauses pointing toward a shared node.
-- **Variable-length relationships** (e.g., `[*1..3]`) are not supported.
-- **Undirected relationships** (`-[]-`) are not supported.
 - **Inline property patterns** (`{name: $v}`) in `@match` are not supported.
-  Use `@where` conditions instead.
+  Julia cannot parse `{…}` as an expression. Use `@where` conditions instead.
 
 ---
 
 ## Operator Mapping
 
-| Julia                   | Cypher        | Context    |
-| ----------------------- | ------------- | ---------- |
-| `==`                    | `=`           | WHERE      |
-| `!=`                    | `<>`          | WHERE      |
-| `≠`                     | `<>`          | WHERE      |
-| `&&`                    | `AND`         | WHERE      |
-| `\|\|`                  | `OR`          | WHERE      |
-| `!`                     | `NOT`         | WHERE      |
-| `>=`, `<=`, etc.        | same          | WHERE      |
-| `startswith`            | `STARTS WITH` | WHERE      |
-| `endswith`              | `ENDS WITH`   | WHERE      |
-| `contains`              | `CONTAINS`    | WHERE      |
-| `in` / `∈`              | `IN`          | WHERE      |
-| `isnothing`             | `IS NULL`     | WHERE      |
-| `+`,`-`,`*`,`/`,`%`,`^` | same          | WHERE, SET |
+| Julia                   | Cypher                          | Context             |
+| ----------------------- | ------------------------------- | ------------------- |
+| `==`                    | `=`                             | WHERE               |
+| `!=`                    | `<>`                            | WHERE               |
+| `≠`                     | `<>`                            | WHERE               |
+| `&&`                    | `AND`                           | WHERE               |
+| `\|\|`                  | `OR`                            | WHERE               |
+| `!`                     | `NOT`                           | WHERE               |
+| `>=`, `<=`, etc.        | same                            | WHERE               |
+| `startswith`            | `STARTS WITH`                   | WHERE               |
+| `endswith`              | `ENDS WITH`                     | WHERE               |
+| `contains`              | `CONTAINS`                      | WHERE               |
+| `in` / `∈`              | `IN`                            | WHERE               |
+| `isnothing`             | `IS NULL`                       | WHERE               |
+| `matches(a, b)`         | `a =~ b`                        | WHERE               |
+| `exists((pattern))`     | `EXISTS { MATCH pattern }`      | WHERE               |
+| `if/elseif/else`        | `CASE WHEN … THEN … ELSE … END` | WHERE, RETURN, WITH |
+| `+`,`-`,`*`,`/`,`%`,`^` | same                            | WHERE, SET          |
 
 ---
 
