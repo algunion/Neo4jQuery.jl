@@ -3,9 +3,17 @@
 This case study demonstrates building a realistic biomedical knowledge graph
 using the Neo4jQuery DSL. It covers schema declarations, node/relationship
 creation, and complex analytical queries — with side-by-side comparisons of
-**raw Cypher** vs the **Julia DSL**.
+**raw Cypher** vs the **`@query` DSL** vs the **`@graph` DSL**.
 
-The full runnable script is in [`test/biomedical_graph_test.jl`](https://github.com/algunion/Neo4jQuery.jl/blob/main/test/biomedical_graph_test.jl).
+Neo4jQuery offers two macro-based query interfaces:
+- **`@query`** — uses `@sub-macro` syntax (`@match`, `@where`, `@return`, …) and Cypher-like patterns `(p:Person)-[r:KNOWS]->(q:Person)`
+- **`@graph`** — uses plain function-call syntax (`where()`, `ret()`, `order()`, …) and Julia-native `>>` chain patterns `p::Person >> r::KNOWS >> q::Person`
+
+Both compile to **identical Cypher** at macro expansion time. The examples below show all three approaches.
+
+The full runnable scripts are:
+- [`test/biomedical_graph_test.jl`](https://github.com/algunion/Neo4jQuery.jl/blob/main/test/biomedical_graph_test.jl) — `@query` / `@create` / `@relate` version
+- [`test/biomedical_graph_dsl_test.jl`](https://github.com/algunion/Neo4jQuery.jl/blob/main/test/biomedical_graph_dsl_test.jl) — `@graph` version
 
 ---
 
@@ -45,7 +53,7 @@ CREATE (d:Disease {name: "Breast Cancer", icd10_code: "C50", category: "Oncology
 // Oops, someone writes: CREATE (d:Disease {naam: "Lung Cancer"})  — no error
 ```
 
-### Julia DSL
+### Julia DSL (`@query` and `@graph` share the same schemas)
 
 ```julia
 using Neo4jQuery
@@ -108,7 +116,7 @@ end
 end
 ```
 
-Schemas enable **runtime validation** — misspelled properties, missing required fields, and type mismatches are caught immediately.
+Schemas enable **runtime validation** — misspelled properties, missing required fields, and type mismatches are caught immediately. Both `@query` and `@graph` use the same schema registry.
 
 ---
 
@@ -129,7 +137,7 @@ CREATE (drug:Drug {name: 'Trastuzumab', trade_name: 'Herceptin',
 RETURN drug
 ```
 
-### Julia DSL
+### Julia DSL — `@create` macro
 
 ```julia
 breast_cancer = @create conn Disease(
@@ -152,6 +160,48 @@ trastuzumab = @create conn Drug(
 
 Each call returns a `Node` object you can use directly to create relationships.
 
+### Julia DSL — `@graph` macro
+
+```julia
+breast_cancer = let
+    r = @graph conn begin
+        create(d::Disease)
+        d.name = "Breast Cancer"
+        d.icd10_code = "C50"
+        d.category = "Oncology"
+        d.chronic = true
+        ret(d)
+    end
+    r[1].d
+end
+
+brca1 = let
+    r = @graph conn begin
+        create(g::Gene)
+        g.symbol = "BRCA1"
+        g.full_name = "BRCA1 DNA Repair Associated"
+        g.chromosome = "17q21.31"
+        g.locus = "17q21"
+        ret(g)
+    end
+    r[1].g
+end
+
+trastuzumab = let
+    r = @graph conn begin
+        create(d::Drug)
+        d.name = "Trastuzumab"
+        d.trade_name = "Herceptin"
+        d.mechanism = "HER2 monoclonal antibody"
+        d.approved_year = 1998
+        ret(d)
+    end
+    r[1].d
+end
+```
+
+The `@graph` approach uses `create()` + property assignments (`d.name = "..."`) which compile to `CREATE (d:Disease) SET d.name = '...'`. Properties are set via auto-SET detection.
+
 ---
 
 ## 3. Creating relationships
@@ -169,7 +219,7 @@ CREATE (drug)-[r:TREATS {efficacy: 0.85, evidence_level: '1A'}]->(d)
 RETURN r
 ```
 
-### Julia DSL
+### Julia DSL — `@relate` macro
 
 ```julia
 # Nodes already in scope from @create — @relate uses elementId() automatically
@@ -179,6 +229,31 @@ RETURN r
 ```
 
 No need to re-match nodes by property. The DSL uses `elementId()` from the returned `Node` objects — zero ambiguity, zero duplication.
+
+### Julia DSL — `@graph` macro
+
+```julia
+# Match nodes by property, then create the relationship with arrow syntax
+@graph conn begin
+    match(g::Gene, d::Disease)
+    where(g.symbol == "BRCA1", d.name == "Breast Cancer")
+    create((g) - [r::ASSOCIATED_WITH] -> (d))
+    r.score = 0.95
+    r.source = "ClinVar"
+    ret(r)
+end
+
+@graph conn begin
+    match(drug::Drug, d::Disease)
+    where(drug.name == "Trastuzumab", d.name == "Breast Cancer")
+    create((drug) - [r::TREATS] -> (d))
+    r.efficacy = 0.85
+    r.evidence_level = "1A"
+    ret(r)
+end
+```
+
+The `@graph` approach uses `match()` + `where()` to locate nodes, then `create()` with arrow patterns. Relationship properties are set via auto-SET.
 
 ---
 
@@ -194,7 +269,7 @@ RETURN g.symbol AS gene, p.name AS protein, pw.name AS pathway
 ORDER BY g.symbol
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 disease_name = "Breast Cancer"
 result = @query conn begin
@@ -205,6 +280,20 @@ result = @query conn begin
     @orderby g.symbol
 end
 ```
+
+**`@graph` DSL:**
+```julia
+disease_name = "Breast Cancer"
+result = @graph conn begin
+    g::Gene >> ::ASSOCIATED_WITH >> d::Disease
+    g >> ::ENCODES >> p::Protein >> ::PARTICIPATES_IN >> pw::Pathway
+    where(d.name == $disease_name)
+    ret(g.symbol => :gene, p.name => :protein, pw.name => :pathway)
+    order(g.symbol)
+end
+```
+
+The `>>` chains replace `-[]->` arrow syntax. Bare patterns become implicit `MATCH` clauses.
 
 ---
 
@@ -220,7 +309,7 @@ RETURN drug.name AS drug, pw.name AS pathway, g.symbol AS gene
 ORDER BY drug.name
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 target_disease = "Breast Cancer"
 result = @query conn begin
@@ -231,6 +320,20 @@ result = @query conn begin
     @where d.name == $target_disease
     @return drug.name => :drug, pw.name => :pathway, g.symbol => :gene
     @orderby drug.name
+end
+```
+
+**`@graph` DSL:**
+```julia
+target_disease = "Breast Cancer"
+result = @graph conn begin
+    drug::Drug >> ::TARGETS >> prot::Protein >> ::PARTICIPATES_IN >> pw::Pathway
+    prot2::Protein >> ::PARTICIPATES_IN >> pw
+    g::Gene >> ::ENCODES >> prot2
+    g >> ::ASSOCIATED_WITH >> d::Disease
+    where(d.name == $target_disease)
+    ret(drug.name => :drug, pw.name => :pathway, g.symbol => :gene)
+    order(drug.name)
 end
 ```
 
@@ -247,7 +350,7 @@ RETURN pt.patient_id AS patient, d.name AS disease,
 ORDER BY d.name, pt.patient_id
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 result = @query conn begin
     @match (pt:Patient)-[dx:DIAGNOSED_WITH]->(d:Disease)
@@ -257,6 +360,19 @@ result = @query conn begin
     @orderby d.name pt.patient_id
 end
 ```
+
+**`@graph` DSL:**
+```julia
+result = @graph conn begin
+    pt::Patient >> dx::DIAGNOSED_WITH >> d::Disease
+    optional(pt >> e::ENROLLED_IN >> ct::ClinicalTrial)
+    ret(pt.patient_id => :patient, d.name => :disease,
+        dx.stage => :stage, ct.trial_id => :trial)
+    order(d.name, pt.patient_id)
+end
+```
+
+`optional()` maps to `OPTIONAL MATCH` and accepts the same `>>` chain patterns.
 
 ---
 
@@ -271,7 +387,7 @@ RETURN disease, drug_count, mean_efficacy
 ORDER BY drug_count DESC
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 result = @query conn begin
     @match (drug:Drug)-[t:TREATS]->(d:Disease)
@@ -279,6 +395,17 @@ result = @query conn begin
     @where drug_count > 1
     @return disease, drug_count, mean_efficacy
     @orderby drug_count :desc
+end
+```
+
+**`@graph` DSL:**
+```julia
+result = @graph conn begin
+    drug::Drug >> t::TREATS >> d::Disease
+    with(d.name => :disease, count(drug) => :drug_count, avg(t.efficacy) => :mean_efficacy)
+    where(drug_count > 1)
+    ret(disease, drug_count, mean_efficacy)
+    order(drug_count, :desc)
 end
 ```
 
@@ -295,7 +422,7 @@ RETURN d1.name AS drug1, d2.name AS drug2, collect(s.name) AS shared_effects
 ORDER BY d1.name
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 result = @query conn begin
     @match (d1:Drug)-[:HAS_SIDE_EFFECT]->(s:Symptom)
@@ -303,6 +430,17 @@ result = @query conn begin
     @where d1.name < d2.name
     @return d1.name => :drug1, d2.name => :drug2, collect(s.name) => :shared_effects
     @orderby d1.name
+end
+```
+
+**`@graph` DSL:**
+```julia
+result = @graph conn begin
+    d1::Drug >> ::HAS_SIDE_EFFECT >> s::Symptom
+    d2::Drug >> ::HAS_SIDE_EFFECT >> s
+    where(d1.name < d2.name)
+    ret(d1.name => :drug1, d2.name => :drug2, collect(s.name) => :shared_effects)
+    order(d1.name)
 end
 ```
 
@@ -322,7 +460,7 @@ RETURN d.name AS disease, drug.name AS drug_option,
 ORDER BY t.efficacy DESC
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 pid = "PT-2024-001"
 result = @query conn begin
@@ -335,6 +473,22 @@ result = @query conn begin
             t.efficacy => :efficacy, ct.title => :trial,
             collect(se.name) => :side_effects
     @orderby t.efficacy :desc
+end
+```
+
+**`@graph` DSL:**
+```julia
+pid = "PT-2024-001"
+result = @graph conn begin
+    pt::Patient >> dx::DIAGNOSED_WITH >> d::Disease
+    drug::Drug >> t::TREATS >> d
+    where(pt.patient_id == $pid)
+    optional(pt >> e::ENROLLED_IN >> ct::ClinicalTrial)
+    optional(drug >> ::HAS_SIDE_EFFECT >> se::Symptom)
+    ret(d.name => :disease, drug.name => :drug_option,
+        t.efficacy => :efficacy, ct.title => :trial,
+        collect(se.name) => :side_effects)
+    order(t.efficacy, :desc)
 end
 ```
 
@@ -351,7 +505,7 @@ RETURN gene, disease_count, diseases
 ORDER BY disease_count DESC
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 min_diseases = 2
 result = @query conn begin
@@ -360,6 +514,18 @@ result = @query conn begin
     @where disease_count >= $min_diseases
     @return gene, disease_count, diseases
     @orderby disease_count :desc
+end
+```
+
+**`@graph` DSL:**
+```julia
+min_diseases = 2
+result = @graph conn begin
+    g::Gene >> a::ASSOCIATED_WITH >> d::Disease
+    with(g.symbol => :gene, count(d) => :disease_count, collect(d.name) => :diseases)
+    where(disease_count >= $min_diseases)
+    ret(gene, disease_count, diseases)
+    order(disease_count, :desc)
 end
 ```
 
@@ -375,13 +541,23 @@ RETURN h.name AS hospital, collect(ph.specialty) AS specialties,
 ORDER BY physician_count DESC
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 result = @query conn begin
     @match (ph:Physician)-[:LOCATED_AT]->(h:Hospital)
     @return h.name => :hospital, collect(ph.specialty) => :specialties,
             count(ph) => :physician_count
     @orderby physician_count :desc
+end
+```
+
+**`@graph` DSL:**
+```julia
+result = @graph conn begin
+    ph::Physician >> ::LOCATED_AT >> h::Hospital
+    ret(h.name => :hospital, collect(ph.specialty) => :specialties,
+        count(ph) => :physician_count)
+    order(physician_count, :desc)
 end
 ```
 
@@ -398,7 +574,7 @@ RETURN bm.name AS biomarker, d.name AS disease,
 ORDER BY bm.name, drug.name
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 result = @query conn begin
     @match (bm:Biomarker)-[:INDICATES]->(d:Disease)
@@ -406,6 +582,17 @@ result = @query conn begin
     @return bm.name => :biomarker, d.name => :disease,
             drug.name => :drug, drug.mechanism => :mechanism
     @orderby bm.name drug.name
+end
+```
+
+**`@graph` DSL:**
+```julia
+result = @graph conn begin
+    bm::Biomarker >> ::INDICATES >> d::Disease
+    drug::Drug >> ::TREATS >> d
+    ret(bm.name => :biomarker, d.name => :disease,
+        drug.name => :drug, drug.mechanism => :mechanism)
+    order(bm.name, drug.name)
 end
 ```
 
@@ -423,7 +610,7 @@ RETURN bm.name AS biomarker, d.name AS disease,
 ORDER BY d.name, g.symbol
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 result = @query conn begin
     @match (bm:Biomarker)-[:INDICATES]->(d:Disease)
@@ -435,7 +622,19 @@ result = @query conn begin
 end
 ```
 
-A **five-hop traversal** across the entire knowledge base — expressed as readable Julia.
+**`@graph` DSL:**
+```julia
+result = @graph conn begin
+    bm::Biomarker >> ::INDICATES >> d::Disease
+    g::Gene >> ::ASSOCIATED_WITH >> d
+    g >> ::ENCODES >> p::Protein >> ::PARTICIPATES_IN >> pw::Pathway
+    ret(bm.name => :biomarker, d.name => :disease,
+        g.symbol => :gene, p.name => :protein, pw.name => :pathway)
+    order(d.name, g.symbol)
+end
+```
+
+A **five-hop traversal** across the entire knowledge base — expressed as readable Julia. The `>>` chains make the directionality explicit and composable.
 
 ---
 
@@ -451,7 +650,7 @@ SET event.name = ae.event, event.grade = ae.grade
 RETURN drug.name AS drug, event.name AS event, event.grade AS grade
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 adverse_events = [
     Dict("drug_name" => "Trastuzumab", "event" => "Cardiotoxicity", "grade" => 2),
@@ -471,6 +670,26 @@ result = @query conn begin
 end
 ```
 
+**`@graph` DSL:**
+```julia
+adverse_events = [
+    Dict("drug_name" => "Trastuzumab", "event" => "Cardiotoxicity", "grade" => 2),
+    Dict("drug_name" => "Erlotinib", "event" => "Rash", "grade" => 1),
+    Dict("drug_name" => "Pembrolizumab", "event" => "Pneumonitis", "grade" => 3),
+    Dict("drug_name" => "Olaparib", "event" => "Anemia", "grade" => 2),
+]
+
+result = @graph conn begin
+    unwind($adverse_events => :ae)
+    drug::Drug
+    where(drug.name == ae.drug_name)
+    create((drug) - [::REPORTED_AE] -> (event::AdverseEvent))
+    event.name = ae.event
+    event.grade = ae.grade
+    ret(drug.name => :drug, event.name => :event, event.grade => :grade)
+end
+```
+
 ---
 
 ### 4.12 Complex WHERE with string functions
@@ -483,7 +702,7 @@ RETURN g.symbol AS gene, g.chromosome AS chr, d.name AS disease
 ORDER BY g.symbol
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 result = @query conn begin
     @match (g:Gene)-[:ASSOCIATED_WITH]->(d:Disease)
@@ -492,6 +711,18 @@ result = @query conn begin
     @orderby g.symbol
 end
 ```
+
+**`@graph` DSL:**
+```julia
+result = @graph conn begin
+    g::Gene >> ::ASSOCIATED_WITH >> d::Disease
+    where(startswith(g.chromosome, "17"), d.category == "Oncology")
+    ret(g.symbol => :gene, g.chromosome => :chr, d.name => :disease)
+    order(g.symbol)
+end
+```
+
+Multi-condition `where()` auto-ANDs conditions — no need for `&&`.
 
 ---
 
@@ -506,7 +737,7 @@ RETURN d.name AS disease, n_drugs, avg_eff, count(g) AS n_genes
 ORDER BY n_drugs DESC
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 result = @query conn begin
     @match (drug:Drug)-[t:TREATS]->(d:Disease)
@@ -515,6 +746,17 @@ result = @query conn begin
     @return d.name => :disease, n_drugs, avg_eff,
             count(g) => :n_genes
     @orderby n_drugs :desc
+end
+```
+
+**`@graph` DSL:**
+```julia
+result = @graph conn begin
+    drug::Drug >> t::TREATS >> d::Disease
+    with(d, count(drug) => :n_drugs, avg(t.efficacy) => :avg_eff)
+    g::Gene >> ::ASSOCIATED_WITH >> d
+    ret(d.name => :disease, n_drugs, avg_eff, count(g) => :n_genes)
+    order(n_drugs, :desc)
 end
 ```
 
@@ -532,7 +774,7 @@ RETURN pub.title AS publication, pub.journal AS journal,
 ORDER BY pub.year DESC
 ```
 
-**Julia DSL:**
+**`@query` DSL:**
 ```julia
 result = @query conn begin
     @match (pub:Publication)-[:PUBLISHED_IN]->(d:Disease)
@@ -544,18 +786,38 @@ result = @query conn begin
 end
 ```
 
+**`@graph` DSL:**
+```julia
+result = @graph conn begin
+    pub::Publication >> ::PUBLISHED_IN >> d::Disease
+    drug::Drug >> ::TREATS >> d
+    with(pub, d, collect(drug.name) => :drugs)
+    ret(pub.title => :publication, pub.journal => :journal,
+        d.name => :disease, drugs)
+    order(pub.year, :desc)
+end
+```
+
 ---
 
 ## Key takeaways
 
-| Aspect                | Raw Cypher                                   | Julia DSL                               |
-| :-------------------- | :------------------------------------------- | :-------------------------------------- |
-| **Injection safety**  | Manual parameterisation                      | Automatic — `$var` captures safely      |
-| **Schema validation** | None built-in                                | `@node`/`@rel` with runtime checks      |
-| **Node references**   | Re-match by property                         | Direct variable reuse via `elementId()` |
-| **Operator mapping**  | Cypher-specific (`<>`, `AND`, `STARTS WITH`) | Julia-native (`!=`, `&&`, `startswith`) |
-| **Return aliases**    | `expr AS alias`                              | `expr => :alias`                        |
-| **Compile-time**      | String at runtime                            | Cypher assembled at macro expansion     |
-| **Composability**     | String concatenation                         | Structured macro blocks                 |
+| Aspect                | Raw Cypher                         | `@query` DSL                        | `@graph` DSL                         |
+| :-------------------- | :--------------------------------- | :---------------------------------- | :----------------------------------- |
+| **Injection safety**  | Manual parameterisation            | Automatic — `$var` captures safely  | Same — `$var` captures safely        |
+| **Schema validation** | None built-in                      | `@node`/`@rel` with runtime checks  | Same shared schema registry          |
+| **Node references**   | Re-match by property               | `elementId()` via `@relate`         | `match()` + `where()` + `create()`   |
+| **Patterns**          | `(p:Person)-[r:KNOWS]->(q:Person)` | Same Cypher-like syntax             | `p::Person >> r::KNOWS >> q::Person` |
+| **Clauses**           | Cypher keywords                    | `@match`, `@where`, `@return`       | `where()`, `ret()`, `order()`        |
+| **Operator mapping**  | `<>`, `AND`, `STARTS WITH`         | `!=`, `&&`, `startswith`            | Same Julia-native operators          |
+| **Return aliases**    | `expr AS alias`                    | `expr => :alias`                    | `expr => :alias`                     |
+| **Mutations**         | `CREATE`, `SET`                    | `@create`, `@set`                   | `create()` + auto-SET assignments    |
+| **OPTIONAL MATCH**    | `OPTIONAL MATCH`                   | `@optional_match`                   | `optional()`                         |
+| **Compile-time**      | String at runtime                  | Cypher assembled at macro expansion | Same — identical Cypher output       |
 
-The DSL compiles to **identical Cypher** at macro expansion time — there is zero runtime overhead for query construction. Only parameter values are captured at runtime.
+### `@query` vs `@graph` — when to use which?
+
+- **`@query`** — closest to raw Cypher; familiar if you already know Cypher syntax. Best with `@create`/`@relate` for schema-validated mutations.
+- **`@graph`** — Julia-native feel with `::` type annotation syntax and `>>` chain operators. Best for complex multi-hop traversals where the chain notation improves readability.
+
+Both compile to **identical Cypher** at macro expansion time — there is zero runtime overhead for query construction. Only parameter values are captured at runtime.
