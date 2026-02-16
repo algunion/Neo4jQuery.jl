@@ -90,7 +90,7 @@ result = @query conn begin
     @match (p:Person)-[r:KNOWS]->(friend:Person)
     @where p.name == "Alice" && friend.age > $min_age
     @return friend.name => :name, r.since => :since
-end access_mode=:read
+end
 
 for row in result
     println(row.name, " — known since ", row.since)

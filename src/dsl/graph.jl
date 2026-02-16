@@ -163,6 +163,28 @@ end
 
 # ── Block parser ─────────────────────────────────────────────────────────────
 
+# ── Mutation detection ────────────────────────────────────────────────────────
+
+"""
+    _MUTATION_CLAUSES :: Set{Symbol}
+
+Clause kinds that indicate a write/mutation operation.
+Used by `@graph` and `@query` to auto-infer `access_mode`.
+"""
+const _MUTATION_CLAUSES = Set{Symbol}([
+    :create, :merge_clause, :set, :remove,
+    :delete, :detach_delete, :on_create_set, :on_match_set,
+    :create_index, :drop_index, :create_constraint, :drop_constraint,
+])
+
+"""
+    _has_mutations(clauses) -> Bool
+
+Return `true` if any clause is a mutation (write) operation.
+"""
+_has_mutations(clauses::Vector{Tuple{Symbol,Vector{Any}}})::Bool =
+    any(kind ∈ _MUTATION_CLAUSES for (kind, _) in clauses)
+
 # Map function names to clause kinds
 const _GRAPH_CLAUSE_FUNCTIONS = Dict{Symbol,Symbol}(
     :where => :where,
@@ -554,24 +576,36 @@ result = @graph conn [p for p in Person]
 ```
 """
 macro graph(conn, block, kwargs...)
+    # ── Process user-supplied kwargs ──────────────────────────────────────
+    kw_exprs = map(kwargs) do kw
+        if kw isa Expr && kw.head == :(=)
+            Expr(:kw, kw.args[1], esc(kw.args[2]))
+        else
+            esc(kw)
+        end
+    end
+
+    # Check if user explicitly provided access_mode
+    has_explicit_access_mode = any(kwargs) do kw
+        kw isa Expr && kw.head == :(=) && kw.args[1] == :access_mode
+    end
+
     # ── Comprehension form ───────────────────────────────────────────────
     if block isa Expr && block.head == :comprehension
         cypher_str, param_syms = _compile_graph_comprehension(block)
 
         param_pairs = [:($(string(s)) => $(esc(s))) for s in param_syms]
 
-        kw_exprs = map(kwargs) do kw
-            if kw isa Expr && kw.head == :(=)
-                Expr(:kw, kw.args[1], esc(kw.args[2]))
-            else
-                esc(kw)
-            end
-        end
+        # Comprehensions are always reads — inject access_mode=:read
+        # unless the user explicitly overrode it
+        auto_kw = has_explicit_access_mode ? Expr[] :
+                  [Expr(:kw, :access_mode, QuoteNode(:read))]
 
         esc_conn = esc(conn)
         return quote
             let __params = Dict{String,Any}($(param_pairs...))
-                query($esc_conn, $cypher_str; parameters=__params, $(kw_exprs...))
+                query($esc_conn, $cypher_str; parameters=__params,
+                    $(auto_kw...), $(kw_exprs...))
             end
         end
     end
@@ -585,19 +619,17 @@ macro graph(conn, block, kwargs...)
 
     param_pairs = [:($(string(s)) => $(esc(s))) for s in param_syms]
 
-    kw_exprs = map(kwargs) do kw
-        if kw isa Expr && kw.head == :(=)
-            Expr(:kw, kw.args[1], esc(kw.args[2]))
-        else
-            esc(kw)
-        end
-    end
+    # Auto-infer access_mode from clause analysis (compile-time)
+    inferred_mode = _has_mutations(clauses) ? :write : :read
+    auto_kw = has_explicit_access_mode ? Expr[] :
+              [Expr(:kw, :access_mode, QuoteNode(inferred_mode))]
 
     esc_conn = esc(conn)
 
     return quote
         let __params = Dict{String,Any}($(param_pairs...))
-            query($esc_conn, $cypher_str; parameters=__params, $(kw_exprs...))
+            query($esc_conn, $cypher_str; parameters=__params,
+                $(auto_kw...), $(kw_exprs...))
         end
     end
 end
