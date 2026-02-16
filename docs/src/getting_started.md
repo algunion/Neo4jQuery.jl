@@ -86,38 +86,22 @@ rel = @relate conn alice => KNOWS(since=2024) => bob
 
 # Query the graph
 min_age = 20
-result = @query conn begin
-    @match (p:Person)-[r:KNOWS]->(friend:Person)
-    @where p.name == "Alice" && friend.age > $min_age
-    @return friend.name => :name, r.since => :since
-end
-
-for row in result
-    println(row.name, " — known since ", row.since)
-end
-```
-
-See [DSL](@ref dsl) for the full guide with advanced examples.
-
-## Quick `@graph` Example
-
-The `@graph` macro provides a hyper-ergonomic alternative with Julia-native syntax:
-
-```julia
-# Same query as above, but with @graph syntax
-min_age = 20
-result = @graph conn begin
+result = @cypher conn begin
     p::Person >> r::KNOWS >> friend::Person
     where(p.name == "Alice", friend.age > $min_age)
     ret(friend.name => :name, r.since => :since)
     order(r.since, :desc)
 end
 
+for row in result
+    println(row.name, " — known since ", row.since)
+end
+
 # Or as a one-liner comprehension
-result = @graph conn [p.name for p in Person if p.age > 20]
+result = @cypher conn [p.name for p in Person if p.age > 20]
 
 # Mutations with auto-SET
-@graph conn begin
+@cypher conn begin
     p::Person
     where(p.name == "Alice")
     p.age = 31
@@ -125,12 +109,12 @@ result = @graph conn [p.name for p in Person if p.age > 20]
 end
 ```
 
-See [DSL — @graph](@ref dsl) for the full guide.
+See [DSL](@ref dsl) for the full guide with advanced examples.
 
 ## What's Next?
 
 - [Queries](@ref queries) — parameterised queries, counters, bookmarks
 - [Transactions](@ref transactions) — explicit begin/commit/rollback and do-block API
 - [Streaming](@ref streaming) — memory-efficient row-by-row iteration
-- [DSL](@ref dsl) — `@query`, `@create`, `@merge`, `@relate` macros
+- [DSL](@ref dsl) — `@cypher`, `@create`, `@merge`, `@relate` macros
 - [API Reference](@ref api-reference) — full function and type documentation

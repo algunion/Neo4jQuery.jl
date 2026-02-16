@@ -23,9 +23,8 @@ include("env.jl")
 # ── DSL (depends on query.jl, types.jl) ────────────────────────────────────
 include("dsl/schema.jl")
 include("dsl/compile.jl")
-include("dsl/query.jl")
 include("dsl/mutations.jl")
-include("dsl/graph.jl")
+include("dsl/cypher.jl")
 
 # ── Public API ──────────────────────────────────────────────────────────────
 
@@ -64,13 +63,10 @@ export @node, @rel
 export get_node_schema, get_rel_schema
 export validate_node_properties, validate_rel_properties
 
-# Query builder
-export @query
+# Unified DSL
+export @cypher
 
 # Standalone mutations
 export @create, @merge, @relate
-
-# Graph DSL (hyper-ergonomic)
-export @graph
 
 end

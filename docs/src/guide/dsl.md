@@ -1,6 +1,6 @@
 # [DSL](@id dsl)
 
-Neo4jQuery includes a compile-time DSL that translates Julia expressions into parameterised Cypher. This gives you type-safe, injection-proof graph operations with Julia-native syntax.
+Neo4jQuery includes a compile-time DSL that translates Julia expressions into parameterised Cypher. The unified `@cypher` macro gives you type-safe, injection-proof graph operations with Julia-native syntax.
 
 ## Schema declarations
 
@@ -43,17 +43,17 @@ rel_schema = get_rel_schema(:KNOWS)
 validate_rel_properties(rel_schema, Dict{String,Any}("since" => 2024))
 ```
 
-## `@query` — the query builder
+## `@cypher` — the unified query builder
 
-The main DSL macro compiles a Julia block into a single parameterised Cypher query:
+`@cypher` compiles a Julia block into a single parameterised Cypher query. It combines full Cypher coverage with ergonomic Julia-native syntax:
 
 ```julia
-result = @query conn begin
-    @match (p:Person)-[r:KNOWS]->(q:Person)
-    @where p.age > 25 && q.name != "Bob"
-    @return p.name => :name, q.name => :friend, r.since => :year
-    @orderby p.name
-    @limit 10
+result = @cypher conn begin
+    p::Person >> r::KNOWS >> q::Person
+    where(p.age > $min_age, q.name == $target)
+    ret(p.name => :name, r.since, q.name => :friend)
+    order(p.age, :desc)
+    take(10)
 end
 ```
 
@@ -61,595 +61,19 @@ This expands at compile time into:
 
 ```cypher
 MATCH (p:Person)-[r:KNOWS]->(q:Person)
-WHERE p.age > 25 AND q.name <> 'Bob'
-RETURN p.name AS name, q.name AS friend, r.since AS year
-ORDER BY p.name
+WHERE p.age > $min_age AND q.name = $target
+RETURN p.name AS name, r.since, q.name AS friend
+ORDER BY p.age DESC
 LIMIT 10
 ```
 
-### Available clauses
-
-| Clause               | Description                                               |
-| :------------------- | :-------------------------------------------------------- |
-| `@match`             | `MATCH` pattern                                           |
-| `@optional_match`    | `OPTIONAL MATCH` pattern                                  |
-| `@where`             | `WHERE` conditions                                        |
-| `@return`            | `RETURN` expressions (with `=> :alias` for `AS`)          |
-| `@with`              | `WITH` projection (pipe between query parts)              |
-| `@unwind`            | `UNWIND list AS variable`                                 |
-| `@create`            | `CREATE` pattern                                          |
-| `@merge`             | `MERGE` pattern                                           |
-| `@set`               | `SET` property assignments (multiple SETs merge into one) |
-| `@remove`            | `REMOVE` labels or properties                             |
-| `@delete`            | `DELETE` variables                                        |
-| `@detach_delete`     | `DETACH DELETE` variables                                 |
-| `@orderby`           | `ORDER BY` expressions                                    |
-| `@skip`              | `SKIP n`                                                  |
-| `@limit`             | `LIMIT n`                                                 |
-| `@on_create_set`     | `ON CREATE SET` (after `@merge`)                          |
-| `@on_match_set`      | `ON MATCH SET` (after `@merge`)                           |
-| `@union`             | `UNION` (deduplicated)                                    |
-| `@union_all`         | `UNION ALL` (preserves duplicates)                        |
-| `@call`              | `CALL { ... }` subquery block                             |
-| `@load_csv`          | `LOAD CSV FROM 'url' AS row`                              |
-| `@load_csv_headers`  | `LOAD CSV WITH HEADERS FROM 'url' AS row`                 |
-| `@foreach`           | `FOREACH (var IN expr \| ...)`                            |
-| `@create_index`      | `CREATE INDEX FOR (n:Label) ON (n.prop)`                  |
-| `@drop_index`        | `DROP INDEX name IF EXISTS`                               |
-| `@create_constraint` | `CREATE CONSTRAINT ... REQUIRE ... IS UNIQUE/NOT NULL`    |
-| `@drop_constraint`   | `DROP CONSTRAINT name IF EXISTS`                          |
-
 ### Pattern syntax
 
-```julia
-# Labeled node
-@match (p:Person)
+`@cypher` supports two pattern styles. Use whichever feels natural — they both compile to the same Cypher.
 
-# Anonymous labeled node
-@match (:Person)
+#### `>>` chain syntax (recommended)
 
-# Variable-only node
-@match (p)
-
-# Right arrow (simple directed)
-@match (a) --> (b)
-
-# Typed relationship (right arrow)
-@match (p:Person)-[r:KNOWS]->(q:Person)
-
-# Left arrow (simple)
-@match (a) <-- (b)
-
-# Typed relationship (left arrow)
-@match (a:Person)<-[r:KNOWS]-(b:Person)
-
-# Undirected relationship
-@match (a:Person)-[r:KNOWS]-(b:Person)
-
-# Variable-length relationship (range)
-@match (a:Person)-[r:KNOWS, 1, 3]->(b:Person)
-# Generates: (a:Person)-[r:KNOWS*1..3]->(b:Person)
-
-# Variable-length relationship (exact)
-@match (a:Person)-[r:KNOWS, 2]->(b:Person)
-# Generates: (a:Person)-[r:KNOWS*2]->(b:Person)
-
-# Chained path
-@match (a)-[r:R]->(b)-[s:S]->(c)
-
-# Multiple patterns (comma-separated)
-@match (p:Person), (c:Company)
-```
-
-### WHERE operators
-
-Julia operators are translated to Cypher:
-
-| Julia                            | Cypher                                |
-| :------------------------------- | :------------------------------------ |
-| `==`                             | `=`                                   |
-| `!=`                             | `<>`                                  |
-| `&&`                             | `AND`                                 |
-| `\|\|`                           | `OR`                                  |
-| `!`                              | `NOT`                                 |
-| `>=`                             | `>=`                                  |
-| `<=`                             | `<=`                                  |
-| `>`, `<`                         | `>`, `<`                              |
-| `startswith`                     | `STARTS WITH`                         |
-| `endswith`                       | `ENDS WITH`                           |
-| `contains`                       | `CONTAINS`                            |
-| `in` / `∈`                       | `IN`                                  |
-| `isnothing`                      | `IS NULL`                             |
-| `matches`                        | `=~` (regex match)                    |
-| `exists((p)-[:R]->(q))`          | `EXISTS { MATCH ... }`                |
-| `if ... elseif ... else ... end` | `CASE WHEN ... THEN ... ELSE ... END` |
-
-Arithmetic operators (`+`, `-`, `*`, `/`, `%`, `^`) are also supported within expressions:
-
-```julia
-@where p.score * 2 + 10 > $threshold
-@where p.id % 2 == 0
-```
-
-### Parameter capture
-
-`$var` references in the DSL capture Julia variables as safe Cypher parameters:
-
-```julia
-min_age = 25
-result = @query conn begin
-    @match (p:Person)
-    @where p.age > $min_age
-    @return p.name => :name
-end
-```
-
-Parameters work in `@where`, `@set`, `@unwind`, `@skip`, and `@limit` clauses.
-
-## Complete end-to-end example
-
-This example shows a full workflow: defining schemas, creating data, establishing relationships, and querying with the DSL.
-
-### Step 1: Define your graph model
-
-```julia
-using Neo4jQuery
-
-# Define node schemas
-@node Person begin
-    name::String
-    age::Int
-    email::String = ""
-end
-
-@node Company begin
-    name::String
-    founded::Int
-    industry::String = "Technology"
-end
-
-# Define relationship schemas
-@rel KNOWS begin
-    since::Int
-    weight::Float64 = 1.0
-end
-
-@rel WORKS_AT begin
-    role::String
-    since::Int
-end
-```
-
-### Step 2: Create nodes using the schemas
-
-```julia
-# @create validates properties against the registered Person schema
-alice = @create conn Person(name="Alice", age=30, email="alice@example.com")
-bob   = @create conn Person(name="Bob", age=25)
-carol = @create conn Person(name="Carol", age=35)
-
-acme  = @create conn Company(name="Acme Corp", founded=2010)
-```
-
-### Step 3: Create relationships
-
-```julia
-# @relate uses elementId() to match existing nodes
-rel1 = @relate conn alice => KNOWS(since=2020) => bob
-rel2 = @relate conn alice => KNOWS(since=2022, weight=0.8) => carol
-rel3 = @relate conn bob => KNOWS(since=2023) => carol
-
-# Relationships to companies
-@relate conn alice => WORKS_AT(role="Engineer", since=2021) => acme
-@relate conn bob => WORKS_AT(role="Designer", since=2022) => acme
-```
-
-### Step 4: Query with the DSL
-
-```julia
-# Find Alice's friends
-min_age = 20
-result = @query conn begin
-    @match (p:Person)-[r:KNOWS]->(friend:Person)
-    @where p.name == "Alice" && friend.age > $min_age
-    @return friend.name => :name, r.since => :since
-    @orderby r.since :desc
-end
-
-for row in result
-    println(row.name, " — known since ", row.since)
-end
-# Bob — known since 2020
-# Carol — known since 2022
-```
-
-### Step 5: Aggregation with WITH
-
-```julia
-# Find the most connected people
-min_connections = 1
-result = @query conn begin
-    @match (p:Person)-[r:KNOWS]->(q:Person)
-    @with p, count(r) => :degree
-    @where degree > $min_connections
-    @orderby degree :desc
-    @return p.name => :person, degree
-end
-
-for row in result
-    println(row.person, ": ", row.degree, " connections")
-end
-```
-
-### Step 6: Friend-of-friend recommendations
-
-```julia
-my_name = "Bob"
-result = @query conn begin
-    @match (me:Person)-[:KNOWS]->(friend:Person)-[:KNOWS]->(fof:Person)
-    @where me.name == $my_name && fof.name != me.name
-    @return distinct fof.name => :suggestion
-    @limit 10
-end
-```
-
-### Step 7: Updating data
-
-```julia
-# Update a single property
-name = "Alice"
-new_email = "alice@newdomain.com"
-@query conn begin
-    @match (p:Person)
-    @where p.name == $name
-    @set p.email = $new_email
-    @return p
-end
-
-# Update multiple properties at once (SET clauses merge automatically)
-new_age = 31
-new_email2 = "alice@latest.com"
-@query conn begin
-    @match (p:Person)
-    @where p.name == $name
-    @set p.age = $new_age
-    @set p.email = $new_email2
-    @return p
-end
-# Generates: SET p.age = $new_age, p.email = $new_email2
-```
-
-### Step 8: MERGE with conditional SET
-
-```julia
-# Upsert a node — set different properties on create vs match
-node = @merge conn Person(name="Alice") on_create(age=30) on_match(last_seen="2025-02-15")
-```
-
-Or using `@query` for more complex patterns:
-
-```julia
-now = "2025-02-15"
-@query conn begin
-    @merge (p:Person)
-    @on_create_set p.created_at = $now
-    @on_match_set p.last_seen = $now
-    @return p
-end
-```
-
-### Step 9: Batch operations with UNWIND
-
-```julia
-# Create multiple nodes from a list
-people = [
-    Dict("name" => "Dave", "age" => 28),
-    Dict("name" => "Eve", "age" => 22),
-    Dict("name" => "Frank", "age" => 40),
-]
-
-@query conn begin
-    @unwind $people => :person
-    @create (p:Person)
-    @set p.name = person.name
-    @set p.age = person.age
-    @return p
-end
-```
-
-### Step 10: OPTIONAL MATCH for optional relationships
-
-```julia
-# Get all people and their employer (if any)
-result = @query conn begin
-    @match (p:Person)
-    @optional_match (p)-[w:WORKS_AT]->(c:Company)
-    @return p.name => :person, c.name => :company, w.role => :role
-    @orderby p.name
-end
-
-for row in result
-    if row.company !== nothing
-        println(row.person, " works at ", row.company, " as ", row.role)
-    else
-        println(row.person, " — no employer")
-    end
-end
-```
-
-### Step 11: Pagination with SKIP and LIMIT
-
-```julia
-page = 2
-page_size = 10
-offset = (page - 1) * page_size
-
-result = @query conn begin
-    @match (p:Person)
-    @return p.name => :name, p.age => :age
-    @orderby p.name
-    @skip $offset
-    @limit $page_size
-end
-```
-
-### Step 12: Deleting data
-
-```julia
-# Delete a specific node and its relationships
-target = "Frank"
-@query conn begin
-    @match (p:Person)
-    @where p.name == $target
-    @detach_delete p
-end
-
-# Remove a property
-@query conn begin
-    @match (p:Person)
-    @remove p.email
-    @return p
-end
-```
-
-### Step 13: Complex WHERE conditions
-
-```julia
-# Combine multiple conditions with string functions
-result = @query conn begin
-    @match (p:Person)
-    @where startswith(p.name, "A") && !(isnothing(p.email)) && p.age >= 18
-    @return p.name => :name, p.email => :email
-end
-
-# IN operator with a parameter
-allowed_names = ["Alice", "Bob", "Carol"]
-result = @query conn begin
-    @match (p:Person)
-    @where in(p.name, $allowed_names)
-    @return p
-end
-```
-
-### Step 14: Aggregation functions
-
-```julia
-result = @query conn begin
-    @match (p:Person)
-    @return count(p) => :total, avg(p.age) => :avg_age, collect(p.name) => :names
-end
-
-println("Total: ", result[1].total)
-println("Average age: ", result[1].avg_age)
-println("Names: ", result[1].names)
-```
-
-### Step 15: Pattern direction variants
-
-```julia
-# Left-arrow — match incoming relationships
-result = @query conn begin
-    @match (a:Person)<-[r:KNOWS]-(b:Person)
-    @return a.name => :target, b.name => :source, r.since => :since
-end
-
-# Undirected — match regardless of direction
-result = @query conn begin
-    @match (a:Person)-[r:KNOWS]-(b:Person)
-    @return a.name => :person1, b.name => :person2
-end
-
-# Variable-length — find paths of 1 to 3 hops
-result = @query conn begin
-    @match (a:Person)-[r:KNOWS, 1, 3]->(b:Person)
-    @return a.name => :start, b.name => :reachable
-end
-```
-
-### Step 16: Regex matching
-
-```julia
-# Find names matching a pattern
-result = @query conn begin
-    @match (p:Person)
-    @where matches(p.name, "^A.*e\$")
-    @return p.name => :name
-end
-```
-
-### Step 17: CASE/WHEN expressions
-
-Use Julia's `if`/`elseif`/`else`/`end` syntax to generate Cypher CASE expressions:
-
-```julia
-result = @query conn begin
-    @match (p:Person)
-    @return p.name => :name, if p.age > 65; "senior"; elseif p.age > 30; "adult"; else; "young"; end => :category
-end
-```
-
-This generates:
-```cypher
-RETURN p.name AS name, CASE WHEN p.age > 65 THEN 'senior' WHEN p.age > 30 THEN 'adult' ELSE 'young' END AS category
-```
-
-### Step 18: EXISTS subqueries
-
-```julia
-# Find people who have at least one friend
-result = @query conn begin
-    @match (p:Person)
-    @where exists((p)-[:KNOWS]->(:Person))
-    @return p.name => :name
-end
-
-# Negated EXISTS
-result = @query conn begin
-    @match (p:Person)
-    @where !(exists((p)-[:KNOWS]->(:Person)))
-    @return p.name => :loner
-end
-```
-
-### Step 19: UNION and UNION ALL
-
-Combine multiple query parts:
-
-```julia
-# UNION (deduplicated results)
-result = @query conn begin
-    @match (p:Person)
-    @where p.age > 30
-    @return p.name => :name
-    @union
-    @match (p:Person)
-    @where startswith(p.name, "A")
-    @return p.name => :name
-end
-
-# UNION ALL (preserves duplicates)
-result = @query conn begin
-    @match (p:Person)
-    @return p.name => :name
-    @union_all
-    @match (c:Company)
-    @return c.name => :name
-end
-```
-
-### Step 20: CALL subqueries
-
-Nest a full sub-query with `@call`:
-
-```julia
-result = @query conn begin
-    @match (p:Person)
-    @call begin
-        @with p
-        @match (p)-[r:KNOWS]->(friend:Person)
-        @return count(friend) => :friend_count
-    end
-    @return p.name => :name, friend_count
-    @orderby friend_count :desc
-end
-```
-
-### Step 21: LOAD CSV
-
-Import data from CSV files:
-
-```julia
-# Without headers (rows are arrays)
-@query conn begin
-    @load_csv "file:///data/people.csv" => :row
-    @create (p:Person)
-    @set p.name = row[0]
-    @set p.age = row[1]
-end
-
-# With headers (rows are maps)
-@query conn begin
-    @load_csv_headers "file:///data/people.csv" => :row
-    @create (p:Person)
-    @set p.name = row.name
-    @set p.age = row.age
-end
-```
-
-### Step 22: FOREACH
-
-Apply updates over a collection:
-
-```julia
-names = ["Alice", "Bob", "Carol"]
-@query conn begin
-    @match (p:Person)
-    @where in(p.name, $names)
-    @foreach n :in collect(p) begin
-        @set n.verified = true
-    end
-end
-```
-
-FOREACH body supports `@create`, `@merge`, `@set`, `@delete`, `@detach_delete`, `@remove`, and nested `@foreach`.
-
-### Step 23: Index and constraint management
-
-```julia
-# Create an index on Person.name
-@query conn begin
-    @create_index :Person :name
-end
-
-# Create a named index
-@query conn begin
-    @create_index :Person :email :person_email_idx
-end
-
-# Drop an index
-@query conn begin
-    @drop_index :person_email_idx
-end
-
-# Create a uniqueness constraint
-@query conn begin
-    @create_constraint :Person :email :unique
-end
-
-# Create a NOT NULL constraint (named)
-@query conn begin
-    @create_constraint :Person :name :not_null :person_name_required
-end
-
-# Drop a constraint
-@query conn begin
-    @drop_constraint :person_name_required
-end
-```
-
-## `@graph` — hyper-ergonomic query builder
-
-`@graph` is a next-generation DSL that maximises ergonomics by leveraging Julia's metaprogramming. It compiles to **the same parameterised Cypher** as `@query`, but with a syntax designed for developer productivity over Cypher familiarity.
-
-!!! tip "One pattern language, everywhere"
-    The `>>` chain syntax is the **single, canonical pattern language** for `@graph`. The same `>>` works in bare patterns (implicit MATCH), `create()`, `merge()`, `optional()`, and `match()`. You never need to switch to `-[]->` arrow syntax inside `@graph` — though it still works for backward compatibility.
-
-### Key differences from `@query`
-
-| Feature                 | `@query`                                   | `@graph`                                         |
-| :---------------------- | :----------------------------------------- | :----------------------------------------------- |
-| Node syntax             | `(p:Person)` with `@match` prefix          | `p::Person` — bare Julia type annotation         |
-| Relationship patterns   | `(a)-[r:KNOWS]->(b)` with `@match` prefix  | `a::Person >> r::KNOWS >> b::Person` — chain ops |
-| Clause syntax           | `@match`, `@where`, `@return` (sub-macros) | `where()`, `ret()`, `order()` (plain functions)  |
-| Property updates        | `@set p.age = $val`                        | `p.age = $val` (bare assignment, auto-detected)  |
-| Multi-condition WHERE   | `@where cond1 && cond2`                    | `where(cond1, cond2)` — auto-AND                 |
-| Comprehension shorthand | Not available                              | `[p.name for p in Person if p.age > 25]`         |
-| LIMIT                   | `@limit 10`                                | `take(10)`                                       |
-| RETURN                  | `@return expr`                             | `ret(expr)` or `returning(expr)`                 |
-
-### Pattern syntax
-
-The `>>` operator is the universal pattern connector in `@graph`. It works the same way whether you're reading, creating, or merging.
+The `>>` operator is the universal pattern connector. It works the same way in MATCH, CREATE, MERGE, and OPTIONAL MATCH.
 
 ```julia
 # Labeled node (Julia type annotation)
@@ -658,7 +82,7 @@ p::Person                    # → (p:Person)
 # Anonymous node
 ::Person                     # → (:Person)
 
-# Right-directed chain (>> operator)
+# Right-directed chain
 p::Person >> r::KNOWS >> q::Person
 # → (p:Person)-[r:KNOWS]->(q:Person)
 
@@ -675,156 +99,539 @@ a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company
 # → (a:Person)-[r:KNOWS]->(b:Person)-[s:WORKS_AT]->(c:Company)
 ```
 
-These patterns work uniformly in any clause — see examples below.
+#### Arrow syntax
+
+The classic Cypher-like arrow syntax also works:
+
+```julia
+# Right arrow (typed)
+(p:Person)-[r:KNOWS]->(q:Person)
+
+# Simple directed arrow
+(a) --> (b)
+
+# Left arrow (typed)
+(a:Person)<-[r:KNOWS]-(b:Person)
+
+# Undirected
+(a:Person)-[r:KNOWS]-(b:Person)
+
+# Variable-length
+(a:Person)-[r:KNOWS, 1, 3]->(b:Person)
+# → (a:Person)-[r:KNOWS*1..3]->(b:Person)
+
+# Chained path
+(a)-[r:R]->(b)-[s:S]->(c)
+
+# Multiple patterns (comma-separated)
+match((p:Person), (c:Company))
+```
 
 ### Clause functions
 
-All clauses are plain function call syntax — no `@` prefix needed:
+All clauses use plain function-call syntax — no `@` prefixes:
 
-| Function                     | Cypher                              |
-| :--------------------------- | :---------------------------------- |
-| `where(cond1, cond2, ...)`   | `WHERE cond1 AND cond2 AND ...`     |
-| `ret(expr => :alias, ...)`   | `RETURN expr AS alias, ...`         |
-| `returning(expr => :alias)`  | `RETURN expr AS alias` (alias)      |
-| `ret(distinct, expr)`        | `RETURN DISTINCT expr`              |
-| `order(expr, :desc)`         | `ORDER BY expr DESC`                |
-| `take(n)` / `skip(n)`        | `LIMIT n` / `SKIP n`                |
-| `create(pattern)`            | `CREATE pattern`                    |
-| `merge(pattern)`             | `MERGE pattern`                     |
-| `optional(pattern)`          | `OPTIONAL MATCH pattern`            |
-| `match(p1, p2)`              | `MATCH p1, p2` (explicit multi)     |
-| `with(expr => :alias, ...)`  | `WITH expr AS alias, ...`           |
-| `unwind($list => :var)`      | `UNWIND $list AS var`               |
-| `delete(vars...)`            | `DELETE vars`                       |
-| `detach_delete(vars...)`     | `DETACH DELETE vars`                |
-| `on_create(p.prop = val)`    | `ON CREATE SET p.prop = val`        |
-| `on_match(p.prop = val)`     | `ON MATCH SET p.prop = val`         |
-| `p.prop = $val` (assignment) | `SET p.prop = $val` (auto-detected) |
+| Function                                    | Cypher                                     |
+| :------------------------------------------ | :----------------------------------------- |
+| `where(cond1, cond2, ...)`                  | `WHERE cond1 AND cond2 AND ...`            |
+| `ret(expr => :alias, ...)`                  | `RETURN expr AS alias, ...`                |
+| `returning(expr => :alias)`                 | `RETURN expr AS alias` (synonym for `ret`) |
+| `ret(distinct, expr)`                       | `RETURN DISTINCT expr`                     |
+| `order(expr, :desc)`                        | `ORDER BY expr DESC`                       |
+| `take(n)` / `skip(n)`                       | `LIMIT n` / `SKIP n`                       |
+| `match(p1, p2)`                             | `MATCH p1, p2` (explicit multi-pattern)    |
+| `optional(pattern)`                         | `OPTIONAL MATCH pattern`                   |
+| `create(pattern)`                           | `CREATE pattern`                           |
+| `merge(pattern)`                            | `MERGE pattern`                            |
+| `with(expr => :alias, ...)`                 | `WITH expr AS alias, ...`                  |
+| `unwind($list => :var)`                     | `UNWIND $list AS var`                      |
+| `delete(vars...)`                           | `DELETE vars`                              |
+| `detach_delete(vars...)`                    | `DETACH DELETE vars`                       |
+| `on_create(p.prop = val)`                   | `ON CREATE SET p.prop = val`               |
+| `on_match(p.prop = val)`                    | `ON MATCH SET p.prop = val`                |
+| `remove(p.prop)`                            | `REMOVE p.prop`                            |
+| `p.prop = $val` (assignment)                | `SET p.prop = $val` (auto-detected)        |
+| `union()`                                   | `UNION`                                    |
+| `union_all()`                               | `UNION ALL`                                |
+| `call(begin ... end)`                       | `CALL { ... }` subquery                    |
+| `load_csv(url => :row)`                     | `LOAD CSV FROM url AS row`                 |
+| `load_csv_headers(url => :row)`             | `LOAD CSV WITH HEADERS FROM url AS row`    |
+| `foreach(var, :in, expr, begin ... end)`    | `FOREACH (var IN expr \| ...)`             |
+| `create_index(:Label, :prop)`               | `CREATE INDEX FOR (n:Label) ON (n.prop)`   |
+| `drop_index(:name)`                         | `DROP INDEX name IF EXISTS`                |
+| `create_constraint(:Label, :prop, :unique)` | `CREATE CONSTRAINT ... IS UNIQUE`          |
+| `drop_constraint(:name)`                    | `DROP CONSTRAINT name IF EXISTS`           |
 
-### Basic example
+### Implicit MATCH
+
+Bare graph patterns in a `@cypher` block are automatically treated as MATCH clauses:
 
 ```julia
-result = @graph conn begin
+@cypher conn begin
+    p::Person >> r::KNOWS >> q::Person    # implicit MATCH
+    where(p.age > 25)
+    ret(p.name, q.name)
+end
+```
+
+### WHERE operators
+
+Julia operators are translated to Cypher:
+
+| Julia                            | Cypher                                |
+| :------------------------------- | :------------------------------------ |
+| `==`                             | `=`                                   |
+| `!=`                             | `<>`                                  |
+| `&&`                             | `AND`                                 |
+| `\|\|`                           | `OR`                                  |
+| `!`                              | `NOT`                                 |
+| `>=`, `<=`, `>`, `<`             | `>=`, `<=`, `>`, `<`                  |
+| `startswith`                     | `STARTS WITH`                         |
+| `endswith`                       | `ENDS WITH`                           |
+| `contains`                       | `CONTAINS`                            |
+| `in` / `∈`                       | `IN`                                  |
+| `isnothing`                      | `IS NULL`                             |
+| `matches`                        | `=~` (regex match)                    |
+| `exists((p)-[:R]->(q))`          | `EXISTS { MATCH ... }`                |
+| `if ... elseif ... else ... end` | `CASE WHEN ... THEN ... ELSE ... END` |
+
+Arithmetic operators (`+`, `-`, `*`, `/`, `%`, `^`) are also supported:
+
+```julia
+where(p.score * 2 + 10 > $threshold)
+where(p.id % 2 == 0)
+```
+
+Multi-condition WHERE auto-ANDs:
+
+```julia
+where(p.age > 25, p.active == true, startswith(p.name, "A"))
+# → WHERE p.age > 25 AND p.active = true AND p.name STARTS WITH 'A'
+```
+
+### Parameter capture
+
+`$var` references capture Julia variables as safe Cypher parameters:
+
+```julia
+min_age = 25
+result = @cypher conn begin
+    p::Person
+    where(p.age > $min_age)
+    ret(p.name => :name)
+end
+```
+
+Parameters work in `where()`, property assignments, `unwind()`, `skip()`, `take()`, and any expression position.
+
+### Keyword arguments
+
+Pass query options after the block:
+
+```julia
+result = @cypher conn begin
+    p::Person
+    ret(p.name)
+end include_counters=true
+```
+
+!!! note "Automatic access_mode"
+    `@cypher` automatically sets `access_mode=:read` for pure read queries
+    and `access_mode=:write` when any mutation clause is present
+    (CREATE/MERGE/SET/DELETE/…). You rarely need to specify it manually.
+    An explicit `access_mode=:write` (or `:read`) after `end` overrides
+    the inferred value.
+
+## Complete end-to-end example
+
+### Step 1: Define your graph model
+
+```julia
+using Neo4jQuery
+
+@node Person begin
+    name::String
+    age::Int
+    email::String = ""
+end
+
+@node Company begin
+    name::String
+    founded::Int
+    industry::String = "Technology"
+end
+
+@rel KNOWS begin
+    since::Int
+    weight::Float64 = 1.0
+end
+
+@rel WORKS_AT begin
+    role::String
+    since::Int
+end
+```
+
+### Step 2: Create nodes using schemas
+
+```julia
+alice = @create conn Person(name="Alice", age=30, email="alice@example.com")
+bob   = @create conn Person(name="Bob", age=25)
+carol = @create conn Person(name="Carol", age=35)
+acme  = @create conn Company(name="Acme Corp", founded=2010)
+```
+
+### Step 3: Create relationships
+
+```julia
+rel1 = @relate conn alice => KNOWS(since=2020) => bob
+rel2 = @relate conn alice => KNOWS(since=2022, weight=0.8) => carol
+rel3 = @relate conn bob => KNOWS(since=2023) => carol
+
+@relate conn alice => WORKS_AT(role="Engineer", since=2021) => acme
+@relate conn bob => WORKS_AT(role="Designer", since=2022) => acme
+```
+
+### Step 4: Query with @cypher
+
+```julia
+min_age = 20
+result = @cypher conn begin
+    p::Person >> r::KNOWS >> friend::Person
+    where(p.name == "Alice", friend.age > $min_age)
+    ret(friend.name => :name, r.since => :since)
+    order(r.since, :desc)
+end
+
+for row in result
+    println(row.name, " — known since ", row.since)
+end
+```
+
+### Step 5: Aggregation with WITH
+
+```julia
+min_connections = 1
+result = @cypher conn begin
     p::Person >> r::KNOWS >> q::Person
-    where(p.age > $min_age, q.name == $target)
-    ret(p.name => :name, r.since, q.name => :friend)
-    order(p.age, :desc)
+    with(p, count(r) => :degree)
+    where(degree > $min_connections)
+    order(degree, :desc)
+    ret(p.name => :person, degree)
+end
+```
+
+### Step 6: Friend-of-friend recommendations
+
+```julia
+my_name = "Bob"
+result = @cypher conn begin
+    (me:Person)-[:KNOWS]->(friend:Person)-[:KNOWS]->(fof:Person)
+    where(me.name == $my_name, fof.name != me.name)
+    ret(distinct, fof.name => :suggestion)
     take(10)
 end
 ```
 
-Compiles to:
-
-```cypher
-MATCH (p:Person)-[r:KNOWS]->(q:Person)
-WHERE p.age > $min_age AND q.name = $target
-RETURN p.name AS name, r.since, q.name AS friend
-ORDER BY p.age DESC
-LIMIT 10
-```
-
-### Multi-hop traversals
+### Step 7: Updating data
 
 ```julia
-# Three-node chain in a single line
-result = @graph conn begin
-    a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company
-    ret(a.name, b.name, c.name)
-end
-```
+name = "Alice"
+new_age = 31
+new_email = "alice@latest.com"
 
-### Auto-SET from property assignments
-
-Bare assignments inside `@graph` automatically become `SET` clauses:
-
-```julia
-@graph conn begin
+@cypher conn begin
     p::Person
     where(p.name == $name)
-    p.age = $new_age           # ← auto SET
-    p.email = $new_email       # ← merged into same SET clause
+    p.age = $new_age           # auto-SET
+    p.email = $new_email       # merged into same SET clause
     ret(p)
 end
 # → MATCH (p:Person) WHERE p.name = $name SET p.age = $new_age, p.email = $new_email RETURN p
 ```
 
-### CREATE with chain patterns
+### Step 8: MERGE with conditional SET
 
 ```julia
-# Create a single node
-@graph conn begin
-    create(p::Person)
-    p.name = $name
-    p.age = $age
+node = @merge conn Person(name="Alice") on_create(age=30) on_match(last_seen="2025-02-15")
+```
+
+Or using `@cypher` for more complex patterns:
+
+```julia
+now = "2025-02-15"
+@cypher conn begin
+    merge((p:Person))
+    on_create(p.created_at = $now)
+    on_match(p.last_seen = $now)
     ret(p)
 end
-
-# Create a relationship between matched nodes (>> chain in create)
-@graph conn begin
-    match(a::Person, b::Person)
-    where(a.name == $n1, b.name == $n2)
-    create(a >> r::KNOWS >> b)
-    r.since = $year
-    ret(r)
-end
-
-# Create a full path in one shot
-@graph conn begin
-    create(p::Person >> r::WORKS_AT >> c::Company)
-    p.name = $name
-    c.name = $company
-    r.since = $year
-    ret(p, r, c)
-end
 ```
 
-### MERGE with on_create / on_match
+### Step 9: Batch operations with UNWIND
 
 ```julia
-# Merge a single node
-@graph conn begin
-    merge(p::Person)
-    on_create(p.created = true)
-    on_match(p.updated = true)
+people = [
+    Dict("name" => "Dave", "age" => 28),
+    Dict("name" => "Eve", "age" => 22),
+    Dict("name" => "Frank", "age" => 40),
+]
+
+@cypher conn begin
+    unwind($people => :person)
+    create((p:Person))
+    p.name = person.name
+    p.age = person.age
     ret(p)
 end
-
-# Merge a relationship (>> chain in merge)
-@graph conn begin
-    merge(p::Person >> r::KNOWS >> q::Person)
-    on_create(r.since = 2024)
-    on_match(r.weight = 1.0)
-    ret(r)
-end
 ```
 
-### OPTIONAL MATCH
+### Step 10: OPTIONAL MATCH
 
 ```julia
-@graph conn begin
+result = @cypher conn begin
     p::Person
-    optional(p >> r::KNOWS >> q::Person)
-    ret(p.name, q.name)
+    optional(p >> w::WORKS_AT >> c::Company)
+    ret(p.name => :person, c.name => :company, w.role => :role)
+    order(p.name)
 end
 ```
 
-### Aggregation with WITH
+### Step 11: Pagination
 
 ```julia
-result = @graph conn begin
-    p::Person >> r::KNOWS >> q::Person
-    with(p, count(r) => :degree)
-    where(degree > $min_degree)
-    ret(p.name, degree)
-end
-```
+page = 2
+page_size = 10
+offset = (page - 1) * page_size
 
-### RETURN DISTINCT
-
-```julia
-result = @graph conn begin
+result = @cypher conn begin
     p::Person
-    ret(distinct, p.name)
+    ret(p.name => :name, p.age => :age)
+    order(p.name)
+    skip($offset)
+    take($page_size)
+end
+```
+
+### Step 12: Deleting data
+
+```julia
+target = "Frank"
+@cypher conn begin
+    (p:Person)
+    where(p.name == $target)
+    detach_delete(p)
+end
+
+# Remove a property
+@cypher conn begin
+    p::Person
+    remove(p.email)
+    ret(p)
+end
+```
+
+### Step 13: Complex WHERE conditions
+
+```julia
+result = @cypher conn begin
+    p::Person
+    where(startswith(p.name, "A"), !(isnothing(p.email)), p.age >= 18)
+    ret(p.name => :name, p.email => :email)
+end
+
+# IN operator with a parameter
+allowed_names = ["Alice", "Bob", "Carol"]
+result = @cypher conn begin
+    p::Person
+    where(in(p.name, $allowed_names))
+    ret(p)
+end
+```
+
+### Step 14: Aggregation functions
+
+```julia
+result = @cypher conn begin
+    p::Person
+    ret(count(p) => :total, avg(p.age) => :avg_age, collect(p.name) => :names)
+end
+```
+
+### Step 15: Pattern direction variants
+
+```julia
+# Left-directed chain
+result = @cypher conn begin
+    a::Person << r::KNOWS << b::Person
+    ret(a.name => :target, b.name => :source, r.since => :since)
+end
+
+# Arrow syntax (left arrow)
+result = @cypher conn begin
+    (a:Person)<-[r:KNOWS]-(b:Person)
+    ret(a.name => :target, b.name => :source)
+end
+
+# Variable-length — find paths of 1 to 3 hops
+result = @cypher conn begin
+    (a:Person)-[r:KNOWS, 1, 3]->(b:Person)
+    ret(a.name => :start, b.name => :reachable)
+end
+```
+
+### Step 16: Regex matching
+
+```julia
+result = @cypher conn begin
+    p::Person
+    where(matches(p.name, "^A.*e\$"))
+    ret(p.name => :name)
+end
+```
+
+### Step 17: CASE/WHEN expressions
+
+Use Julia's `if`/`elseif`/`else`/`end` syntax to generate Cypher CASE expressions:
+
+```julia
+result = @cypher conn begin
+    p::Person
+    ret(p.name => :name, if p.age > 65; "senior"; elseif p.age > 30; "adult"; else; "young"; end => :category)
+end
+```
+
+Generates:
+```cypher
+RETURN p.name AS name, CASE WHEN p.age > 65 THEN 'senior' WHEN p.age > 30 THEN 'adult' ELSE 'young' END AS category
+```
+
+### Step 18: EXISTS subqueries
+
+```julia
+result = @cypher conn begin
+    p::Person
+    where(exists((p)-[:KNOWS]->(:Person)))
+    ret(p.name => :name)
+end
+
+# Negated EXISTS
+result = @cypher conn begin
+    p::Person
+    where(!(exists((p)-[:KNOWS]->(:Person))))
+    ret(p.name => :loner)
+end
+```
+
+### Step 19: UNION and UNION ALL
+
+Combine multiple query parts:
+
+```julia
+result = @cypher conn begin
+    p::Person
+    where(p.age > 30)
+    ret(p.name => :name)
+    union()
+    p::Person
+    where(startswith(p.name, "A"))
+    ret(p.name => :name)
+end
+
+result = @cypher conn begin
+    p::Person
+    ret(p.name => :name)
+    union_all()
+    c::Company
+    ret(c.name => :name)
+end
+```
+
+### Step 20: CALL subqueries
+
+Nest a full sub-query with `call()`:
+
+```julia
+result = @cypher conn begin
+    p::Person
+    call(begin
+        with(p)
+        p >> r::KNOWS >> friend::Person
+        ret(count(friend) => :friend_count)
+    end)
+    ret(p.name => :name, friend_count)
+    order(friend_count, :desc)
+end
+```
+
+### Step 21: LOAD CSV
+
+Import data from CSV files:
+
+```julia
+@cypher conn begin
+    load_csv("file:///data/people.csv" => :row)
+    create((p:Person))
+    p.name = row[0]
+    p.age = row[1]
+end
+
+# With headers
+@cypher conn begin
+    load_csv_headers("file:///data/people.csv" => :row)
+    create((p:Person))
+    p.name = row.name
+    p.age = row.age
+end
+```
+
+### Step 22: FOREACH
+
+Apply updates over a collection:
+
+```julia
+names = ["Alice", "Bob", "Carol"]
+@cypher conn begin
+    p::Person
+    where(in(p.name, $names))
+    foreach(n, :in, collect(p), begin
+        set(n.verified = true)
+    end)
+end
+```
+
+FOREACH body supports `set()`, `create()`, `merge()`, `delete()`, `detach_delete()`, `remove()`, and nested `foreach()`.
+
+### Step 23: Index and constraint management
+
+```julia
+@cypher conn begin
+    create_index(:Person, :name)
+end
+
+# Named index
+@cypher conn begin
+    create_index(:Person, :email, :person_email_idx)
+end
+
+# Drop an index
+@cypher conn begin
+    drop_index(:person_email_idx)
+end
+
+# Uniqueness constraint
+@cypher conn begin
+    create_constraint(:Person, :email, :unique)
+end
+
+# NOT NULL constraint (named)
+@cypher conn begin
+    create_constraint(:Person, :name, :not_null, :person_name_required)
+end
+
+# Drop a constraint
+@cypher conn begin
+    drop_constraint(:person_name_required)
 end
 ```
 
@@ -833,51 +640,27 @@ end
 For simple match-filter-return queries, use Julia's comprehension syntax:
 
 ```julia
-# One-liner query
-result = @graph conn [p.name for p in Person if p.age > 25]
+result = @cypher conn [p.name for p in Person if p.age > 25]
 # → MATCH (p:Person) WHERE p.age > 25 RETURN p.name
 
-# Without filter
-result = @graph conn [p for p in Person]
+result = @cypher conn [p for p in Person]
 # → MATCH (p:Person) RETURN p
 
-# Tuple return
-result = @graph conn [(p.name, p.age) for p in Person]
+result = @cypher conn [(p.name, p.age) for p in Person]
 # → MATCH (p:Person) RETURN p.name, p.age
 
-# With alias
-result = @graph conn [p.name => :n for p in Person]
+result = @cypher conn [p.name => :n for p in Person]
 # → MATCH (p:Person) RETURN p.name AS n
 ```
 
-### Keyword arguments
-
-Pass query options after the block, just like `@query`:
-
-```julia
-result = @graph conn begin
-    p::Person
-    ret(p.name)
-end include_counters=true
-```
-
-!!! note "Automatic `access_mode`"
-    Both `@graph` and `@query` automatically set `access_mode=:read` for pure
-    read queries (MATCH/WHERE/RETURN/ORDER BY/…) and `access_mode=:write` when
-    any mutation clause is present (CREATE/MERGE/SET/DELETE/…).  You rarely need
-    to specify it manually.  If you do, an explicit `access_mode=:write` (or
-    `:read`) after `end` will override the inferred value.
-
 ## Known limitations
 
-These Cypher features are **not supported** by the DSL macros (`@query` and `@graph`):
+These Cypher features are **not supported** by the DSL:
 
-- Inline property patterns in MATCH (`{name: $v}`) — Julia's parser cannot parse `{…}` as an expression; use `where()` / `@where` instead
+- Inline property patterns in MATCH (`{name: $v}`) — Julia's parser cannot parse `{…}` as an expression; use `where()` instead
 - Shortest path functions (`shortestPath`, `allShortestPaths`)
-- `MERGE` on relationship patterns within `@query` (only node patterns)
 - Procedure calls via `CALL db.xxx()` (distinct from CALL subqueries)
-- Map projections and list comprehensions in Cypher sense
-- `@graph` does not yet support `@call` subqueries, `@load_csv`, `@foreach`, or index/constraint management — use `@query` for those
+- Map projections and list comprehensions in the Cypher sense
 
 ## Standalone mutations
 
@@ -917,7 +700,6 @@ bob   = @create conn Person(name="Bob", age=25)
 rel = @relate conn alice => KNOWS(since=2024) => bob
 # Returns: Relationship
 
-# Access relationship properties
 println(rel.type)      # "KNOWS"
 println(rel["since"])  # 2024
 ```

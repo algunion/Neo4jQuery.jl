@@ -14,7 +14,7 @@
 - **Explicit & implicit transactions** — both auto-commit queries and full begin/commit/rollback lifecycle with a convenient do-block API.
 - **Streaming results** — row-by-row iteration over JSONL responses for memory-efficient processing of large result sets.
 - **Rich type mapping** — automatic round-trip conversion between Julia types (`Int64`, `Float64`, `Date`, `DateTime`, `ZonedDateTime`, …) and Neo4j's type system, including spatial (`CypherPoint`), temporal (`CypherDuration`), and vector (`CypherVector`) values.
-- **Graph DSL** — macros `@query`, `@graph`, `@create`, `@merge`, and `@relate` let you write Julia-native graph operations that compile to parameterised Cypher at macro-expansion time. `@graph` offers a hyper-ergonomic syntax with `>>` chain operators, bare type annotations, and comprehension forms.
+- **Graph DSL** — the unified `@cypher` macro plus `@create`, `@merge`, and `@relate` let you write Julia-native graph operations that compile to parameterised Cypher at macro-expansion time. `@cypher` offers `>>` chain operators, bare type annotations, function-call clauses, auto-SET, and comprehension forms.
 - **Full Cypher coverage** — directed, left-arrow, and undirected patterns; variable-length relationships; CASE/WHEN expressions; EXISTS subqueries; regex matching (`matches()`); UNION/UNION ALL; CALL subqueries; LOAD CSV; FOREACH; and index/constraint management.
 - **Schema declarations** — `@node` and `@rel` register typed schemas with validation for safer graph mutations.
 - **Flexible authentication** — `BasicAuth` (HTTP Basic) and `BearerAuth` (token) with an extension point for custom strategies.

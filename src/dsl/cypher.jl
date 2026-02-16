@@ -1,14 +1,16 @@
-# ── @graph macro — hyper-ergonomic graph query DSL ──────────────────────────
+# ── @cypher macro — unified graph query DSL ──────────────────────────────────
 #
-# A radically ergonomic graph query DSL that compiles to parameterized Cypher.
+# The single, canonical DSL for Neo4jQuery.jl. Merges the best of @query
+# (full Cypher coverage) and @graph (Julia-native ergonomics) into one macro.
 #
-# Key innovations over @query:
+# Key design principles:
 #   • Julia-native type syntax: p::Person instead of (p:Person)
-#   • Chain operators: p::Person >> r::KNOWS >> q::Person
-#   • No sub-macros: where(), ret(), order(), take() are plain function calls
+#   • >> chain operators: p::Person >> r::KNOWS >> q::Person
+#   • Function-call clauses: where(), ret(), order() — no @sub-macros
 #   • Auto-SET: property assignments p.age = $val become SET clauses
+#   • Multi-condition WHERE: where(cond1, cond2) auto-ANDs
 #   • Comprehension form: [p.name for p in Person if p.age > 25]
-#   • Multi-condition where: where(cond1, cond2) auto-ANDs
+#   • Full Cypher: UNION, CALL subqueries, LOAD CSV, FOREACH, indexes, constraints
 #
 # The Cypher string is assembled at MACRO EXPANSION TIME.
 # Only $parameter values are captured at runtime → maximum performance.
@@ -43,6 +45,10 @@ function _is_graph_pattern(expr)::Bool
         (op == :(>>) || op == :(<<)) && return true
         # <-- left arrow
         op == :(<--) && return true
+        # Colon-syntax bare node: (p:Person) → Expr(:call, :(:), :p, :Person)
+        if op == :(:) && length(expr.args) == 3
+            expr.args[2] isa Symbol && expr.args[3] isa Symbol && return true
+        end
     end
 
     # Typed right-arrow: (a)-[r:T]->(b)
@@ -140,7 +146,7 @@ end
 # ── Unified pattern dispatcher ───────────────────────────────────────────────
 
 """
-    _graph_pattern_to_cypher(expr) -> String
+    _pattern_to_cypher(expr) -> String
 
 Convert any graph pattern expression to Cypher. Dispatches between:
 - `>>` chains (right-directed)
@@ -148,7 +154,7 @@ Convert any graph pattern expression to Cypher. Dispatches between:
 - Standard arrow patterns: `-[]->`, `-->`, `<--`, `<-[]-`, `-[]-`
 - Single node patterns: `p::Person`, `(p:Person)`
 """
-function _graph_pattern_to_cypher(expr)::String
+function _pattern_to_cypher(expr)::String
     # >> chain → right-directed path
     if expr isa Expr && expr.head == :call && length(expr.args) >= 3 && expr.args[1] == :(>>)
         return _graph_chain_to_cypher(expr, :right)
@@ -161,15 +167,13 @@ function _graph_pattern_to_cypher(expr)::String
     return _match_to_cypher(expr)
 end
 
-# ── Block parser ─────────────────────────────────────────────────────────────
-
 # ── Mutation detection ────────────────────────────────────────────────────────
 
 """
     _MUTATION_CLAUSES :: Set{Symbol}
 
 Clause kinds that indicate a write/mutation operation.
-Used by `@graph` and `@query` to auto-infer `access_mode`.
+Used by `@cypher` to auto-infer `access_mode`.
 """
 const _MUTATION_CLAUSES = Set{Symbol}([
     :create, :merge_clause, :set, :remove,
@@ -185,11 +189,13 @@ Return `true` if any clause is a mutation (write) operation.
 _has_mutations(clauses::Vector{Tuple{Symbol,Vector{Any}}})::Bool =
     any(kind ∈ _MUTATION_CLAUSES for (kind, _) in clauses)
 
-# Map function names to clause kinds
-const _GRAPH_CLAUSE_FUNCTIONS = Dict{Symbol,Symbol}(
+# ── Clause function map ──────────────────────────────────────────────────────
+
+"""Map function names used in `@cypher` blocks to internal clause kinds."""
+const _CYPHER_CLAUSE_FUNCTIONS = Dict{Symbol,Symbol}(
     :where => :where,
     :ret => :return,
-    :returning => :return,          # alias
+    :returning => :return,
     :order => :orderby,
     :take => :limit,
     :skip => :skip,
@@ -204,20 +210,33 @@ const _GRAPH_CLAUSE_FUNCTIONS = Dict{Symbol,Symbol}(
     :on_create => :on_create_set,
     :on_match => :on_match_set,
     :remove => :remove,
+    # Full Cypher coverage (from @query)
+    :union => :union,
+    :union_all => :union_all,
+    :call => :call_subquery,
+    :load_csv => :load_csv,
+    :load_csv_headers => :load_csv_headers,
+    :foreach => :foreach,
+    :create_index => :create_index,
+    :drop_index => :drop_index,
+    :create_constraint => :create_constraint,
+    :drop_constraint => :drop_constraint,
 )
 
-"""
-    _parse_graph_block(block::Expr) -> Vector{Tuple{Symbol, Vector{Any}}}
+# ── Block parser ─────────────────────────────────────────────────────────────
 
-Parse a `begin...end` block from `@graph` into `(clause_kind, args)` pairs.
-
-Unlike `@query` (which uses `@sub-macros`), `@graph` recognizes:
-- **Bare patterns** as implicit MATCH (node expressions, arrow patterns, >> chains)
-- **Function-call syntax** for clauses: `where()`, `ret()`, `order()`, etc.
-- **Assignments** `p.prop = val` as SET clauses (auto-detected)
 """
-function _parse_graph_block(block::Expr)
-    block.head == :block || error("@graph expects a begin...end block")
+    _parse_cypher_block(block::Expr) -> Vector{Tuple{Symbol, Vector{Any}}}
+
+Parse a `begin...end` block from `@cypher` into `(clause_kind, args)` pairs.
+
+Recognizes three expression types:
+1. **Function-call clauses**: `where()`, `ret()`, `order()`, `create()`, etc.
+2. **Property assignments**: `p.prop = val` → auto-SET
+3. **Graph patterns**: bare node/relationship patterns → implicit MATCH
+"""
+function _parse_cypher_block(block::Expr)
+    block.head == :block || error("@cypher expects a begin...end block")
 
     clauses = Tuple{Symbol,Vector{Any}}[]
 
@@ -227,8 +246,8 @@ function _parse_graph_block(block::Expr)
         # ── 1. Function-call clauses: where(...), ret(...), etc. ─────────
         if arg isa Expr && arg.head == :call
             fn = arg.args[1]
-            if fn isa Symbol && haskey(_GRAPH_CLAUSE_FUNCTIONS, fn)
-                kind = _GRAPH_CLAUSE_FUNCTIONS[fn]
+            if fn isa Symbol && haskey(_CYPHER_CLAUSE_FUNCTIONS, fn)
+                kind = _CYPHER_CLAUSE_FUNCTIONS[fn]
                 clause_args = Any[a for a in arg.args[2:end]]
                 push!(clauses, (kind, clause_args))
                 continue
@@ -239,7 +258,6 @@ function _parse_graph_block(block::Expr)
         if arg isa Expr && arg.head == :(=)
             lhs = arg.args[1]
             if lhs isa Expr && lhs.head == :.
-                # This is a property assignment → SET clause
                 push!(clauses, (:set, Any[arg]))
                 continue
             end
@@ -251,9 +269,10 @@ function _parse_graph_block(block::Expr)
             continue
         end
 
-        error("Unrecognized expression in @graph block: $(repr(arg)). " *
+        error("Unrecognized expression in @cypher block: $(repr(arg)). " *
               "Expected a graph pattern, clause function " *
-              "(where/ret/order/take/create/merge/optional/...), or property assignment.")
+              "(where/ret/order/take/create/merge/optional/call/foreach/...), " *
+              "or property assignment.")
     end
 
     return clauses
@@ -266,10 +285,6 @@ end
 
 Convert a `=>` pair or `:kw` assignment from `on_create()`/`on_match()` calls
 into a Cypher SET fragment like `p.age = 30`.
-
-Handles:
-- `Expr(:call, :(=>), lhs, rhs)` — `p.age => 30`
-- `Expr(:kw, lhs, rhs)` — `p.age = 30` (parsed as keyword inside call)
 """
 function _pair_or_kw_to_set_cypher(expr, params::Vector{Symbol},
     seen::Dict{Symbol,Nothing})::String
@@ -295,15 +310,255 @@ function _pair_or_kw_to_set_cypher(expr, params::Vector{Symbol},
           "in on_create/on_match, got: $(repr(expr))")
 end
 
+# ── FOREACH compilation (function-call style) ────────────────────────────────
+
+"""
+    _parse_cypher_foreach_body(block::Expr) -> Vector{Tuple{Symbol, Vector{Any}}}
+
+Parse a `begin...end` block inside `foreach()` into `(clause_kind, args)` pairs.
+Only mutation clauses are allowed: create, merge, set (via assignment),
+delete, detach_delete, remove, and nested foreach.
+"""
+function _parse_cypher_foreach_body(block::Expr)
+    block.head == :block || error("foreach body must be a begin...end block")
+
+    clauses = Tuple{Symbol,Vector{Any}}[]
+
+    for arg in block.args
+        arg isa LineNumberNode && continue
+
+        # Property assignment → SET
+        if arg isa Expr && arg.head == :(=)
+            lhs = arg.args[1]
+            if lhs isa Expr && lhs.head == :.
+                push!(clauses, (:set, Any[arg]))
+                continue
+            end
+        end
+
+        # Function call → mutation clause
+        if arg isa Expr && arg.head == :call
+            fn = arg.args[1]
+            if fn isa Symbol
+                fn_args = Any[a for a in arg.args[2:end]]
+                if fn == :create
+                    push!(clauses, (:create, fn_args))
+                elseif fn == :merge
+                    push!(clauses, (:merge_clause, fn_args))
+                elseif fn == :delete
+                    push!(clauses, (:delete, fn_args))
+                elseif fn == :detach_delete
+                    push!(clauses, (:detach_delete, fn_args))
+                elseif fn == :remove
+                    push!(clauses, (:remove, fn_args))
+                elseif fn == :foreach
+                    push!(clauses, (:foreach, fn_args))
+                else
+                    error("Only mutation clauses allowed in foreach body: " *
+                          "create, merge, delete, detach_delete, remove, foreach, " *
+                          "or property assignments. Got: $(fn)")
+                end
+                continue
+            end
+        end
+
+        error("Invalid expression in foreach body: $(repr(arg)). " *
+              "Expected a mutation clause or property assignment.")
+    end
+
+    return clauses
+end
+
+"""
+    _compile_cypher_foreach_body(clauses, params, seen) -> Vector{String}
+
+Compile parsed foreach body clauses into Cypher mutation strings.
+"""
+function _compile_cypher_foreach_body(clauses::Vector{Tuple{Symbol,Vector{Any}}},
+    params::Vector{Symbol}, seen::Dict{Symbol,Nothing})::Vector{String}
+    parts = String[]
+
+    for (kind, args) in clauses
+        if kind == :set
+            push!(parts, "SET " * _set_to_cypher(args[1], params, seen))
+        elseif kind == :create
+            push!(parts, "CREATE " * _pattern_to_cypher(args[1]))
+        elseif kind == :merge_clause
+            push!(parts, "MERGE " * _pattern_to_cypher(args[1]))
+        elseif kind == :delete
+            items = [_expr_to_cypher(a) for a in args]
+            push!(parts, "DELETE " * join(items, ", "))
+        elseif kind == :detach_delete
+            items = [_expr_to_cypher(a) for a in args]
+            push!(parts, "DETACH DELETE " * join(items, ", "))
+        elseif kind == :remove
+            items = [_expr_to_cypher(a) for a in args]
+            push!(parts, "REMOVE " * join(items, ", "))
+        elseif kind == :foreach
+            push!(parts, _compile_cypher_foreach(args, params, seen))
+        end
+    end
+
+    return parts
+end
+
+"""
+    _compile_cypher_foreach(args, params, seen) -> String
+
+Compile a `foreach(source => :var, begin ... end)` clause into
+`FOREACH (var IN source | body)`.
+"""
+function _compile_cypher_foreach(args::Vector{Any}, params::Vector{Symbol},
+    seen::Dict{Symbol,Nothing})::String
+    length(args) >= 2 || error("foreach expects: foreach(source => :var, begin ... end)")
+
+    pair_expr = args[1]
+    body_block = args[2]
+
+    # Parse source => :alias
+    pair_expr isa Expr && pair_expr.head == :call && pair_expr.args[1] == :(=>) ||
+        error("foreach first argument must be source => :var, got: $(repr(pair_expr))")
+
+    source_cypher = _condition_to_cypher(pair_expr.args[2], params, seen)
+    alias = pair_expr.args[3]
+    alias_str = alias isa QuoteNode ? string(alias.value) : string(alias)
+
+    # Parse and compile body
+    body_block isa Expr && body_block.head == :block ||
+        error("foreach body must be a begin...end block")
+
+    body_clauses = _parse_cypher_foreach_body(body_block)
+    body_parts = _compile_cypher_foreach_body(body_clauses, params, seen)
+    body_str = join(body_parts, " ")
+
+    return "FOREACH ($alias_str IN $source_cypher | $body_str)"
+end
+
+# ── CALL subquery compilation ────────────────────────────────────────────────
+
+"""
+    _compile_cypher_subquery(block::Expr, params, seen) -> String
+
+Compile a `begin...end` block inside `call()` into a Cypher subquery body.
+Uses the full block parser recursively — subqueries can contain any valid clauses.
+"""
+function _compile_cypher_subquery(block::Expr, params::Vector{Symbol},
+    seen::Dict{Symbol,Nothing})::String
+    block.head == :block || error("call() expects a begin...end block")
+
+    clauses = _parse_cypher_block(block)
+    cypher_parts = String[]
+    set_parts = String[]
+
+    function _flush_sub_set!()
+        if !isempty(set_parts)
+            push!(cypher_parts, "SET " * join(set_parts, ", "))
+            empty!(set_parts)
+        end
+    end
+
+    for (kind, args) in clauses
+        if kind == :match
+            if length(args) == 1
+                push!(cypher_parts, "MATCH " * _pattern_to_cypher(args[1]))
+            else
+                patterns = [_pattern_to_cypher(a) for a in args]
+                push!(cypher_parts, "MATCH " * join(patterns, ", "))
+            end
+
+        elseif kind == :optional_match
+            if length(args) == 1
+                push!(cypher_parts, "OPTIONAL MATCH " * _pattern_to_cypher(args[1]))
+            else
+                patterns = [_pattern_to_cypher(a) for a in args]
+                push!(cypher_parts, "OPTIONAL MATCH " * join(patterns, ", "))
+            end
+
+        elseif kind == :where
+            conds = [_condition_to_cypher(a, params, seen) for a in args]
+            push!(cypher_parts, "WHERE " * join(conds, " AND "))
+
+        elseif kind == :return
+            _flush_sub_set!()
+            if !isempty(args) && args[1] === :distinct
+                items = args[2:end]
+                ret_expr = length(items) == 1 ? items[1] : Expr(:tuple, items...)
+                push!(cypher_parts, "RETURN DISTINCT " * _return_to_cypher(ret_expr))
+            else
+                ret_expr = length(args) == 1 ? args[1] : Expr(:tuple, args...)
+                push!(cypher_parts, "RETURN " * _return_to_cypher(ret_expr))
+            end
+
+        elseif kind == :with
+            _flush_sub_set!()
+            w_expr = length(args) == 1 ? args[1] : Expr(:tuple, args...)
+            push!(cypher_parts, "WITH " * _with_to_cypher(w_expr))
+
+        elseif kind == :unwind
+            push!(cypher_parts, "UNWIND " * _unwind_to_cypher(args[1], params, seen))
+
+        elseif kind == :create
+            if length(args) == 1
+                push!(cypher_parts, "CREATE " * _pattern_to_cypher(args[1]))
+            else
+                patterns = [_pattern_to_cypher(a) for a in args]
+                push!(cypher_parts, "CREATE " * join(patterns, ", "))
+            end
+
+        elseif kind == :merge_clause
+            push!(cypher_parts, "MERGE " * _pattern_to_cypher(args[1]))
+
+        elseif kind == :set
+            push!(set_parts, _set_to_cypher(args[1], params, seen))
+
+        elseif kind == :delete
+            _flush_sub_set!()
+            items = [_expr_to_cypher(a) for a in args]
+            push!(cypher_parts, "DELETE " * join(items, ", "))
+
+        elseif kind == :detach_delete
+            _flush_sub_set!()
+            items = [_expr_to_cypher(a) for a in args]
+            push!(cypher_parts, "DETACH DELETE " * join(items, ", "))
+
+        elseif kind == :orderby
+            _flush_sub_set!()
+            push!(cypher_parts, "ORDER BY " * _orderby_to_cypher(args))
+
+        elseif kind == :skip
+            _flush_sub_set!()
+            push!(cypher_parts, "SKIP " * _limit_skip_to_cypher(args[1], params, seen))
+
+        elseif kind == :limit
+            _flush_sub_set!()
+            push!(cypher_parts, "LIMIT " * _limit_skip_to_cypher(args[1], params, seen))
+
+        elseif kind == :union
+            _flush_sub_set!()
+            push!(cypher_parts, "UNION")
+
+        elseif kind == :union_all
+            _flush_sub_set!()
+            push!(cypher_parts, "UNION ALL")
+
+        else
+            error("Unsupported clause in call() subquery: $kind")
+        end
+    end
+
+    _flush_sub_set!()
+    return join(cypher_parts, " ")
+end
+
 # ── Block compiler ───────────────────────────────────────────────────────────
 
 """
-    _compile_graph_block(clauses) -> (cypher::String, params::Vector{Symbol})
+    _compile_cypher_block(clauses) -> (cypher::String, params::Vector{Symbol})
 
 Compile parsed `(clause_kind, args)` pairs into a Cypher string and parameter
-symbol list. Reuses existing compilation functions from `compile.jl`.
+symbol list. Reuses compilation primitives from `compile.jl`.
 """
-function _compile_graph_block(clauses::Vector{Tuple{Symbol,Vector{Any}}})
+function _compile_cypher_block(clauses::Vector{Tuple{Symbol,Vector{Any}}})
     cypher_parts = String[]
     param_syms = Symbol[]
     param_seen = Dict{Symbol,Nothing}()
@@ -319,18 +574,18 @@ function _compile_graph_block(clauses::Vector{Tuple{Symbol,Vector{Any}}})
     for (kind, args) in clauses
         if kind == :match
             if length(args) == 1
-                push!(cypher_parts, "MATCH " * _graph_pattern_to_cypher(args[1]))
+                push!(cypher_parts, "MATCH " * _pattern_to_cypher(args[1]))
             else
-                # Multiple patterns: match((a::Person), (b::Company))
-                patterns = [_graph_pattern_to_cypher(a) for a in args]
+                # Multiple patterns: match(a::Person, b::Company)
+                patterns = [_pattern_to_cypher(a) for a in args]
                 push!(cypher_parts, "MATCH " * join(patterns, ", "))
             end
 
         elseif kind == :optional_match
             if length(args) == 1
-                push!(cypher_parts, "OPTIONAL MATCH " * _graph_pattern_to_cypher(args[1]))
+                push!(cypher_parts, "OPTIONAL MATCH " * _pattern_to_cypher(args[1]))
             else
-                patterns = [_graph_pattern_to_cypher(a) for a in args]
+                patterns = [_pattern_to_cypher(a) for a in args]
                 push!(cypher_parts, "OPTIONAL MATCH " * join(patterns, ", "))
             end
 
@@ -353,28 +608,34 @@ function _compile_graph_block(clauses::Vector{Tuple{Symbol,Vector{Any}}})
 
         elseif kind == :with
             _flush_set!()
-            w_expr = length(args) == 1 ? args[1] : Expr(:tuple, args...)
-            push!(cypher_parts, "WITH " * _with_to_cypher(w_expr))
+            if !isempty(args) && args[1] === :distinct
+                items = args[2:end]
+                w_expr = length(items) == 1 ? items[1] : Expr(:tuple, items...)
+                push!(cypher_parts, "WITH DISTINCT " * _with_to_cypher(w_expr))
+            else
+                w_expr = length(args) == 1 ? args[1] : Expr(:tuple, args...)
+                push!(cypher_parts, "WITH " * _with_to_cypher(w_expr))
+            end
 
         elseif kind == :unwind
             push!(cypher_parts, "UNWIND " * _unwind_to_cypher(args[1], param_syms, param_seen))
 
         elseif kind == :create
             if length(args) == 1
-                push!(cypher_parts, "CREATE " * _graph_pattern_to_cypher(args[1]))
+                push!(cypher_parts, "CREATE " * _pattern_to_cypher(args[1]))
             else
-                patterns = [_graph_pattern_to_cypher(a) for a in args]
+                patterns = [_pattern_to_cypher(a) for a in args]
                 push!(cypher_parts, "CREATE " * join(patterns, ", "))
             end
 
         elseif kind == :merge_clause
-            push!(cypher_parts, "MERGE " * _graph_pattern_to_cypher(args[1]))
+            push!(cypher_parts, "MERGE " * _pattern_to_cypher(args[1]))
 
         elseif kind == :set
-            # args[1] is the assignment expression: p.age = $val
             push!(set_parts, _set_to_cypher(args[1], param_syms, param_seen))
 
         elseif kind == :remove
+            _flush_set!()
             items = [_expr_to_cypher(a) for a in args]
             push!(cypher_parts, "REMOVE " * join(items, ", "))
 
@@ -408,8 +669,49 @@ function _compile_graph_block(clauses::Vector{Tuple{Symbol,Vector{Any}}})
             set_strs = [_pair_or_kw_to_set_cypher(a, param_syms, param_seen) for a in args]
             push!(cypher_parts, "ON MATCH SET " * join(set_strs, ", "))
 
+            # ── Extended clauses ─────────────────────────────────────────────
+
+        elseif kind == :union
+            _flush_set!()
+            push!(cypher_parts, "UNION")
+
+        elseif kind == :union_all
+            _flush_set!()
+            push!(cypher_parts, "UNION ALL")
+
+        elseif kind == :call_subquery
+            _flush_set!()
+            # call(begin ... end) — first arg is the block
+            length(args) >= 1 || error("call() expects a begin...end block argument")
+            sub_cypher = _compile_cypher_subquery(args[1], param_syms, param_seen)
+            push!(cypher_parts, "CALL { $sub_cypher }")
+
+        elseif kind == :load_csv
+            push!(cypher_parts, "LOAD CSV FROM " *
+                                _loadcsv_to_cypher(args[1], param_syms, param_seen))
+
+        elseif kind == :load_csv_headers
+            push!(cypher_parts, "LOAD CSV WITH HEADERS FROM " *
+                                _loadcsv_to_cypher(args[1], param_syms, param_seen))
+
+        elseif kind == :foreach
+            _flush_set!()
+            push!(cypher_parts, _compile_cypher_foreach(args, param_syms, param_seen))
+
+        elseif kind == :create_index
+            push!(cypher_parts, _index_to_cypher(:create, args))
+
+        elseif kind == :drop_index
+            push!(cypher_parts, _index_to_cypher(:drop, args))
+
+        elseif kind == :create_constraint
+            push!(cypher_parts, _constraint_to_cypher(:create, args))
+
+        elseif kind == :drop_constraint
+            push!(cypher_parts, _constraint_to_cypher(:drop, args))
+
         else
-            error("Unknown clause kind in @graph: $kind")
+            error("Unknown clause kind in @cypher: $kind")
         end
     end
 
@@ -420,16 +722,16 @@ end
 # ── Comprehension compiler ───────────────────────────────────────────────────
 
 """
-    _compile_graph_comprehension(comp_expr) -> (cypher::String, params::Vector{Symbol})
+    _compile_cypher_comprehension(comp_expr) -> (cypher::String, params::Vector{Symbol})
 
 Compile a comprehension `[body for var in Label if cond]` into Cypher.
 
 - `[p.name for p in Person if p.age > 25]`
   → `MATCH (p:Person) WHERE p.age > 25 RETURN p.name`
 """
-function _compile_graph_comprehension(comp_expr::Expr)
+function _compile_cypher_comprehension(comp_expr::Expr)
     comp_expr.head == :comprehension ||
-        error("Expected comprehension expression in @graph")
+        error("Expected comprehension expression in @cypher")
 
     gen = comp_expr.args[1]
     gen isa Expr && gen.head == :generator ||
@@ -469,28 +771,24 @@ function _compile_graph_comprehension(comp_expr::Expr)
     end
 
     # RETURN
-    ret_cypher = if body isa Expr && body.head == :tuple
-        _return_to_cypher(body)
-    else
-        _return_to_cypher(body)
-    end
-    push!(cypher_parts, "RETURN $ret_cypher")
+    push!(cypher_parts, "RETURN " * _return_to_cypher(body))
 
     return join(cypher_parts, " "), param_syms
 end
 
-# ── The @graph macro ─────────────────────────────────────────────────────────
+# ── The @cypher macro ────────────────────────────────────────────────────────
 
 """
-    @graph conn begin ... end
-    @graph conn [comprehension]
+    @cypher conn begin ... end
+    @cypher conn [comprehension]
 
-Hyper-ergonomic graph query DSL that compiles to parameterized Cypher.
+Unified graph query DSL that compiles Julia expressions to parameterized Cypher.
+
+Combines Julia-native ergonomics with full Cypher coverage.
 
 # Pattern Syntax
-#
-# The >> chain is the single, canonical pattern language for @graph.
-# It works uniformly in match, create, merge, optional — everywhere.
+
+The `>>` chain is the primary pattern language. Arrow syntax also works.
 
 | Julia                                          | Cypher                              |
 |:-----------------------------------------------|:------------------------------------|
@@ -500,39 +798,43 @@ Hyper-ergonomic graph query DSL that compiles to parameterized Cypher.
 | `p::Person >> KNOWS >> q::Person`              | `(p:Person)-[:KNOWS]->(q:Person)`   |
 | `p::Person << r::KNOWS << q::Person`           | `(p:Person)<-[r:KNOWS]-(q:Person)`  |
 | `a::A >> R1 >> b::B >> R2 >> c::C`             | `(a:A)-[:R1]->(b:B)-[:R2]->(c:C)`  |
+| `(p:Person)-[r:KNOWS]->(q:Person)`             | `(p:Person)-[r:KNOWS]->(q:Person)`  |
 
-# Clause Functions (no `@` prefix needed)
+# Clause Functions
 
 | Clause                                 | Cypher                              |
 |:---------------------------------------|:------------------------------------|
 | `where(cond1, cond2)`                  | `WHERE cond1 AND cond2`             |
 | `ret(expr => :alias, ...)`             | `RETURN expr AS alias, ...`         |
 | `ret(distinct, expr)`                  | `RETURN DISTINCT expr`              |
+| `returning(expr)`                      | `RETURN expr` (alias for `ret`)     |
 | `order(expr, :desc)`                   | `ORDER BY expr DESC`                |
 | `take(n)` / `skip(n)`                  | `LIMIT n` / `SKIP n`               |
-| `create(pattern)`                      | `CREATE pattern`                    |
-| `merge(pattern)`                       | `MERGE pattern`                     |
+| `create(pattern)` / `merge(pattern)`   | `CREATE` / `MERGE`                  |
 | `optional(pattern)`                    | `OPTIONAL MATCH pattern`            |
-| `p.prop = val` (assignment)            | `SET p.prop = val`                  |
+| `match(p1, p2)`                        | `MATCH p1, p2` (explicit multi)     |
 | `with(expr => :alias, ...)`            | `WITH expr AS alias, ...`           |
 | `unwind(\$list => :var)`               | `UNWIND \$list AS var`              |
-| `delete(vars...)` / `detach_delete()`  | `DELETE` / `DETACH DELETE`          |
-| `on_create(p.age = val)` (after merge) | `ON CREATE SET p.age = val`         |
-| `on_match(p.age = val)` (after merge)  | `ON MATCH SET p.age = val`          |
-| `match(p1, p2)` (explicit multi)       | `MATCH p1, p2`                      |
+| `delete(vars)` / `detach_delete(vars)` | `DELETE` / `DETACH DELETE`          |
+| `on_create(p.prop = val)`              | `ON CREATE SET p.prop = val`        |
+| `on_match(p.prop = val)`               | `ON MATCH SET p.prop = val`         |
+| `p.prop = \$val` (assignment)          | `SET p.prop = \$val` (auto-SET)     |
+| `remove(items)`                        | `REMOVE items`                      |
+| `union()` / `union_all()`              | `UNION` / `UNION ALL`               |
+| `call(begin ... end)`                  | `CALL { ... }` subquery             |
+| `load_csv(url => :row)`               | `LOAD CSV FROM url AS row`          |
+| `load_csv_headers(url => :row)`        | `LOAD CSV WITH HEADERS ...`         |
+| `foreach(expr => :var, begin...end)`   | `FOREACH (var IN expr \\| ...)`     |
+| `create_index(:Label, :prop)`          | `CREATE INDEX ...`                  |
+| `drop_index(:name)`                    | `DROP INDEX name IF EXISTS`         |
+| `create_constraint(:L, :p, :type)`     | `CREATE CONSTRAINT ...`             |
+| `drop_constraint(:name)`               | `DROP CONSTRAINT name IF EXISTS`    |
 
 # Examples
 
 ```julia
-# ── Simple node query ──
-result = @graph conn begin
-    p::Person
-    where(p.age > 25)
-    ret(p.name, p.age)
-end
-
-# ── Relationship traversal with >> chains ──
-result = @graph conn begin
+# Simple traversal
+result = @cypher conn begin
     p::Person >> r::KNOWS >> q::Person
     where(p.age > \$min_age, q.name == \$target)
     ret(p.name => :name, r.since, q.name => :friend)
@@ -540,14 +842,8 @@ result = @graph conn begin
     take(10)
 end
 
-# ── Multi-hop traversal ──
-result = @graph conn begin
-    a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company
-    ret(a.name, b.name, c.name)
-end
-
-# ── Mutations with auto-SET ──
-@graph conn begin
+# Mutations with auto-SET
+@cypher conn begin
     p::Person
     where(p.name == \$name)
     p.age = \$new_age
@@ -555,16 +851,8 @@ end
     ret(p)
 end
 
-# ── Create with properties ──
-@graph conn begin
-    create(p::Person)
-    p.name = \$name
-    p.age = \$age
-    ret(p)
-end
-
-# ── Create a relationship (>> in create) ──
-@graph conn begin
+# Create relationships with >> in create()
+@cypher conn begin
     match(a::Person, b::Person)
     where(a.name == \$n1, b.name == \$n2)
     create(a >> r::KNOWS >> b)
@@ -572,27 +860,42 @@ end
     ret(r)
 end
 
-# ── Merge with on_create / on_match ──
-@graph conn begin
-    merge(p::Person)
-    on_create(p.created = true)
-    on_match(p.updated = true)
-    ret(p)
+# UNION
+@cypher conn begin
+    p::Person
+    where(p.age > 30)
+    ret(p.name => :name)
+    union()
+    p::Person
+    where(startswith(p.name, "A"))
+    ret(p.name => :name)
 end
 
-# ── Merge a relationship (>> in merge) ──
-@graph conn begin
-    merge(p::Person >> r::KNOWS >> q::Person)
-    on_create(r.since = 2024)
-    ret(r)
+# CALL subquery
+@cypher conn begin
+    p::Person
+    call(begin
+        with(p)
+        p >> r::KNOWS >> friend::Person
+        ret(count(friend) => :friend_count)
+    end)
+    ret(p.name => :name, friend_count)
 end
 
-# ── Comprehension form (simple queries) ──
-result = @graph conn [p.name for p in Person if p.age > 25]
-result = @graph conn [p for p in Person]
+# FOREACH
+@cypher conn begin
+    p::Person
+    where(p.active == true)
+    foreach(collect(p) => :n, begin
+        n.verified = true
+    end)
+end
+
+# Comprehension form
+result = @cypher conn [p.name for p in Person if p.age > 25]
 ```
 """
-macro graph(conn, block, kwargs...)
+macro cypher(conn, block, kwargs...)
     # ── Process user-supplied kwargs ──────────────────────────────────────
     kw_exprs = map(kwargs) do kw
         if kw isa Expr && kw.head == :(=)
@@ -609,12 +912,10 @@ macro graph(conn, block, kwargs...)
 
     # ── Comprehension form ───────────────────────────────────────────────
     if block isa Expr && block.head == :comprehension
-        cypher_str, param_syms = _compile_graph_comprehension(block)
+        cypher_str, param_syms = _compile_cypher_comprehension(block)
 
         param_pairs = [:($(string(s)) => $(esc(s))) for s in param_syms]
 
-        # Comprehensions are always reads — inject access_mode=:read
-        # unless the user explicitly overrode it
         auto_kw = has_explicit_access_mode ? Expr[] :
                   [Expr(:kw, :access_mode, QuoteNode(:read))]
 
@@ -629,10 +930,10 @@ macro graph(conn, block, kwargs...)
 
     # ── Block form ───────────────────────────────────────────────────────
     block isa Expr && block.head == :block ||
-        error("@graph expects a begin...end block or [comprehension] as second argument")
+        error("@cypher expects a begin...end block or [comprehension] as second argument")
 
-    clauses = _parse_graph_block(block)
-    cypher_str, param_syms = _compile_graph_block(clauses)
+    clauses = _parse_cypher_block(block)
+    cypher_str, param_syms = _compile_cypher_block(clauses)
 
     param_pairs = [:($(string(s)) => $(esc(s))) for s in param_syms]
 

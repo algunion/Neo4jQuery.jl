@@ -1,5 +1,5 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# Biomedical Knowledge Graph — Complex DSL Integration Test
+# Biomedical Knowledge Graph — Unified @cypher DSL Integration Test
 #
 # This script builds a realistic clinical/biomedical graph covering:
 #   • Diseases, Genes, Proteins, Drugs, Clinical Trials, Patients,
@@ -707,12 +707,12 @@ end
     # ── 4.1 Multi-hop: Gene → Protein → Pathway for a disease ───────────
     @testset "Gene-Protein-Pathway for Breast Cancer" begin
         disease_name = "Breast Cancer"
-        result = @query conn begin
-            @match (g:Gene) - [:ASSOCIATED_WITH] -> (d:Disease)
-            @match (g) - [:ENCODES] -> (p:Protein) - [:PARTICIPATES_IN] -> (pw:Pathway)
-            @where d.name == $disease_name
-            @return g.symbol => :gene, p.name => :protein, pw.name => :pathway
-            @orderby g.symbol
+        result = @cypher conn begin
+            (g:Gene) - [:ASSOCIATED_WITH] -> (d:Disease)
+            (g) - [:ENCODES] -> (p:Protein) - [:PARTICIPATES_IN] -> (pw:Pathway)
+            where(d.name == $disease_name)
+            ret(g.symbol => :gene, p.name => :protein, pw.name => :pathway)
+            order(g.symbol)
         end access_mode = :read
 
         @test length(result) > 0
@@ -723,14 +723,14 @@ end
     # ── 4.2 Drug repurposing candidates (shared pathways) ───────────────
     @testset "Drug repurposing — shared pathway targets" begin
         target_disease = "Breast Cancer"
-        result = @query conn begin
-            @match (drug:Drug) - [:TARGETS] -> (prot:Protein) - [:PARTICIPATES_IN] -> (pw:Pathway)
-            @match (prot2:Protein) - [:PARTICIPATES_IN] -> (pw)
-            @match (g:Gene) - [:ENCODES] -> (prot2)
-            @match (g) - [:ASSOCIATED_WITH] -> (d:Disease)
-            @where d.name == $target_disease
-            @return drug.name => :drug, pw.name => :pathway, g.symbol => :gene
-            @orderby drug.name
+        result = @cypher conn begin
+            (drug:Drug) - [:TARGETS] -> (prot:Protein) - [:PARTICIPATES_IN] -> (pw:Pathway)
+            (prot2:Protein) - [:PARTICIPATES_IN] -> (pw)
+            (g:Gene) - [:ENCODES] -> (prot2)
+            (g) - [:ASSOCIATED_WITH] -> (d:Disease)
+            where(d.name == $target_disease)
+            ret(drug.name => :drug, pw.name => :pathway, g.symbol => :gene)
+            order(drug.name)
         end access_mode = :read
 
         @test length(result) >= 0  # may or may not find repurposing candidates
@@ -738,12 +738,12 @@ end
 
     # ── 4.3 Patient cohort analysis ─────────────────────────────────────
     @testset "Patients by disease with trial enrollment" begin
-        result = @query conn begin
-            @match (pt:Patient) - [dx:DIAGNOSED_WITH] -> (d:Disease)
-            @optional_match (pt) - [e:ENROLLED_IN] -> (ct:ClinicalTrial)
-            @return pt.patient_id => :patient, d.name => :disease,
-            dx.stage => :stage, ct.trial_id => :trial
-            @orderby d.name pt.patient_id
+        result = @cypher conn begin
+            (pt:Patient) - [dx:DIAGNOSED_WITH] -> (d:Disease)
+            optional((pt) - [e:ENROLLED_IN] -> (ct:ClinicalTrial))
+            ret(pt.patient_id => :patient, d.name => :disease,
+                dx.stage => :stage, ct.trial_id => :trial)
+            order(d.name, pt.patient_id)
         end access_mode = :read
 
         @test length(result) >= 6
@@ -754,12 +754,12 @@ end
 
     # ── 4.4 Aggregation: drugs per disease with avg efficacy ────────────
     @testset "Drug count and average efficacy per disease" begin
-        result = @query conn begin
-            @match (drug:Drug) - [t:TREATS] -> (d:Disease)
-            @with d.name => :disease, count(drug) => :drug_count, avg(t.efficacy) => :mean_efficacy
-            @where drug_count > 1
-            @return disease, drug_count, mean_efficacy
-            @orderby drug_count :desc
+        result = @cypher conn begin
+            (drug:Drug) - [t:TREATS] -> (d:Disease)
+            with(d.name => :disease, count(drug) => :drug_count, avg(t.efficacy) => :mean_efficacy)
+            where(drug_count > 1)
+            ret(disease, drug_count, mean_efficacy)
+            order(drug_count, :desc)
         end access_mode = :read
 
         @test length(result) > 0
@@ -771,12 +771,12 @@ end
 
     # ── 4.5 Side effect overlap between drugs ───────────────────────────
     @testset "Common side effects across oncology drugs" begin
-        result = @query conn begin
-            @match (d1:Drug) - [:HAS_SIDE_EFFECT] -> (s:Symptom)
-            @match (d2:Drug) - [:HAS_SIDE_EFFECT] -> (s)
-            @where d1.name < d2.name
-            @return d1.name => :drug1, d2.name => :drug2, collect(s.name) => :shared_effects
-            @orderby d1.name
+        result = @cypher conn begin
+            (d1:Drug) - [:HAS_SIDE_EFFECT] -> (s:Symptom)
+            (d2:Drug) - [:HAS_SIDE_EFFECT] -> (s)
+            where(d1.name < d2.name)
+            ret(d1.name => :drug1, d2.name => :drug2, collect(s.name) => :shared_effects)
+            order(d1.name)
         end access_mode = :read
 
         @test length(result) > 0
@@ -785,16 +785,16 @@ end
     # ── 4.6 Complete patient journey ────────────────────────────────────
     @testset "Full patient journey — diagnosis to treatment" begin
         pid = "PT-2024-001"
-        result = @query conn begin
-            @match (pt:Patient) - [dx:DIAGNOSED_WITH] -> (d:Disease)
-            @match (drug:Drug) - [t:TREATS] -> (d)
-            @where pt.patient_id == $pid
-            @optional_match (pt) - [e:ENROLLED_IN] -> (ct:ClinicalTrial)
-            @optional_match (drug) - [:HAS_SIDE_EFFECT] -> (se:Symptom)
-            @return d.name => :disease, drug.name => :drug_option,
-            t.efficacy => :efficacy, ct.title => :trial,
-            collect(se.name) => :side_effects
-            @orderby t.efficacy :desc
+        result = @cypher conn begin
+            (pt:Patient) - [dx:DIAGNOSED_WITH] -> (d:Disease)
+            (drug:Drug) - [t:TREATS] -> (d)
+            where(pt.patient_id == $pid)
+            optional((pt) - [e:ENROLLED_IN] -> (ct:ClinicalTrial))
+            optional((drug) - [:HAS_SIDE_EFFECT] -> (se:Symptom))
+            ret(d.name => :disease, drug.name => :drug_option,
+                t.efficacy => :efficacy, ct.title => :trial,
+                collect(se.name) => :side_effects)
+            order(t.efficacy, :desc)
         end access_mode = :read
 
         @test length(result) > 0
@@ -806,12 +806,12 @@ end
     # ── 4.7 Gene-disease network density ────────────────────────────────
     @testset "Genes with multiple disease associations" begin
         min_diseases = 2
-        result = @query conn begin
-            @match (g:Gene) - [a:ASSOCIATED_WITH] -> (d:Disease)
-            @with g.symbol => :gene, count(d) => :disease_count, collect(d.name) => :diseases
-            @where disease_count >= $min_diseases
-            @return gene, disease_count, diseases
-            @orderby disease_count :desc
+        result = @cypher conn begin
+            (g:Gene) - [a:ASSOCIATED_WITH] -> (d:Disease)
+            with(g.symbol => :gene, count(d) => :disease_count, collect(d.name) => :diseases)
+            where(disease_count >= $min_diseases)
+            ret(gene, disease_count, diseases)
+            order(disease_count, :desc)
         end access_mode = :read
 
         @test length(result) > 0
@@ -823,11 +823,11 @@ end
 
     # ── 4.8 Hospital workload — physicians and disease specialties ──────
     @testset "Hospital physician coverage" begin
-        result = @query conn begin
-            @match (ph:Physician) - [:LOCATED_AT] -> (h:Hospital)
-            @return h.name => :hospital, collect(ph.specialty) => :specialties,
-            count(ph) => :physician_count
-            @orderby physician_count :desc
+        result = @cypher conn begin
+            (ph:Physician) - [:LOCATED_AT] -> (h:Hospital)
+            ret(h.name => :hospital, collect(ph.specialty) => :specialties,
+                count(ph) => :physician_count)
+            order(physician_count, :desc)
         end access_mode = :read
 
         @test length(result) == 3
@@ -835,12 +835,12 @@ end
 
     # ── 4.9 Biomarker-guided treatment selection ────────────────────────
     @testset "Biomarker → Disease → Drug pipeline" begin
-        result = @query conn begin
-            @match (bm:Biomarker) - [:INDICATES] -> (d:Disease)
-            @match (drug:Drug) - [:TREATS] -> (d)
-            @return bm.name => :biomarker, d.name => :disease,
-            drug.name => :drug, drug.mechanism => :mechanism
-            @orderby bm.name drug.name
+        result = @cypher conn begin
+            (bm:Biomarker) - [:INDICATES] -> (d:Disease)
+            (drug:Drug) - [:TREATS] -> (d)
+            ret(bm.name => :biomarker, d.name => :disease,
+                drug.name => :drug, drug.mechanism => :mechanism)
+            order(bm.name, drug.name)
         end access_mode = :read
 
         @test length(result) > 0
@@ -851,13 +851,13 @@ end
 
     # ── 4.10 Multi-hop: complete knowledge chain ────────────────────────
     @testset "Full knowledge chain: Biomarker → Disease → Gene → Protein → Pathway" begin
-        result = @query conn begin
-            @match (bm:Biomarker) - [:INDICATES] -> (d:Disease)
-            @match (g:Gene) - [:ASSOCIATED_WITH] -> (d)
-            @match (g) - [:ENCODES] -> (p:Protein) - [:PARTICIPATES_IN] -> (pw:Pathway)
-            @return bm.name => :biomarker, d.name => :disease,
-            g.symbol => :gene, p.name => :protein, pw.name => :pathway
-            @orderby d.name g.symbol
+        result = @cypher conn begin
+            (bm:Biomarker) - [:INDICATES] -> (d:Disease)
+            (g:Gene) - [:ASSOCIATED_WITH] -> (d)
+            (g) - [:ENCODES] -> (p:Protein) - [:PARTICIPATES_IN] -> (pw:Pathway)
+            ret(bm.name => :biomarker, d.name => :disease,
+                g.symbol => :gene, p.name => :protein, pw.name => :pathway)
+            order(d.name, g.symbol)
         end access_mode = :read
 
         @test length(result) > 0
@@ -865,13 +865,13 @@ end
 
     # ── 4.11 MERGE with conditional logic ───────────────────────────────
     @testset "MERGE — upsert treatment guidelines" begin
-        # Using @query MERGE to upsert — avoids standalone @merge schema validation
+        # Using @cypher MERGE to upsert — avoids standalone @merge schema validation
         # for the missing required fields (we only match on name)
         now = "2026-02-15"
-        result = @query conn begin
-            @merge (d:Disease)
-            @on_match_set d.last_reviewed = $now
-            @return d
+        result = @cypher conn begin
+            merge((d:Disease))
+            on_match(d.last_reviewed=$now)
+            ret(d)
         end
 
         @test length(result) > 0
@@ -887,14 +887,14 @@ end
             Dict("drug_name" => "Olaparib", "event" => "Anemia", "grade" => 2),
         ]
 
-        result = @query conn begin
-            @unwind $adverse_events => :ae
-            @match (drug:Drug)
-            @where drug.name == ae.drug_name
-            @create (drug) - [:REPORTED_AE] -> (event:AdverseEvent)
-            @set event.name = ae.event
-            @set event.grade = ae.grade
-            @return drug.name => :drug, event.name => :event, event.grade => :grade
+        result = @cypher conn begin
+            unwind($adverse_events => :ae)
+            (drug:Drug)
+            where(drug.name == ae.drug_name)
+            create((drug) - [:REPORTED_AE] -> (event:AdverseEvent))
+            event.name = ae.event
+            event.grade = ae.grade
+            ret(drug.name => :drug, event.name => :event, event.grade => :grade)
         end
 
         @test length(result) >= 4
@@ -903,11 +903,11 @@ end
 
     # ── 4.13 Complex WHERE with string functions ────────────────────────
     @testset "Complex WHERE — string functions and compound logic" begin
-        result = @query conn begin
-            @match (g:Gene) - [:ASSOCIATED_WITH] -> (d:Disease)
-            @where startswith(g.chromosome, "17") && d.category == "Oncology"
-            @return g.symbol => :gene, g.chromosome => :chr, d.name => :disease
-            @orderby g.symbol
+        result = @cypher conn begin
+            (g:Gene) - [:ASSOCIATED_WITH] -> (d:Disease)
+            where(startswith(g.chromosome, "17") && d.category == "Oncology")
+            ret(g.symbol => :gene, g.chromosome => :chr, d.name => :disease)
+            order(g.symbol)
         end access_mode = :read
 
         @test length(result) > 0
@@ -918,13 +918,13 @@ end
 
     # ── 4.14 WITH + aggregation pipeline ────────────────────────────────
     @testset "WITH pipeline — treatment landscape" begin
-        result = @query conn begin
-            @match (drug:Drug) - [t:TREATS] -> (d:Disease)
-            @with d, count(drug) => :n_drugs, avg(t.efficacy) => :avg_eff
-            @match (g:Gene) - [:ASSOCIATED_WITH] -> (d)
-            @return d.name => :disease, n_drugs, avg_eff,
-            count(g) => :n_genes
-            @orderby n_drugs :desc
+        result = @cypher conn begin
+            (drug:Drug) - [t:TREATS] -> (d:Disease)
+            with(d, count(drug) => :n_drugs, avg(t.efficacy) => :avg_eff)
+            (g:Gene) - [:ASSOCIATED_WITH] -> (d)
+            ret(d.name => :disease, n_drugs, avg_eff,
+                count(g) => :n_genes)
+            order(n_drugs, :desc)
         end access_mode = :read
 
         @test length(result) > 0
@@ -932,12 +932,12 @@ end
 
     # ── 4.15 OPTIONAL MATCH with null handling ──────────────────────────
     @testset "OPTIONAL MATCH — drugs without side effects" begin
-        result = @query conn begin
-            @match (drug:Drug) - [:TREATS] -> (d:Disease)
-            @optional_match (drug) - [:HAS_SIDE_EFFECT] -> (se:Symptom)
-            @return drug.name => :drug, d.name => :disease,
-            count(se) => :side_effect_count
-            @orderby drug.name
+        result = @cypher conn begin
+            (drug:Drug) - [:TREATS] -> (d:Disease)
+            optional((drug) - [:HAS_SIDE_EFFECT] -> (se:Symptom))
+            ret(drug.name => :drug, d.name => :disease,
+                count(se) => :side_effect_count)
+            order(drug.name)
         end access_mode = :read
 
         @test length(result) > 0
@@ -946,13 +946,13 @@ end
 
     # ── 4.16 Publication impact — linking evidence ──────────────────────
     @testset "Publication → Disease knowledge network" begin
-        result = @query conn begin
-            @match (pub:Publication) - [:PUBLISHED_IN] -> (d:Disease)
-            @match (drug:Drug) - [:TREATS] -> (d)
-            @with pub, d, collect(drug.name) => :drugs
-            @return pub.title => :publication, pub.journal => :journal,
-            d.name => :disease, drugs
-            @orderby pub.year :desc
+        result = @cypher conn begin
+            (pub:Publication) - [:PUBLISHED_IN] -> (d:Disease)
+            (drug:Drug) - [:TREATS] -> (d)
+            with(pub, d, collect(drug.name) => :drugs)
+            ret(pub.title => :publication, pub.journal => :journal,
+                d.name => :disease, drugs)
+            order(pub.year, :desc)
         end access_mode = :read
 
         @test length(result) > 0
@@ -992,10 +992,10 @@ end
         "Patient", "Hospital", "Physician", "Pathway",
         "Symptom", "Biomarker", "Publication"]
         lbl = label
-        r = @query conn begin
-            @match (n)
-            @where n.name != "placeholder_never_match"
-            @return count(n) => :c
+        r = @cypher conn begin
+            match(n)
+            where(n.name != "placeholder_never_match")
+            ret(count(n) => :c)
         end access_mode = :read
 
         @test r[1].c > 0
