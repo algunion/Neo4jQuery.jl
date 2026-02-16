@@ -263,10 +263,8 @@ ORDER BY d.name, pt.patient_id</code></pre><p><strong><code>@cypher</code> DSL:<
     ret(pt.patient_id =&gt; :patient, d.name =&gt; :disease,
         dx.stage =&gt; :stage, ct.trial_id =&gt; :trial)
     order(d.name, pt.patient_id)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 4 fields, 2 rows
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 4 fields, 0 rows
  Fields: patient, disease, stage, trial
-  [1] (patient = &quot;PT-2024-001&quot;, disease = &quot;Breast Cancer&quot;, stage = &quot;Stage II&quot;, trial = &quot;NCT-001&quot;)
-  [2] (patient = &quot;PT-2024-002&quot;, disease = &quot;Non-Small Cell Lung Cancer&quot;, stage = &quot;Stage III&quot;, trial = nothing)
 </code></pre><p><code>optional()</code> maps to <code>OPTIONAL MATCH</code> and accepts the same <code>&gt;&gt;</code> chain patterns.</p><hr/><h3 id="4.4-Aggregation:-drug-count-and-average-efficacy-per-disease"><a class="docs-heading-anchor" href="#4.4-Aggregation:-drug-count-and-average-efficacy-per-disease">4.4 Aggregation: drug count and average efficacy per disease</a><a id="4.4-Aggregation:-drug-count-and-average-efficacy-per-disease-1"></a><a class="docs-heading-anchor-permalink" href="#4.4-Aggregation:-drug-count-and-average-efficacy-per-disease" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (drug:Drug)-[t:TREATS]-&gt;(d:Disease)
 WITH d.name AS disease, count(drug) AS drug_count, avg(t.efficacy) AS mean_efficacy
 WHERE drug_count &gt; 1
@@ -277,10 +275,8 @@ ORDER BY drug_count DESC</code></pre><p><strong><code>@cypher</code> DSL:</stron
     where(drug_count &gt; 1)
     ret(disease, drug_count, mean_efficacy)
     order(drug_count, :desc)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 2 rows
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 0 rows
  Fields: disease, drug_count, mean_efficacy
-  [1] (disease = &quot;Breast Cancer&quot;, drug_count = 3, mean_efficacy = 0.8266666666666667)
-  [2] (disease = &quot;Non-Small Cell Lung Cancer&quot;, drug_count = 2, mean_efficacy = 0.685)
 </code></pre><hr/><h3 id="4.5-Side-effect-overlap-between-drugs"><a class="docs-heading-anchor" href="#4.5-Side-effect-overlap-between-drugs">4.5 Side effect overlap between drugs</a><a id="4.5-Side-effect-overlap-between-drugs-1"></a><a class="docs-heading-anchor-permalink" href="#4.5-Side-effect-overlap-between-drugs" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (d1:Drug)-[:HAS_SIDE_EFFECT]-&gt;(s:Symptom)
 MATCH (d2:Drug)-[:HAS_SIDE_EFFECT]-&gt;(s)
 WHERE d1.name &lt; d2.name
@@ -291,9 +287,8 @@ ORDER BY d1.name</code></pre><p><strong><code>@cypher</code> DSL:</strong></p><p
     where(d1.name &lt; d2.name)
     ret(d1.name =&gt; :drug1, d2.name =&gt; :drug2, collect(s.name) =&gt; :shared_effects)
     order(d1.name)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 1 row
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 0 rows
  Fields: drug1, drug2, shared_effects
-  [1] (drug1 = &quot;Erlotinib&quot;, drug2 = &quot;Trastuzumab&quot;, shared_effects = [&quot;Nausea&quot;])
 </code></pre><hr/><h3 id="4.6-Full-patient-journey-—-diagnosis-to-treatment"><a class="docs-heading-anchor" href="#4.6-Full-patient-journey-—-diagnosis-to-treatment">4.6 Full patient journey — diagnosis to treatment</a><a id="4.6-Full-patient-journey-—-diagnosis-to-treatment-1"></a><a class="docs-heading-anchor-permalink" href="#4.6-Full-patient-journey-—-diagnosis-to-treatment" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (pt:Patient {patient_id: $pid})-[dx:DIAGNOSED_WITH]-&gt;(d:Disease)
 MATCH (drug:Drug)-[t:TREATS]-&gt;(d)
 OPTIONAL MATCH (pt)-[e:ENROLLED_IN]-&gt;(ct:ClinicalTrial)
@@ -312,10 +307,8 @@ result = @cypher conn begin
         t.efficacy =&gt; :efficacy, ct.title =&gt; :trial,
         collect(se.name) =&gt; :side_effects)
     order(t.efficacy, :desc)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 5 fields, 2 rows
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 5 fields, 0 rows
  Fields: disease, drug_option, efficacy, trial, side_effects
-  [1] (disease = &quot;Breast Cancer&quot;, drug_option = &quot;Trastuzumab&quot;, efficacy = 0.85, trial = &quot;HER2+ Breast Cancer Phase III&quot;, side_effects = [&quot;Nausea&quot;, &quot;Cardiotoxicity&quot;])
-  [2] (disease = &quot;Breast Cancer&quot;, drug_option = &quot;Olaparib&quot;, efficacy = 0.78, trial = &quot;HER2+ Breast Cancer Phase III&quot;, side_effects = Any[])
 </code></pre><hr/><h3 id="4.7-Genes-with-multiple-disease-associations"><a class="docs-heading-anchor" href="#4.7-Genes-with-multiple-disease-associations">4.7 Genes with multiple disease associations</a><a id="4.7-Genes-with-multiple-disease-associations-1"></a><a class="docs-heading-anchor-permalink" href="#4.7-Genes-with-multiple-disease-associations" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (g:Gene)-[a:ASSOCIATED_WITH]-&gt;(d:Disease)
 WITH g.symbol AS gene, count(d) AS disease_count, collect(d.name) AS diseases
 WHERE disease_count &gt;= $min_diseases
@@ -327,10 +320,8 @@ result = @cypher conn begin
     where(disease_count &gt;= $min_diseases)
     ret(gene, disease_count, diseases)
     order(disease_count, :desc)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 2 rows
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 0 rows
  Fields: gene, disease_count, diseases
-  [1] (gene = &quot;BRCA1&quot;, disease_count = 2, diseases = [&quot;Breast Cancer&quot;, &quot;Breast Cancer&quot;])
-  [2] (gene = &quot;TP53&quot;, disease_count = 2, diseases = [&quot;Breast Cancer&quot;, &quot;Non-Small Cell Lung Cancer&quot;])
 </code></pre><hr/><h3 id="4.8-Hospital-physician-coverage"><a class="docs-heading-anchor" href="#4.8-Hospital-physician-coverage">4.8 Hospital physician coverage</a><a id="4.8-Hospital-physician-coverage-1"></a><a class="docs-heading-anchor-permalink" href="#4.8-Hospital-physician-coverage" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (ph:Physician)-[:LOCATED_AT]-&gt;(h:Hospital)
 RETURN h.name AS hospital, collect(ph.specialty) AS specialties,
        count(ph) AS physician_count
@@ -339,10 +330,8 @@ ORDER BY physician_count DESC</code></pre><p><strong><code>@cypher</code> DSL:</
     ret(h.name =&gt; :hospital, collect(ph.specialty) =&gt; :specialties,
         count(ph) =&gt; :physician_count)
     order(physician_count, :desc)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 2 rows
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 0 rows
  Fields: hospital, specialties, physician_count
-  [1] (hospital = &quot;Memorial Sloan Kettering&quot;, specialties = [&quot;Oncology&quot;, &quot;Oncology&quot;], physician_count = 2)
-  [2] (hospital = &quot;MD Anderson Cancer Center&quot;, specialties = [&quot;Neurology&quot;], physician_count = 1)
 </code></pre><hr/><h3 id="4.9-Biomarker-guided-treatment-selection"><a class="docs-heading-anchor" href="#4.9-Biomarker-guided-treatment-selection">4.9 Biomarker-guided treatment selection</a><a id="4.9-Biomarker-guided-treatment-selection-1"></a><a class="docs-heading-anchor-permalink" href="#4.9-Biomarker-guided-treatment-selection" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (bm:Biomarker)-[:INDICATES]-&gt;(d:Disease)
 MATCH (drug:Drug)-[:TREATS]-&gt;(d)
 RETURN bm.name AS biomarker, d.name AS disease,
@@ -353,12 +342,8 @@ ORDER BY bm.name, drug.name</code></pre><p><strong><code>@cypher</code> DSL:</st
     ret(bm.name =&gt; :biomarker, d.name =&gt; :disease,
         drug.name =&gt; :drug, drug.mechanism =&gt; :mechanism)
     order(bm.name, drug.name)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 4 fields, 4 rows
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 4 fields, 0 rows
  Fields: biomarker, disease, drug, mechanism
-  [1] (biomarker = &quot;BRCA1 mutation&quot;, disease = &quot;Breast Cancer&quot;, drug = &quot;Olaparib&quot;, mechanism = &quot;PARP inhibitor&quot;)
-  [2] (biomarker = &quot;BRCA1 mutation&quot;, disease = &quot;Breast Cancer&quot;, drug = &quot;Trastuzumab&quot;, mechanism = &quot;HER2 monoclonal antibody&quot;)
-  [3] (biomarker = &quot;HER2&quot;, disease = &quot;Breast Cancer&quot;, drug = &quot;Olaparib&quot;, mechanism = &quot;PARP inhibitor&quot;)
-  [4] (biomarker = &quot;HER2&quot;, disease = &quot;Breast Cancer&quot;, drug = &quot;Trastuzumab&quot;, mechanism = &quot;HER2 monoclonal antibody&quot;)
 </code></pre><hr/><h3 id="4.10-Full-knowledge-chain:-Biomarker-Disease-Gene-Protein-Pathway"><a class="docs-heading-anchor" href="#4.10-Full-knowledge-chain:-Biomarker-Disease-Gene-Protein-Pathway">4.10 Full knowledge chain: Biomarker → Disease → Gene → Protein → Pathway</a><a id="4.10-Full-knowledge-chain:-Biomarker-Disease-Gene-Protein-Pathway-1"></a><a class="docs-heading-anchor-permalink" href="#4.10-Full-knowledge-chain:-Biomarker-Disease-Gene-Protein-Pathway" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (bm:Biomarker)-[:INDICATES]-&gt;(d:Disease)
 MATCH (g:Gene)-[:ASSOCIATED_WITH]-&gt;(d)
 MATCH (g)-[:ENCODES]-&gt;(p:Protein)-[:PARTICIPATES_IN]-&gt;(pw:Pathway)
@@ -371,12 +356,8 @@ ORDER BY d.name, g.symbol</code></pre><p><strong><code>@cypher</code> DSL:</stro
     ret(bm.name =&gt; :biomarker, d.name =&gt; :disease,
         g.symbol =&gt; :gene, p.name =&gt; :protein, pw.name =&gt; :pathway)
     order(d.name, g.symbol)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 5 fields, 4 rows
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 5 fields, 0 rows
  Fields: biomarker, disease, gene, protein, pathway
-  [1] (biomarker = &quot;HER2&quot;, disease = &quot;Breast Cancer&quot;, gene = &quot;BRCA1&quot;, protein = &quot;BRCA1 protein&quot;, pathway = &quot;DNA Damage Response&quot;)
-  [2] (biomarker = &quot;BRCA1 mutation&quot;, disease = &quot;Breast Cancer&quot;, gene = &quot;BRCA1&quot;, protein = &quot;BRCA1 protein&quot;, pathway = &quot;DNA Damage Response&quot;)
-  [3] (biomarker = &quot;HER2&quot;, disease = &quot;Breast Cancer&quot;, gene = &quot;TP53&quot;, protein = &quot;Cellular tumor antigen p53&quot;, pathway = &quot;DNA Damage Response&quot;)
-  [4] (biomarker = &quot;BRCA1 mutation&quot;, disease = &quot;Breast Cancer&quot;, gene = &quot;TP53&quot;, protein = &quot;Cellular tumor antigen p53&quot;, pathway = &quot;DNA Damage Response&quot;)
 </code></pre><p>A <strong>five-hop traversal</strong> across the entire knowledge base — expressed as readable Julia. The <code>&gt;&gt;</code> chains make the directionality explicit and composable.</p><hr/><h3 id="4.11-Batch-insert-with-UNWIND"><a class="docs-heading-anchor" href="#4.11-Batch-insert-with-UNWIND">4.11 Batch insert with UNWIND</a><a id="4.11-Batch-insert-with-UNWIND-1"></a><a class="docs-heading-anchor-permalink" href="#4.11-Batch-insert-with-UNWIND" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">UNWIND $adverse_events AS ae
 MATCH (drug:Drug)
 WHERE drug.name = ae.drug_name
@@ -397,13 +378,8 @@ result = @cypher conn begin
     event.name = ae.event
     event.grade = ae.grade
     ret(drug.name =&gt; :drug, event.name =&gt; :event, event.grade =&gt; :grade)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 5 rows
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 0 rows
  Fields: drug, event, grade
-  [1] (drug = &quot;Trastuzumab&quot;, event = &quot;Cardiotoxicity&quot;, grade = 2)
-  [2] (drug = &quot;Trastuzumab&quot;, event = &quot;Cardiotoxicity&quot;, grade = 2)
-  [3] (drug = &quot;Erlotinib&quot;, event = &quot;Rash&quot;, grade = 1)
-  [4] (drug = &quot;Pembrolizumab&quot;, event = &quot;Pneumonitis&quot;, grade = 3)
-  [5] (drug = &quot;Olaparib&quot;, event = &quot;Anemia&quot;, grade = 2)
 </code></pre><hr/><h3 id="4.12-Complex-WHERE-with-string-functions"><a class="docs-heading-anchor" href="#4.12-Complex-WHERE-with-string-functions">4.12 Complex WHERE with string functions</a><a id="4.12-Complex-WHERE-with-string-functions-1"></a><a class="docs-heading-anchor-permalink" href="#4.12-Complex-WHERE-with-string-functions" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (g:Gene)-[:ASSOCIATED_WITH]-&gt;(d:Disease)
 WHERE g.chromosome STARTS WITH &#39;17&#39; AND d.category = &#39;Oncology&#39;
 RETURN g.symbol AS gene, g.chromosome AS chr, d.name AS disease
@@ -412,12 +388,8 @@ ORDER BY g.symbol</code></pre><p><strong><code>@cypher</code> DSL:</strong></p><
     where(startswith(g.chromosome, &quot;17&quot;), d.category == &quot;Oncology&quot;)
     ret(g.symbol =&gt; :gene, g.chromosome =&gt; :chr, d.name =&gt; :disease)
     order(g.symbol)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 4 rows
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 0 rows
  Fields: gene, chr, disease
-  [1] (gene = &quot;BRCA1&quot;, chr = &quot;17q21.31&quot;, disease = &quot;Breast Cancer&quot;)
-  [2] (gene = &quot;BRCA1&quot;, chr = &quot;17q21.31&quot;, disease = &quot;Breast Cancer&quot;)
-  [3] (gene = &quot;TP53&quot;, chr = &quot;17p13.1&quot;, disease = &quot;Breast Cancer&quot;)
-  [4] (gene = &quot;TP53&quot;, chr = &quot;17p13.1&quot;, disease = &quot;Non-Small Cell Lung Cancer&quot;)
 </code></pre><p>Multi-condition <code>where()</code> auto-ANDs conditions — no need for <code>&amp;&amp;</code>.</p><hr/><h3 id="4.13-WITH-pipeline-—-treatment-landscape"><a class="docs-heading-anchor" href="#4.13-WITH-pipeline-—-treatment-landscape">4.13 WITH pipeline — treatment landscape</a><a id="4.13-WITH-pipeline-—-treatment-landscape-1"></a><a class="docs-heading-anchor-permalink" href="#4.13-WITH-pipeline-—-treatment-landscape" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (drug:Drug)-[t:TREATS]-&gt;(d:Disease)
 WITH d, count(drug) AS n_drugs, avg(t.efficacy) AS avg_eff
 MATCH (g:Gene)-[:ASSOCIATED_WITH]-&gt;(d)
@@ -428,11 +400,8 @@ ORDER BY n_drugs DESC</code></pre><p><strong><code>@cypher</code> DSL:</strong><
     g::Gene &gt;&gt; ::ASSOCIATED_WITH &gt;&gt; d
     ret(d.name =&gt; :disease, n_drugs, avg_eff, count(g) =&gt; :n_genes)
     order(n_drugs, :desc)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 4 fields, 3 rows
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 4 fields, 0 rows
  Fields: disease, n_drugs, avg_eff, n_genes
-  [1] (disease = &quot;Breast Cancer&quot;, n_drugs = 2, avg_eff = 0.815, n_genes = 2)
-  [2] (disease = &quot;Non-Small Cell Lung Cancer&quot;, n_drugs = 2, avg_eff = 0.685, n_genes = 2)
-  [3] (disease = &quot;Breast Cancer&quot;, n_drugs = 1, avg_eff = 0.85, n_genes = 1)
 </code></pre><hr/><h3 id="4.14-Publication-Disease-knowledge-network"><a class="docs-heading-anchor" href="#4.14-Publication-Disease-knowledge-network">4.14 Publication → Disease knowledge network</a><a id="4.14-Publication-Disease-knowledge-network-1"></a><a class="docs-heading-anchor-permalink" href="#4.14-Publication-Disease-knowledge-network" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (pub:Publication)-[:PUBLISHED_IN]-&gt;(d:Disease)
 MATCH (drug:Drug)-[:TREATS]-&gt;(d)
 WITH pub, d, collect(drug.name) AS drugs
@@ -445,7 +414,6 @@ ORDER BY pub.year DESC</code></pre><p><strong><code>@cypher</code> DSL:</strong>
     ret(pub.title =&gt; :publication, pub.journal =&gt; :journal,
         d.name =&gt; :disease, drugs)
     order(pub.year, :desc)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 4 fields, 1 row
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 4 fields, 0 rows
  Fields: publication, journal, disease, drugs
-  [1] (publication = &quot;HER2 Targeted Therapy Advances&quot;, journal = &quot;Nature Medicine&quot;, disease = &quot;Breast Cancer&quot;, drugs = [&quot;Trastuzumab&quot;, &quot;Olaparib&quot;])
-</code></pre><hr/><h2 id="Key-takeaways"><a class="docs-heading-anchor" href="#Key-takeaways">Key takeaways</a><a id="Key-takeaways-1"></a><a class="docs-heading-anchor-permalink" href="#Key-takeaways" title="Permalink"></a></h2><table><tr><th style="text-align: left">Aspect</th><th style="text-align: left">Raw Cypher</th><th style="text-align: left"><code>@cypher</code> DSL</th></tr><tr><td style="text-align: left"><strong>Injection safety</strong></td><td style="text-align: left">Manual parameterisation</td><td style="text-align: left">Automatic — <code>$var</code> captures safely</td></tr><tr><td style="text-align: left"><strong>Schema validation</strong></td><td style="text-align: left">None built-in</td><td style="text-align: left"><code>@node</code>/<code>@rel</code> with runtime checks</td></tr><tr><td style="text-align: left"><strong>Node references</strong></td><td style="text-align: left">Re-match by property</td><td style="text-align: left"><code>match()</code> + <code>where()</code> + <code>create()</code>, or <code>@relate</code></td></tr><tr><td style="text-align: left"><strong>Patterns</strong></td><td style="text-align: left"><code>(p:Person)-[r:KNOWS]-&gt;(q:Person)</code></td><td style="text-align: left"><code>p::Person &gt;&gt; r::KNOWS &gt;&gt; q::Person</code> (everywhere)</td></tr><tr><td style="text-align: left"><strong>Clauses</strong></td><td style="text-align: left">Cypher keywords</td><td style="text-align: left"><code>where()</code>, <code>ret()</code>, <code>order()</code>, <code>take()</code></td></tr><tr><td style="text-align: left"><strong>Operator mapping</strong></td><td style="text-align: left"><code>&lt;&gt;</code>, <code>AND</code>, <code>STARTS WITH</code></td><td style="text-align: left"><code>!=</code>, <code>&amp;&amp;</code>, <code>startswith</code> (Julia-native)</td></tr><tr><td style="text-align: left"><strong>Return aliases</strong></td><td style="text-align: left"><code>expr AS alias</code></td><td style="text-align: left"><code>expr =&gt; :alias</code></td></tr><tr><td style="text-align: left"><strong>Mutations</strong></td><td style="text-align: left"><code>CREATE</code>, <code>SET</code></td><td style="text-align: left"><code>create()</code> + auto-SET assignments</td></tr><tr><td style="text-align: left"><strong>OPTIONAL MATCH</strong></td><td style="text-align: left"><code>OPTIONAL MATCH</code></td><td style="text-align: left"><code>optional()</code></td></tr><tr><td style="text-align: left"><strong>Compile-time</strong></td><td style="text-align: left">String at runtime</td><td style="text-align: left">Cypher assembled at macro expansion</td></tr></table><p>The <code>@cypher</code> macro compiles to <strong>identical Cypher</strong> at macro expansion time — there is zero runtime overhead for query construction. Only parameter values are captured at runtime. The <code>&gt;&gt;</code> syntax works uniformly across queries (<code>MATCH</code>), mutations (<code>CREATE</code>, <code>MERGE</code>), and <code>OPTIONAL MATCH</code> — one pattern language for everything.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../dsl/">« DSL</a><a class="docs-footer-nextpage" href="../../api/">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Monday 16 February 2026 12:10">Monday 16 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+</code></pre><hr/><h2 id="Key-takeaways"><a class="docs-heading-anchor" href="#Key-takeaways">Key takeaways</a><a id="Key-takeaways-1"></a><a class="docs-heading-anchor-permalink" href="#Key-takeaways" title="Permalink"></a></h2><table><tr><th style="text-align: left">Aspect</th><th style="text-align: left">Raw Cypher</th><th style="text-align: left"><code>@cypher</code> DSL</th></tr><tr><td style="text-align: left"><strong>Injection safety</strong></td><td style="text-align: left">Manual parameterisation</td><td style="text-align: left">Automatic — <code>$var</code> captures safely</td></tr><tr><td style="text-align: left"><strong>Schema validation</strong></td><td style="text-align: left">None built-in</td><td style="text-align: left"><code>@node</code>/<code>@rel</code> with runtime checks</td></tr><tr><td style="text-align: left"><strong>Node references</strong></td><td style="text-align: left">Re-match by property</td><td style="text-align: left"><code>match()</code> + <code>where()</code> + <code>create()</code>, or <code>@relate</code></td></tr><tr><td style="text-align: left"><strong>Patterns</strong></td><td style="text-align: left"><code>(p:Person)-[r:KNOWS]-&gt;(q:Person)</code></td><td style="text-align: left"><code>p::Person &gt;&gt; r::KNOWS &gt;&gt; q::Person</code> (everywhere)</td></tr><tr><td style="text-align: left"><strong>Clauses</strong></td><td style="text-align: left">Cypher keywords</td><td style="text-align: left"><code>where()</code>, <code>ret()</code>, <code>order()</code>, <code>take()</code></td></tr><tr><td style="text-align: left"><strong>Operator mapping</strong></td><td style="text-align: left"><code>&lt;&gt;</code>, <code>AND</code>, <code>STARTS WITH</code></td><td style="text-align: left"><code>!=</code>, <code>&amp;&amp;</code>, <code>startswith</code> (Julia-native)</td></tr><tr><td style="text-align: left"><strong>Return aliases</strong></td><td style="text-align: left"><code>expr AS alias</code></td><td style="text-align: left"><code>expr =&gt; :alias</code></td></tr><tr><td style="text-align: left"><strong>Mutations</strong></td><td style="text-align: left"><code>CREATE</code>, <code>SET</code></td><td style="text-align: left"><code>create()</code> + auto-SET assignments</td></tr><tr><td style="text-align: left"><strong>OPTIONAL MATCH</strong></td><td style="text-align: left"><code>OPTIONAL MATCH</code></td><td style="text-align: left"><code>optional()</code></td></tr><tr><td style="text-align: left"><strong>Compile-time</strong></td><td style="text-align: left">String at runtime</td><td style="text-align: left">Cypher assembled at macro expansion</td></tr></table><p>The <code>@cypher</code> macro compiles to <strong>identical Cypher</strong> at macro expansion time — there is zero runtime overhead for query construction. Only parameter values are captured at runtime. The <code>&gt;&gt;</code> syntax works uniformly across queries (<code>MATCH</code>), mutations (<code>CREATE</code>, <code>MERGE</code>), and <code>OPTIONAL MATCH</code> — one pattern language for everything.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../dsl/">« DSL</a><a class="docs-footer-nextpage" href="../../api/">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Monday 16 February 2026 12:12">Monday 16 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
