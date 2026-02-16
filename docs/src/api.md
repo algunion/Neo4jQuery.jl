@@ -96,6 +96,7 @@ validate_rel_properties
 
 ```@docs
 @query
+@graph
 @create
 @merge
 @relate

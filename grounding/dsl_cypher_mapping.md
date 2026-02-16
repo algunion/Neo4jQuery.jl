@@ -153,3 +153,78 @@ Schemas are **runtime-validated, not compile-time enforced**:
   - **Throws** on missing required properties.
   - **Warns** (via `@warn`) on unknown properties.
   - Does **not** type-check values (only presence checks).
+
+---
+
+## `@graph` — Hyper-Ergonomic DSL
+
+The `@graph` macro provides an alternative syntax that compiles to the same
+parameterised Cypher as `@query`, but with Julia-native conventions.
+
+### Compilation Model
+
+Identical to `@query`: the Cypher string is assembled at **macro expansion
+time**; only `$param` values are captured at **runtime**.
+
+### Pattern Syntax (`@graph`)
+
+| Julia DSL (in @graph)                    | Cypher                                  |
+| ---------------------------------------- | --------------------------------------- |
+| `p::Person`                              | `(p:Person)`                            |
+| `::Person`                               | `(:Person)`                             |
+| `p::Person >> r::KNOWS >> q::Person`     | `(p:Person)-[r:KNOWS]->(q:Person)`      |
+| `p::Person >> KNOWS >> q::Person`        | `(p:Person)-[:KNOWS]->(q:Person)`       |
+| `p::Person << r::KNOWS << q::Person`     | `(p:Person)<-[r:KNOWS]-(q:Person)`      |
+| `a::A >> R1 >> b::B >> R2 >> c::C`       | `(a:A)-[:R1]->(b:B)-[:R2]->(c:C)`       |
+| `(p::Person)-[r::KNOWS]->(q::Person)`    | `(p:Person)-[r:KNOWS]->(q:Person)`      |
+| `[p.name for p in Person if p.age > 25]` | `MATCH (p:Person) WHERE ... RETURN ...` |
+
+### Clause Mapping (`@graph`)
+
+| @graph clause                | Cypher                              |
+| ---------------------------- | ----------------------------------- |
+| Bare pattern (implicit)      | `MATCH <pattern>`                   |
+| `where(cond1, cond2)`        | `WHERE cond1 AND cond2`             |
+| `ret(expr => :alias)`        | `RETURN expr AS alias`              |
+| `returning(expr)`            | `RETURN expr` (alias for `ret`)     |
+| `ret(distinct, expr)`        | `RETURN DISTINCT expr`              |
+| `order(expr, :desc)`         | `ORDER BY expr DESC`                |
+| `take(n)` / `skip(n)`        | `LIMIT n` / `SKIP n`                |
+| `create(pattern)`            | `CREATE pattern`                    |
+| `merge(pattern)`             | `MERGE pattern`                     |
+| `optional(pattern)`          | `OPTIONAL MATCH pattern`            |
+| `match(p1, p2)`              | `MATCH p1, p2`                      |
+| `with(expr => :alias)`       | `WITH expr AS alias`                |
+| `unwind($list => :var)`      | `UNWIND $list AS var`               |
+| `delete(vars)`               | `DELETE vars`                       |
+| `detach_delete(vars)`        | `DETACH DELETE vars`                |
+| `on_create(p.prop = val)`    | `ON CREATE SET p.prop = val`        |
+| `on_match(p.prop = val)`     | `ON MATCH SET p.prop = val`         |
+| `p.prop = $val` (assignment) | `SET p.prop = $val` (auto-detected) |
+
+### @graph Block Parsing
+
+The `_parse_graph_block` function recognises three expression types:
+
+1. **Graph patterns** (via `_is_graph_pattern`) → implicit `MATCH`
+2. **Function calls** (`where`, `ret`, `order`, etc.) → corresponding clauses
+3. **Property assignments** (`p.prop = val`) → `SET` clauses (auto-detected)
+
+### @graph Comprehension Form
+
+`@graph conn [body for var in Label if cond]` compiles to:
+`MATCH (var:Label) WHERE cond RETURN body`
+
+### >> / << Chain Operators
+
+The `>>` operator produces right-directed relationships; `<<` produces
+left-directed. Elements alternate: node, relationship, node, relationship, node...
+
+`_flatten_chain(expr, op)` flattens the left-associative binary parse tree
+into a flat vector. Odd positions are nodes, even positions are relationships.
+
+### Known @graph Limitations
+
+- Does **not** support `@call` subqueries, `@load_csv`, `@foreach`,
+  index/constraint management — use `@query` for these
+- Comprehension form supports single-label iteration only (no chains)

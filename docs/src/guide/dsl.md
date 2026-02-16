@@ -627,15 +627,219 @@ end
 end
 ```
 
+## `@graph` — hyper-ergonomic query builder
+
+`@graph` is a next-generation DSL that maximises ergonomics by leveraging Julia's metaprogramming. It compiles to **the same parameterised Cypher** as `@query`, but with a syntax designed for developer productivity over Cypher familiarity.
+
+### Key differences from `@query`
+
+| Feature                 | `@query`                                   | `@graph`                                         |
+| :---------------------- | :----------------------------------------- | :----------------------------------------------- |
+| Node syntax             | `(p:Person)` with `@match` prefix          | `p::Person` — bare Julia type annotation         |
+| Relationship patterns   | `(a)-[r:KNOWS]->(b)` with `@match` prefix  | `a::Person >> r::KNOWS >> b::Person` — chain ops |
+| Clause syntax           | `@match`, `@where`, `@return` (sub-macros) | `where()`, `ret()`, `order()` (plain functions)  |
+| Property updates        | `@set p.age = $val`                        | `p.age = $val` (bare assignment, auto-detected)  |
+| Multi-condition WHERE   | `@where cond1 && cond2`                    | `where(cond1, cond2)` — auto-AND                 |
+| Comprehension shorthand | Not available                              | `[p.name for p in Person if p.age > 25]`         |
+| LIMIT                   | `@limit 10`                                | `take(10)`                                       |
+| RETURN                  | `@return expr`                             | `ret(expr)` or `returning(expr)`                 |
+
+### Pattern syntax
+
+```julia
+# Labeled node (Julia type annotation)
+p::Person                    # → (p:Person)
+
+# Anonymous node
+::Person                     # → (:Person)
+
+# Right-directed chain (>> operator)
+p::Person >> r::KNOWS >> q::Person
+# → (p:Person)-[r:KNOWS]->(q:Person)
+
+# Anonymous relationship in chain
+p::Person >> KNOWS >> q::Person
+# → (p:Person)-[:KNOWS]->(q:Person)
+
+# Left-directed chain (<< operator)
+p::Person << r::KNOWS << q::Person
+# → (p:Person)<-[r:KNOWS]-(q:Person)
+
+# Multi-hop chain
+a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company
+# → (a:Person)-[r:KNOWS]->(b:Person)-[s:WORKS_AT]->(c:Company)
+
+# Classic arrow syntax also works
+(p::Person)-[r::KNOWS]->(q::Person)
+# → (p:Person)-[r:KNOWS]->(q:Person)
+```
+
+### Clause functions
+
+All clauses are plain function call syntax — no `@` prefix needed:
+
+| Function                     | Cypher                              |
+| :--------------------------- | :---------------------------------- |
+| `where(cond1, cond2, ...)`   | `WHERE cond1 AND cond2 AND ...`     |
+| `ret(expr => :alias, ...)`   | `RETURN expr AS alias, ...`         |
+| `returning(expr => :alias)`  | `RETURN expr AS alias` (alias)      |
+| `ret(distinct, expr)`        | `RETURN DISTINCT expr`              |
+| `order(expr, :desc)`         | `ORDER BY expr DESC`                |
+| `take(n)` / `skip(n)`        | `LIMIT n` / `SKIP n`                |
+| `create(pattern)`            | `CREATE pattern`                    |
+| `merge(pattern)`             | `MERGE pattern`                     |
+| `optional(pattern)`          | `OPTIONAL MATCH pattern`            |
+| `match(p1, p2)`              | `MATCH p1, p2` (explicit multi)     |
+| `with(expr => :alias, ...)`  | `WITH expr AS alias, ...`           |
+| `unwind($list => :var)`      | `UNWIND $list AS var`               |
+| `delete(vars...)`            | `DELETE vars`                       |
+| `detach_delete(vars...)`     | `DETACH DELETE vars`                |
+| `on_create(p.prop = val)`    | `ON CREATE SET p.prop = val`        |
+| `on_match(p.prop = val)`     | `ON MATCH SET p.prop = val`         |
+| `p.prop = $val` (assignment) | `SET p.prop = $val` (auto-detected) |
+
+### Basic example
+
+```julia
+result = @graph conn begin
+    p::Person >> r::KNOWS >> q::Person
+    where(p.age > $min_age, q.name == $target)
+    ret(p.name => :name, r.since, q.name => :friend)
+    order(p.age, :desc)
+    take(10)
+end
+```
+
+Compiles to:
+
+```cypher
+MATCH (p:Person)-[r:KNOWS]->(q:Person)
+WHERE p.age > $min_age AND q.name = $target
+RETURN p.name AS name, r.since, q.name AS friend
+ORDER BY p.age DESC
+LIMIT 10
+```
+
+### Multi-hop traversals
+
+```julia
+# Three-node chain in a single line
+result = @graph conn begin
+    a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company
+    ret(a.name, b.name, c.name)
+end
+```
+
+### Auto-SET from property assignments
+
+Bare assignments inside `@graph` automatically become `SET` clauses:
+
+```julia
+@graph conn begin
+    p::Person
+    where(p.name == $name)
+    p.age = $new_age           # ← auto SET
+    p.email = $new_email       # ← merged into same SET clause
+    ret(p)
+end
+# → MATCH (p:Person) WHERE p.name = $name SET p.age = $new_age, p.email = $new_email RETURN p
+```
+
+### CREATE with chain patterns
+
+```julia
+@graph conn begin
+    create(p::Person)
+    p.name = $name
+    p.age = $age
+    ret(p)
+end
+```
+
+### MERGE with on_create / on_match
+
+```julia
+@graph conn begin
+    merge(p::Person)
+    on_create(p.created = true)
+    on_match(p.updated = true)
+    ret(p)
+end
+```
+
+### OPTIONAL MATCH
+
+```julia
+@graph conn begin
+    p::Person
+    optional(p >> r::KNOWS >> q::Person)
+    ret(p.name, q.name)
+end
+```
+
+### Aggregation with WITH
+
+```julia
+result = @graph conn begin
+    p::Person >> r::KNOWS >> q::Person
+    with(p, count(r) => :degree)
+    where(degree > $min_degree)
+    ret(p.name, degree)
+end
+```
+
+### RETURN DISTINCT
+
+```julia
+result = @graph conn begin
+    p::Person
+    ret(distinct, p.name)
+end
+```
+
+### Comprehension form
+
+For simple match-filter-return queries, use Julia's comprehension syntax:
+
+```julia
+# One-liner query
+result = @graph conn [p.name for p in Person if p.age > 25]
+# → MATCH (p:Person) WHERE p.age > 25 RETURN p.name
+
+# Without filter
+result = @graph conn [p for p in Person]
+# → MATCH (p:Person) RETURN p
+
+# Tuple return
+result = @graph conn [(p.name, p.age) for p in Person]
+# → MATCH (p:Person) RETURN p.name, p.age
+
+# With alias
+result = @graph conn [p.name => :n for p in Person]
+# → MATCH (p:Person) RETURN p.name AS n
+```
+
+### Keyword arguments
+
+Pass query options after the block, just like `@query`:
+
+```julia
+result = @graph conn begin
+    p::Person
+    ret(p.name)
+end access_mode=:read include_counters=true
+```
+
 ## Known limitations
 
-These Cypher features are **not supported** by the DSL:
+These Cypher features are **not supported** by the DSL macros (`@query` and `@graph`):
 
-- Inline property patterns in MATCH (`{name: $v}`) — Julia's parser cannot parse `{…}` as an expression; use `@where` instead
+- Inline property patterns in MATCH (`{name: $v}`) — Julia's parser cannot parse `{…}` as an expression; use `where()` / `@where` instead
 - Shortest path functions (`shortestPath`, `allShortestPaths`)
 - `MERGE` on relationship patterns within `@query` (only node patterns)
 - Procedure calls via `CALL db.xxx()` (distinct from CALL subqueries)
-- Map projections and list comprehensions
+- Map projections and list comprehensions in Cypher sense
+- `@graph` does not yet support `@call` subqueries, `@load_csv`, `@foreach`, or index/constraint management — use `@query` for those
 
 ## Standalone mutations
 

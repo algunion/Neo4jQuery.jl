@@ -15,7 +15,7 @@ A modern Julia client for [Neo4j](https://neo4j.com/) using the **Query API v2**
 - **Explicit & implicit transactions** — auto-commit queries and full begin/commit/rollback lifecycle with a convenient do-block API
 - **Streaming results** — row-by-row JSONL iteration for memory-efficient processing of large result sets
 - **Rich type mapping** — automatic round-trip conversion between Julia types (`Int64`, `Float64`, `Date`, `DateTime`, `ZonedDateTime`, …) and Neo4j's type system, including spatial (`CypherPoint`), temporal (`CypherDuration`), and vector (`CypherVector`) values
-- **Graph DSL** — `@query`, `@create`, `@merge`, `@relate` macros compile to parameterised Cypher at macro-expansion time
+- **Graph DSL** — `@query`, `@graph`, `@create`, `@merge`, `@relate` macros compile to parameterised Cypher at macro-expansion time. `@graph` provides a hyper-ergonomic syntax with `>>` chain operators and comprehension forms
 - **Full Cypher coverage** — the DSL supports directed, left-arrow, and undirected patterns; variable-length relationships; CASE/WHEN expressions; EXISTS subqueries; regex matching; UNION/UNION ALL; CALL subqueries; LOAD CSV; FOREACH; and index/constraint management
 - **Schema declarations** — `@node` and `@rel` register typed schemas with property validation
 - **Flexible auth** — `BasicAuth` (RFC 7617) and `BearerAuth` token authentication, with a simple extension point for custom strategies
@@ -54,6 +54,70 @@ result = query(conn, q)
 ```
 
 ## DSL
+
+Neo4jQuery provides two DSL macros: `@query` (Cypher-parallel syntax with `@sub-macro` clauses) and `@graph` (hyper-ergonomic Julia-native syntax).
+
+### `@graph` — hyper-ergonomic DSL
+
+```julia
+# >> chain operators for relationship traversal
+result = @graph conn begin
+    p::Person >> r::KNOWS >> q::Person
+    where(p.age > 25, q.name != "Bob")
+    ret(p.name => :name, q.name => :friend)
+    order(p.name)
+    take(10)
+end access_mode=:read
+
+# Multi-hop traversal
+result = @graph conn begin
+    a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company
+    ret(a.name, c.name)
+end
+
+# Auto-SET from bare assignments
+@graph conn begin
+    p::Person
+    where(p.name == $name)
+    p.age = $new_age
+    p.email = $new_email
+    ret(p)
+end
+
+# Left-directed chains
+result = @graph conn begin
+    p::Person << r::KNOWS << q::Person
+    ret(p.name)
+end
+
+# Comprehension one-liners
+result = @graph conn [p.name for p in Person if p.age > 25]
+
+# Merge with on_create / on_match
+@graph conn begin
+    merge(p::Person)
+    on_create(p.created = true)
+    on_match(p.updated = true)
+    ret(p)
+end
+
+# OPTIONAL MATCH
+@graph conn begin
+    p::Person
+    optional(p >> r::KNOWS >> q::Person)
+    ret(p.name, q.name)
+end
+
+# Aggregation with WITH
+result = @graph conn begin
+    p::Person >> r::KNOWS >> q::Person
+    with(p, count(r) => :degree)
+    where(degree > $min_degree)
+    ret(p.name, degree)
+end
+```
+
+### `@query` — Cypher-parallel DSL
 
 ```julia
 # Declare schemas
@@ -138,6 +202,8 @@ end
     @create_constraint :Person :email :unique
 end
 ```
+
+Both macros compile to parameterised Cypher at macro-expansion time. `@graph` is recommended for new code; `@query` remains fully supported and offers access to advanced features like `@call` subqueries, `@load_csv`, `@foreach`, and index/constraint management.
 
 ## Documentation
 
