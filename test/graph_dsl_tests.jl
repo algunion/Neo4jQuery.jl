@@ -9,7 +9,9 @@ using Neo4jQuery: _node_to_cypher, _rel_bracket_to_cypher, _match_to_cypher,
     _graph_chain_to_cypher, _graph_pattern_to_cypher,
     _parse_graph_block, _compile_graph_block,
     _compile_graph_comprehension,
-    _pair_or_kw_to_set_cypher
+    _pair_or_kw_to_set_cypher,
+    # Mutation detection
+    _MUTATION_CLAUSES, _has_mutations
 using Test
 
 # ── Test helpers ────────────────────────────────────────────────────────────
@@ -52,6 +54,27 @@ function _collect_params!(names::Vector{String}, ex)
             _collect_params!(names, arg)
         end
     end
+end
+
+"""Extract the access_mode keyword value from a @macroexpand'd expression.
+Returns :read, :write, or nothing if not found."""
+function _find_access_mode(ex)
+    if ex isa Expr
+        # Look for Expr(:kw, :access_mode, QuoteNode(:read/:write))
+        if ex.head == :kw && length(ex.args) == 2 && ex.args[1] == :access_mode
+            val = ex.args[2]
+            if val isa QuoteNode
+                return val.value
+            elseif val isa Symbol
+                return val
+            end
+        end
+        for arg in ex.args
+            result = _find_access_mode(arg)
+            result !== nothing && return result
+        end
+    end
+    return nothing
 end
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -719,6 +742,112 @@ end
         end access_mode = :read
         @test ex isa Expr
         # Just ensure it expanded without error — kwargs are runtime
+    end
+
+    # ── Auto access_mode inference ──────────────────────────────────────
+
+    @testset "_has_mutations detection" begin
+        # Pure read clauses → no mutations
+        read_clauses = Tuple{Symbol,Vector{Any}}[
+            (:match, Any[Meta.parse("p::Person")]),
+            (:where, Any[Meta.parse("p.age > 25")]),
+            (:return, Any[Meta.parse("p.name")]),
+        ]
+        @test !_has_mutations(read_clauses)
+
+        # Create clause → mutation
+        @test _has_mutations(Tuple{Symbol,Vector{Any}}[(:create, Any[:something])])
+        @test _has_mutations(Tuple{Symbol,Vector{Any}}[(:merge_clause, Any[:x])])
+        @test _has_mutations(Tuple{Symbol,Vector{Any}}[(:set, Any[:x])])
+        @test _has_mutations(Tuple{Symbol,Vector{Any}}[(:delete, Any[:x])])
+        @test _has_mutations(Tuple{Symbol,Vector{Any}}[(:detach_delete, Any[:x])])
+        @test _has_mutations(Tuple{Symbol,Vector{Any}}[(:remove, Any[:x])])
+        @test _has_mutations(Tuple{Symbol,Vector{Any}}[(:on_create_set, Any[:x])])
+        @test _has_mutations(Tuple{Symbol,Vector{Any}}[(:on_match_set, Any[:x])])
+
+        # Mixed read + write → mutation
+        mixed = Tuple{Symbol,Vector{Any}}[
+            (:match, Any[:x]),
+            (:set, Any[:x]),
+            (:return, Any[:x]),
+        ]
+        @test _has_mutations(mixed)
+    end
+
+    @testset "@graph auto access_mode — read query" begin
+        ex = @macroexpand @graph conn begin
+            p::Person
+            where(p.age > 25)
+            ret(p.name)
+        end
+        @test _find_access_mode(ex) == :read
+    end
+
+    @testset "@graph auto access_mode — write query (create)" begin
+        ex = @macroexpand @graph conn begin
+            create(p::Person)
+            p.name = "Alice"
+            ret(p)
+        end
+        @test _find_access_mode(ex) == :write
+    end
+
+    @testset "@graph auto access_mode — write query (delete)" begin
+        ex = @macroexpand @graph conn begin
+            p::Person
+            where(p.name == "old")
+            detach_delete(p)
+        end
+        @test _find_access_mode(ex) == :write
+    end
+
+    @testset "@graph auto access_mode — write query (merge)" begin
+        ex = @macroexpand @graph conn begin
+            merge(p::Person)
+            on_create(p.created=true)
+            ret(p)
+        end
+        @test _find_access_mode(ex) == :write
+    end
+
+    @testset "@graph auto access_mode — comprehension is read" begin
+        ex = @macroexpand @graph conn [p.name for p in Person if p.age > 25]
+        @test _find_access_mode(ex) == :read
+    end
+
+    @testset "@graph auto access_mode — explicit override respected" begin
+        # User explicitly sets access_mode=:write on a read query
+        ex = @macroexpand @graph conn begin
+            p::Person
+            ret(p.name)
+        end access_mode = :write
+        @test _find_access_mode(ex) == :write
+    end
+
+    @testset "@query auto access_mode — read query" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @where p.age > 25
+            @return p.name
+        end
+        @test _find_access_mode(ex) == :read
+    end
+
+    @testset "@query auto access_mode — write query" begin
+        ex = @macroexpand @query conn begin
+            @create (p:Person)
+            @set p.name = "Alice"
+            @return p
+        end
+        @test _find_access_mode(ex) == :write
+    end
+
+    @testset "@query auto access_mode — explicit override" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @return p
+        end access_mode = :write
+        @test _find_access_mode(ex) == :write
     end
 
     # ── Compatibility: :: works in old @query too ───────────────────────

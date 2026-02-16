@@ -54,7 +54,7 @@ result = @query conn begin
     @return p.name => :name, q.name => :friend, r.since => :year
     @orderby p.name
     @limit 10
-end access_mode=:read
+end
 ```
 
 This expands at compile time into:
@@ -254,7 +254,7 @@ result = @query conn begin
     @where p.name == "Alice" && friend.age > $min_age
     @return friend.name => :name, r.since => :since
     @orderby r.since :desc
-end access_mode=:read
+end
 
 for row in result
     println(row.name, " — known since ", row.since)
@@ -274,7 +274,7 @@ result = @query conn begin
     @where degree > $min_connections
     @orderby degree :desc
     @return p.name => :person, degree
-end access_mode=:read
+end
 
 for row in result
     println(row.person, ": ", row.degree, " connections")
@@ -290,7 +290,7 @@ result = @query conn begin
     @where me.name == $my_name && fof.name != me.name
     @return distinct fof.name => :suggestion
     @limit 10
-end access_mode=:read
+end
 ```
 
 ### Step 7: Updating data
@@ -366,7 +366,7 @@ result = @query conn begin
     @optional_match (p)-[w:WORKS_AT]->(c:Company)
     @return p.name => :person, c.name => :company, w.role => :role
     @orderby p.name
-end access_mode=:read
+end
 
 for row in result
     if row.company !== nothing
@@ -390,7 +390,7 @@ result = @query conn begin
     @orderby p.name
     @skip $offset
     @limit $page_size
-end access_mode=:read
+end
 ```
 
 ### Step 12: Deleting data
@@ -420,7 +420,7 @@ result = @query conn begin
     @match (p:Person)
     @where startswith(p.name, "A") && !(isnothing(p.email)) && p.age >= 18
     @return p.name => :name, p.email => :email
-end access_mode=:read
+end
 
 # IN operator with a parameter
 allowed_names = ["Alice", "Bob", "Carol"]
@@ -428,7 +428,7 @@ result = @query conn begin
     @match (p:Person)
     @where in(p.name, $allowed_names)
     @return p
-end access_mode=:read
+end
 ```
 
 ### Step 14: Aggregation functions
@@ -437,7 +437,7 @@ end access_mode=:read
 result = @query conn begin
     @match (p:Person)
     @return count(p) => :total, avg(p.age) => :avg_age, collect(p.name) => :names
-end access_mode=:read
+end
 
 println("Total: ", result[1].total)
 println("Average age: ", result[1].avg_age)
@@ -451,19 +451,19 @@ println("Names: ", result[1].names)
 result = @query conn begin
     @match (a:Person)<-[r:KNOWS]-(b:Person)
     @return a.name => :target, b.name => :source, r.since => :since
-end access_mode=:read
+end
 
 # Undirected — match regardless of direction
 result = @query conn begin
     @match (a:Person)-[r:KNOWS]-(b:Person)
     @return a.name => :person1, b.name => :person2
-end access_mode=:read
+end
 
 # Variable-length — find paths of 1 to 3 hops
 result = @query conn begin
     @match (a:Person)-[r:KNOWS, 1, 3]->(b:Person)
     @return a.name => :start, b.name => :reachable
-end access_mode=:read
+end
 ```
 
 ### Step 16: Regex matching
@@ -474,7 +474,7 @@ result = @query conn begin
     @match (p:Person)
     @where matches(p.name, "^A.*e$")
     @return p.name => :name
-end access_mode=:read
+end
 ```
 
 ### Step 17: CASE/WHEN expressions
@@ -485,7 +485,7 @@ Use Julia's `if`/`elseif`/`else`/`end` syntax to generate Cypher CASE expression
 result = @query conn begin
     @match (p:Person)
     @return p.name => :name, if p.age > 65; "senior"; elseif p.age > 30; "adult"; else; "young"; end => :category
-end access_mode=:read
+end
 ```
 
 This generates:
@@ -501,14 +501,14 @@ result = @query conn begin
     @match (p:Person)
     @where exists((p)-[:KNOWS]->(:Person))
     @return p.name => :name
-end access_mode=:read
+end
 
 # Negated EXISTS
 result = @query conn begin
     @match (p:Person)
     @where !(exists((p)-[:KNOWS]->(:Person)))
     @return p.name => :loner
-end access_mode=:read
+end
 ```
 
 ### Step 19: UNION and UNION ALL
@@ -525,7 +525,7 @@ result = @query conn begin
     @match (p:Person)
     @where startswith(p.name, "A")
     @return p.name => :name
-end access_mode=:read
+end
 
 # UNION ALL (preserves duplicates)
 result = @query conn begin
@@ -534,7 +534,7 @@ result = @query conn begin
     @union_all
     @match (c:Company)
     @return c.name => :name
-end access_mode=:read
+end
 ```
 
 ### Step 20: CALL subqueries
@@ -551,7 +551,7 @@ result = @query conn begin
     end
     @return p.name => :name, friend_count
     @orderby friend_count :desc
-end access_mode=:read
+end
 ```
 
 ### Step 21: LOAD CSV
@@ -827,8 +827,15 @@ Pass query options after the block, just like `@query`:
 result = @graph conn begin
     p::Person
     ret(p.name)
-end access_mode=:read include_counters=true
+end include_counters=true
 ```
+
+!!! note "Automatic `access_mode`"
+    Both `@graph` and `@query` automatically set `access_mode=:read` for pure
+    read queries (MATCH/WHERE/RETURN/ORDER BY/…) and `access_mode=:write` when
+    any mutation clause is present (CREATE/MERGE/SET/DELETE/…).  You rarely need
+    to specify it manually.  If you do, an explicit `access_mode=:write` (or
+    `:read`) after `end` will override the inferred value.
 
 ## Known limitations
 

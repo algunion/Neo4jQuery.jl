@@ -67,7 +67,7 @@ result = @graph conn begin
     ret(p.name => :name, q.name => :friend)
     order(p.name)
     take(10)
-end access_mode=:read
+end
 
 # Multi-hop traversal
 result = @graph conn begin
@@ -137,7 +137,7 @@ result = @query conn begin
     @return p.name => :name, q.name => :friend
     @orderby p.name
     @limit 10
-end access_mode=:read
+end
 
 # Left-arrow and undirected patterns
 result = @query conn begin

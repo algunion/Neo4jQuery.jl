@@ -222,11 +222,20 @@ macro query(conn, block, kwargs...)
         end
     end
 
+    # Auto-infer access_mode from clause analysis (compile-time)
+    has_explicit_access_mode = any(kwargs) do kw
+        kw isa Expr && kw.head == :(=) && kw.args[1] == :access_mode
+    end
+    inferred_mode = _has_mutations(clauses) ? :write : :read
+    auto_kw = has_explicit_access_mode ? Expr[] :
+              [Expr(:kw, :access_mode, QuoteNode(inferred_mode))]
+
     esc_conn = esc(conn)
 
     return quote
         let __params = Dict{String,Any}($(param_pairs...))
-            query($esc_conn, $cypher_str; parameters=__params, $(kw_exprs...))
+            query($esc_conn, $cypher_str; parameters=__params,
+                $(auto_kw...), $(kw_exprs...))
         end
     end
 end

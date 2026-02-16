@@ -203,7 +203,7 @@ result = @query conn begin
     @where d.name == $disease_name
     @return g.symbol => :gene, p.name => :protein, pw.name => :pathway
     @orderby g.symbol
-end access_mode=:read
+end
 ```
 
 ---
@@ -231,7 +231,7 @@ result = @query conn begin
     @where d.name == $target_disease
     @return drug.name => :drug, pw.name => :pathway, g.symbol => :gene
     @orderby drug.name
-end access_mode=:read
+end
 ```
 
 ---
@@ -255,7 +255,7 @@ result = @query conn begin
     @return pt.patient_id => :patient, d.name => :disease,
             dx.stage => :stage, ct.trial_id => :trial
     @orderby d.name pt.patient_id
-end access_mode=:read
+end
 ```
 
 ---
@@ -279,7 +279,7 @@ result = @query conn begin
     @where drug_count > 1
     @return disease, drug_count, mean_efficacy
     @orderby drug_count :desc
-end access_mode=:read
+end
 ```
 
 ---
@@ -303,7 +303,7 @@ result = @query conn begin
     @where d1.name < d2.name
     @return d1.name => :drug1, d2.name => :drug2, collect(s.name) => :shared_effects
     @orderby d1.name
-end access_mode=:read
+end
 ```
 
 ---
@@ -335,7 +335,7 @@ result = @query conn begin
             t.efficacy => :efficacy, ct.title => :trial,
             collect(se.name) => :side_effects
     @orderby t.efficacy :desc
-end access_mode=:read
+end
 ```
 
 ---
@@ -360,7 +360,7 @@ result = @query conn begin
     @where disease_count >= $min_diseases
     @return gene, disease_count, diseases
     @orderby disease_count :desc
-end access_mode=:read
+end
 ```
 
 ---
@@ -382,7 +382,7 @@ result = @query conn begin
     @return h.name => :hospital, collect(ph.specialty) => :specialties,
             count(ph) => :physician_count
     @orderby physician_count :desc
-end access_mode=:read
+end
 ```
 
 ---
@@ -406,7 +406,7 @@ result = @query conn begin
     @return bm.name => :biomarker, d.name => :disease,
             drug.name => :drug, drug.mechanism => :mechanism
     @orderby bm.name drug.name
-end access_mode=:read
+end
 ```
 
 ---
@@ -432,7 +432,7 @@ result = @query conn begin
     @return bm.name => :biomarker, d.name => :disease,
             g.symbol => :gene, p.name => :protein, pw.name => :pathway
     @orderby d.name g.symbol
-end access_mode=:read
+end
 ```
 
 A **five-hop traversal** across the entire knowledge base — expressed as readable Julia.
@@ -490,7 +490,7 @@ result = @query conn begin
     @where startswith(g.chromosome, "17") && d.category == "Oncology"
     @return g.symbol => :gene, g.chromosome => :chr, d.name => :disease
     @orderby g.symbol
-end access_mode=:read
+end
 ```
 
 ---
@@ -515,7 +515,7 @@ result = @query conn begin
     @return d.name => :disease, n_drugs, avg_eff,
             count(g) => :n_genes
     @orderby n_drugs :desc
-end access_mode=:read
+end
 ```
 
 ---
@@ -541,7 +541,7 @@ result = @query conn begin
     @return pub.title => :publication, pub.journal => :journal,
             d.name => :disease, drugs
     @orderby pub.year :desc
-end access_mode=:read
+end
 ```
 
 ---
