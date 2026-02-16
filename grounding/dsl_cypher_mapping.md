@@ -161,6 +161,21 @@ Schemas are **runtime-validated, not compile-time enforced**:
 The `@graph` macro provides an alternative syntax that compiles to the same
 parameterised Cypher as `@query`, but with Julia-native conventions.
 
+### Design Principle: One Pattern Language
+
+**The `>>` chain is the single, canonical pattern language for `@graph`.**
+It works uniformly across all clause types:
+
+- Bare patterns (implicit `MATCH`)
+- `create()` — relationship creation
+- `merge()` — relationship merge
+- `optional()` — optional match
+- `match()` — explicit multi-pattern match
+
+Arrow syntax (`-[]->`) is backward-compatible but not the documented primary form.
+This eliminates the confusion of having two different pattern syntaxes in the
+same macro.
+
 ### Compilation Model
 
 Identical to `@query`: the Cypher string is assembled at **macro expansion
@@ -168,16 +183,18 @@ time**; only `$param` values are captured at **runtime**.
 
 ### Pattern Syntax (`@graph`)
 
-| Julia DSL (in @graph)                    | Cypher                                  |
-| ---------------------------------------- | --------------------------------------- |
-| `p::Person`                              | `(p:Person)`                            |
-| `::Person`                               | `(:Person)`                             |
-| `p::Person >> r::KNOWS >> q::Person`     | `(p:Person)-[r:KNOWS]->(q:Person)`      |
-| `p::Person >> KNOWS >> q::Person`        | `(p:Person)-[:KNOWS]->(q:Person)`       |
-| `p::Person << r::KNOWS << q::Person`     | `(p:Person)<-[r:KNOWS]-(q:Person)`      |
-| `a::A >> R1 >> b::B >> R2 >> c::C`       | `(a:A)-[:R1]->(b:B)-[:R2]->(c:C)`       |
-| `(p::Person)-[r::KNOWS]->(q::Person)`    | `(p:Person)-[r:KNOWS]->(q:Person)`      |
-| `[p.name for p in Person if p.age > 25]` | `MATCH (p:Person) WHERE ... RETURN ...` |
+| Julia DSL (in @graph)                    | Cypher                                  | Context    |
+| ---------------------------------------- | --------------------------------------- | ---------- |
+| `p::Person`                              | `(p:Person)`                            | any clause |
+| `::Person`                               | `(:Person)`                             | any clause |
+| `p::Person >> r::KNOWS >> q::Person`     | `(p:Person)-[r:KNOWS]->(q:Person)`      | any clause |
+| `p::Person >> KNOWS >> q::Person`        | `(p:Person)-[:KNOWS]->(q:Person)`       | any clause |
+| `p::Person << r::KNOWS << q::Person`     | `(p:Person)<-[r:KNOWS]-(q:Person)`      | any clause |
+| `a::A >> R1 >> b::B >> R2 >> c::C`       | `(a:A)-[:R1]->(b:B)-[:R2]->(c:C)`       | any clause |
+| `[p.name for p in Person if p.age > 25]` | `MATCH (p:Person) WHERE ... RETURN ...` | top-level  |
+
+**Key point**: `create(a >> r::KNOWS >> b)` and `merge(p::P >> r::R >> q::Q)`
+use the **exact same** `>>` syntax as bare match patterns.
 
 ### Clause Mapping (`@graph`)
 

@@ -631,6 +631,9 @@ end
 
 `@graph` is a next-generation DSL that maximises ergonomics by leveraging Julia's metaprogramming. It compiles to **the same parameterised Cypher** as `@query`, but with a syntax designed for developer productivity over Cypher familiarity.
 
+!!! tip "One pattern language, everywhere"
+    The `>>` chain syntax is the **single, canonical pattern language** for `@graph`. The same `>>` works in bare patterns (implicit MATCH), `create()`, `merge()`, `optional()`, and `match()`. You never need to switch to `-[]->` arrow syntax inside `@graph` — though it still works for backward compatibility.
+
 ### Key differences from `@query`
 
 | Feature                 | `@query`                                   | `@graph`                                         |
@@ -645,6 +648,8 @@ end
 | RETURN                  | `@return expr`                             | `ret(expr)` or `returning(expr)`                 |
 
 ### Pattern syntax
+
+The `>>` operator is the universal pattern connector in `@graph`. It works the same way whether you're reading, creating, or merging.
 
 ```julia
 # Labeled node (Julia type annotation)
@@ -668,11 +673,9 @@ p::Person << r::KNOWS << q::Person
 # Multi-hop chain
 a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company
 # → (a:Person)-[r:KNOWS]->(b:Person)-[s:WORKS_AT]->(c:Company)
-
-# Classic arrow syntax also works
-(p::Person)-[r::KNOWS]->(q::Person)
-# → (p:Person)-[r:KNOWS]->(q:Person)
 ```
+
+These patterns work uniformly in any clause — see examples below.
 
 ### Clause functions
 
@@ -748,22 +751,50 @@ end
 ### CREATE with chain patterns
 
 ```julia
+# Create a single node
 @graph conn begin
     create(p::Person)
     p.name = $name
     p.age = $age
     ret(p)
 end
+
+# Create a relationship between matched nodes (>> chain in create)
+@graph conn begin
+    match(a::Person, b::Person)
+    where(a.name == $n1, b.name == $n2)
+    create(a >> r::KNOWS >> b)
+    r.since = $year
+    ret(r)
+end
+
+# Create a full path in one shot
+@graph conn begin
+    create(p::Person >> r::WORKS_AT >> c::Company)
+    p.name = $name
+    c.name = $company
+    r.since = $year
+    ret(p, r, c)
+end
 ```
 
 ### MERGE with on_create / on_match
 
 ```julia
+# Merge a single node
 @graph conn begin
     merge(p::Person)
     on_create(p.created = true)
     on_match(p.updated = true)
     ret(p)
+end
+
+# Merge a relationship (>> chain in merge)
+@graph conn begin
+    merge(p::Person >> r::KNOWS >> q::Person)
+    on_create(r.since = 2024)
+    on_match(r.weight = 1.0)
+    ret(r)
 end
 ```
 
