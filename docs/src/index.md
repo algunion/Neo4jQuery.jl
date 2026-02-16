@@ -13,9 +13,12 @@
 - **Parameterised Cypher** — the `@cypher_str` macro captures local variables as safe query parameters, preventing injection and enabling server-side caching.
 - **Explicit & implicit transactions** — both auto-commit queries and full begin/commit/rollback lifecycle with a convenient do-block API.
 - **Streaming results** — row-by-row iteration over JSONL responses for memory-efficient processing of large result sets.
-- **Rich type mapping** — automatic round-trip conversion between Julia types (`Int64`, `Float64`, `Date`, `DateTime`, `ZonedDateTime`, …) and Neo4j's type system.
+- **Rich type mapping** — automatic round-trip conversion between Julia types (`Int64`, `Float64`, `Date`, `DateTime`, `ZonedDateTime`, …) and Neo4j's type system, including spatial (`CypherPoint`), temporal (`CypherDuration`), and vector (`CypherVector`) values.
 - **Graph DSL** — macros `@query`, `@create`, `@merge`, and `@relate` let you write Julia-native graph operations that compile to parameterised Cypher at macro-expansion time.
+- **Full Cypher coverage** — directed, left-arrow, and undirected patterns; variable-length relationships; CASE/WHEN expressions; EXISTS subqueries; regex matching (`matches()`); UNION/UNION ALL; CALL subqueries; LOAD CSV; FOREACH; and index/constraint management.
 - **Schema declarations** — `@node` and `@rel` register typed schemas with validation for safer graph mutations.
+- **Flexible authentication** — `BasicAuth` (HTTP Basic) and `BearerAuth` (token) with an extension point for custom strategies.
+- **Environment configuration** — `connect_from_env` loads credentials from `.env` files or environment variables with automatic URI scheme parsing.
 
 ## Quick Start
 
@@ -23,7 +26,7 @@
 using Neo4jQuery
 
 # Connect
-conn = connect("localhost", "neo4j"; port=7687, auth=BasicAuth("neo4j", "password"))
+conn = connect("localhost", "neo4j"; port=7474, auth=BasicAuth("neo4j", "password"))
 
 # Query
 result = query(conn, "MATCH (p:Person) RETURN p.name AS name, p.age AS age")
@@ -49,6 +52,7 @@ Pages = [
     "guide/transactions.md",
     "guide/streaming.md",
     "guide/dsl.md",
+    "guide/biomedical_case_study.md",
     "api.md",
 ]
 Depth = 1
