@@ -47,7 +47,7 @@ purge_db!(conn; verify=true)
 end
 
 # ════════════════════════════════════════════════════════════════════════════
-# getting_started.md — Snippet 5: DSL quick start (schema + @create + @relate + @query)
+# getting_started.md — Snippet 5: DSL quick start (schema + @create + @relate + @cypher)
 # ════════════════════════════════════════════════════════════════════════════
 
 # Purge for a clean slate
@@ -82,10 +82,10 @@ purge_db!(conn; verify=true)
 
     # Query the graph
     min_age = 20
-    result = @query conn begin
-        @match (p:Person) - [r:KNOWS] -> (friend:Person)
-        @where p.name == "Alice" && friend.age > $min_age
-        @return friend.name => :name, r.since => :since
+    result = @cypher conn begin
+        p::Person >> r::KNOWS >> friend::Person
+        where(p.name == "Alice", friend.age > $min_age)
+        ret(friend.name => :name, r.since => :since)
     end
 
     @test length(result) >= 1
@@ -94,13 +94,13 @@ purge_db!(conn; verify=true)
 end
 
 # ════════════════════════════════════════════════════════════════════════════
-# getting_started.md — Snippet 6: @graph quick start
+# getting_started.md — Snippet 6: @cypher quick start
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "getting_started.md — @graph quick start" begin
-    # Same query as above, but with @graph syntax
+@testset "getting_started.md — @cypher quick start" begin
+    # Same query as above, but with @cypher syntax
     min_age = 20
-    result = @graph conn begin
+    result = @cypher conn begin
         p::Person >> r::KNOWS >> friend::Person
         where(p.name == "Alice", friend.age > $min_age)
         ret(friend.name => :name, r.since => :since)
@@ -112,13 +112,13 @@ end
     @test result[1].since == 2024
 
     # Comprehension form
-    result2 = @graph conn [p.name for p in Person if p.age > 20]
+    result2 = @cypher conn [p.name for p in Person if p.age > 20]
     @test length(result2) >= 1
     names = [r[Symbol("p.name")] for r in result2]
     @test "Alice" in names || "Bob" in names
 
     # Mutations with auto-SET
-    @graph conn begin
+    @cypher conn begin
         p::Person
         where(p.name == "Alice")
         p.age = 31
@@ -398,13 +398,13 @@ end
     @test rel1["since"] == 2020
 end
 
-@testset "dsl.md — step 4: query with @query" begin
+@testset "dsl.md — step 4: query with @cypher" begin
     min_age = 20
-    result = @query conn begin
-        @match (p:Person) - [r:KNOWS] -> (friend:Person)
-        @where p.name == "Alice" && friend.age > $min_age
-        @return friend.name => :name, r.since => :since
-        @orderby r.since :desc
+    result = @cypher conn begin
+        p::Person >> r::KNOWS >> friend::Person
+        where(p.name == "Alice", friend.age > $min_age)
+        ret(friend.name => :name, r.since => :since)
+        order(r.since, :desc)
     end
 
     @test length(result) >= 1
@@ -414,12 +414,12 @@ end
 
 @testset "dsl.md — step 5: aggregation with WITH" begin
     min_connections = 1
-    result = @query conn begin
-        @match (p:Person) - [r:KNOWS] -> (q:Person)
-        @with p, count(r) => :degree
-        @where degree > $min_connections
-        @orderby degree :desc
-        @return p.name => :person, degree
+    result = @cypher conn begin
+        p::Person >> r::KNOWS >> q::Person
+        with(p, count(r) => :degree)
+        where(degree > $min_connections)
+        order(degree, :desc)
+        ret(p.name => :person, degree)
     end
 
     @test length(result) >= 1
@@ -427,11 +427,11 @@ end
 
 @testset "dsl.md — step 6: friend-of-friend" begin
     my_name = "Bob"
-    result = @query conn begin
-        @match (me:Person) - [:KNOWS] -> (friend:Person) - [:KNOWS] -> (fof:Person)
-        @where me.name == $my_name && fof.name != me.name
-        @return distinct fof.name => :suggestion
-        @limit 10
+    result = @cypher conn begin
+        me::Person >> KNOWS >> friend::Person >> KNOWS >> fof::Person
+        where(me.name == $my_name, fof.name != me.name)
+        ret(distinct, fof.name => :suggestion)
+        take(10)
     end
 
     @test length(result) >= 0  # may or may not find FoF paths
@@ -440,11 +440,11 @@ end
 @testset "dsl.md — step 7: updating data" begin
     name = "Alice"
     new_email = "alice@newdomain.com"
-    @query conn begin
-        @match (p:Person)
-        @where p.name == $name
-        @set p.email = $new_email
-        @return p
+    @cypher conn begin
+        p::Person
+        where(p.name == $name)
+        p.email = $new_email
+        ret(p)
     end
 
     check = query(conn, "MATCH (p:Person {name: 'Alice'}) RETURN p.email AS email"; access_mode=:read)
@@ -453,12 +453,12 @@ end
     # Update multiple properties
     new_age = 31
     new_email2 = "alice@latest.com"
-    @query conn begin
-        @match (p:Person)
-        @where p.name == $name
-        @set p.age = $new_age
-        @set p.email = $new_email2
-        @return p
+    @cypher conn begin
+        p::Person
+        where(p.name == $name)
+        p.age = $new_age
+        p.email = $new_email2
+        ret(p)
     end
 
     check2 = query(conn, "MATCH (p:Person {name: 'Alice'}) RETURN p.age AS age, p.email AS email"; access_mode=:read)
@@ -473,11 +473,11 @@ end
 end
 
 @testset "dsl.md — step 10: OPTIONAL MATCH" begin
-    result = @query conn begin
-        @match (p:Person)
-        @optional_match (p) - [w:WORKS_AT] -> (c:Company)
-        @return p.name => :person, c.name => :company, w.role => :role
-        @orderby p.name
+    result = @cypher conn begin
+        p::Person
+        optional(p >> w::WORKS_AT >> c::Company)
+        ret(p.name => :person, c.name => :company, w.role => :role)
+        order(p.name)
     end
 
     @test length(result) >= 3
@@ -491,12 +491,12 @@ end
     page_size = 2
     offset = (page - 1) * page_size
 
-    result = @query conn begin
-        @match (p:Person)
-        @return p.name => :name, p.age => :age
-        @orderby p.name
-        @skip $offset
-        @limit $page_size
+    result = @cypher conn begin
+        p::Person
+        ret(p.name => :name, p.age => :age)
+        order(p.name)
+        skip($offset)
+        take($page_size)
     end
 
     @test length(result) <= page_size
@@ -505,19 +505,19 @@ end
 @testset "dsl.md — step 13: complex WHERE" begin
     # IN operator with a parameter
     allowed_names = ["Alice", "Bob", "Carol"]
-    result = @query conn begin
-        @match (p:Person)
-        @where in(p.name, $allowed_names)
-        @return p
+    result = @cypher conn begin
+        p::Person
+        where(in(p.name, $allowed_names))
+        ret(p)
     end
 
     @test length(result) >= 3
 end
 
 @testset "dsl.md — step 14: aggregation" begin
-    result = @query conn begin
-        @match (p:Person)
-        @return count(p) => :total, avg(p.age) => :avg_age, collect(p.name) => :names
+    result = @cypher conn begin
+        p::Person
+        ret(count(p) => :total, avg(p.age) => :avg_age, collect(p.name) => :names)
     end
 
     @test result[1].total >= 3
@@ -527,40 +527,40 @@ end
 
 @testset "dsl.md — step 15: direction variants" begin
     # Left-arrow
-    result = @query conn begin
-        @match (a:Person) < -[r:KNOWS] - (b:Person)
-        @return a.name => :target, b.name => :source, r.since => :since
+    result = @cypher conn begin
+        a::Person << r::KNOWS << b::Person
+        ret(a.name => :target, b.name => :source, r.since => :since)
     end
     @test length(result) >= 1
 
     # Undirected
-    result2 = @query conn begin
-        @match (a:Person) - [r:KNOWS] - (b:Person)
-        @return a.name => :person1, b.name => :person2
+    result2 = @cypher conn begin
+        (a::Person) - [r::KNOWS] - (b::Person)
+        ret(a.name => :person1, b.name => :person2)
     end
     @test length(result2) >= 1
 end
 
 @testset "dsl.md — step 16: regex" begin
-    result = @query conn begin
-        @match (p:Person)
-        @where matches(p.name, "^A.*e\$")
-        @return p.name => :name
+    result = @cypher conn begin
+        p::Person
+        where(matches(p.name, "^A.*e\$"))
+        ret(p.name => :name)
     end
     @test length(result) >= 1
     @test result[1].name == "Alice"
 end
 
 @testset "dsl.md — step 17: CASE/WHEN" begin
-    result = @query conn begin
-        @match (p:Person)
-        @return p.name => :name, if p.age > 65
+    result = @cypher conn begin
+        p::Person
+        ret(p.name => :name, if p.age > 65
             "senior"
         elseif p.age > 30
             "adult"
         else
             "young"
-        end => :category
+        end => :category)
     end
     @test length(result) >= 1
     categories = [row.category for row in result]
@@ -568,65 +568,65 @@ end
 end
 
 @testset "dsl.md — step 18: EXISTS subqueries" begin
-    result = @query conn begin
-        @match (p:Person)
-        @where exists((p) - [:KNOWS] -> (:Person))
-        @return p.name => :name
+    result = @cypher conn begin
+        p::Person
+        where(exists((p) - [:KNOWS] -> (:Person)))
+        ret(p.name => :name)
     end
     @test length(result) >= 1
 
     # Negated EXISTS
-    result2 = @query conn begin
-        @match (p:Person)
-        @where !(exists((p) - [:KNOWS] -> (:Person)))
-        @return p.name => :loner
+    result2 = @cypher conn begin
+        p::Person
+        where(!(exists((p) - [:KNOWS] -> (:Person))))
+        ret(p.name => :loner)
     end
     @test length(result2) >= 0  # Carol has outgoing KNOWS to nobody (wait, Bob->Carol), actually all may have outgoing
 end
 
 @testset "dsl.md — step 19: UNION" begin
-    result = @query conn begin
-        @match (p:Person)
-        @where p.age > 30
-        @return p.name => :name
-        @union
-        @match (p:Person)
-        @where startswith(p.name, "A")
-        @return p.name => :name
+    result = @cypher conn begin
+        p::Person
+        where(p.age > 30)
+        ret(p.name => :name)
+        union()
+        p::Person
+        where(startswith(p.name, "A"))
+        ret(p.name => :name)
     end
     @test length(result) >= 1
 end
 
 @testset "dsl.md — step 20: CALL subqueries" begin
-    result = @query conn begin
-        @match (p:Person)
-        @call begin
-            @with p
-            @match (p) - [r:KNOWS] -> (friend:Person)
-            @return count(friend) => :friend_count
-        end
-        @return p.name => :name, friend_count
-        @orderby friend_count :desc
+    result = @cypher conn begin
+        p::Person
+        call(begin
+            with(p)
+            p >> r::KNOWS >> friend::Person
+            ret(count(friend) => :friend_count)
+        end)
+        ret(p.name => :name, friend_count)
+        order(friend_count, :desc)
     end
     @test length(result) >= 1
 end
 
 @testset "dsl.md — step 22: aggregation" begin
-    result = @query conn begin
-        @match (p:Person)
-        @return count(p) => :total, avg(p.age) => :avg_age
+    result = @cypher conn begin
+        p::Person
+        ret(count(p) => :total, avg(p.age) => :avg_age)
     end
     @test result[1].total >= 3
 end
 
 # ════════════════════════════════════════════════════════════════════════════
-# guide/dsl.md — @graph pattern syntax (Snippets 32-42)
+# guide/dsl.md — @cypher pattern syntax (Snippets 32-42)
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "dsl.md — @graph basic query" begin
+@testset "dsl.md — @cypher basic query" begin
     min_age = 20
     target = "Bob"
-    result = @graph conn begin
+    result = @cypher conn begin
         p::Person >> r::KNOWS >> q::Person
         where(p.age > $min_age, q.name == $target)
         ret(p.name => :name, r.since, q.name => :friend)
@@ -636,20 +636,20 @@ end
     @test length(result) >= 0
 end
 
-@testset "dsl.md — @graph multi-hop chain" begin
+@testset "dsl.md — @cypher multi-hop chain" begin
     # Three-node chain
-    result = @graph conn begin
+    result = @cypher conn begin
         a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company
         ret(a.name, b.name, c.name)
     end
     @test length(result) >= 0
 end
 
-@testset "dsl.md — @graph auto-SET" begin
+@testset "dsl.md — @cypher auto-SET" begin
     name = "Alice"
     new_age = 32
     new_email = "alice@graph.com"
-    @graph conn begin
+    @cypher conn begin
         p::Person
         where(p.name == $name)
         p.age = $new_age
@@ -662,10 +662,10 @@ end
     @test check[1].email == "alice@graph.com"
 end
 
-@testset "dsl.md — @graph CREATE" begin
+@testset "dsl.md — @cypher CREATE" begin
     name = "GraphPerson"
     age = 99
-    @graph conn begin
+    @cypher conn begin
         create(p::Person)
         p.name = $name
         p.age = $age
@@ -676,8 +676,8 @@ end
     @test check[1].age == 99
 end
 
-@testset "dsl.md — @graph MERGE with on_create/on_match" begin
-    result = @graph conn begin
+@testset "dsl.md — @cypher MERGE with on_create/on_match" begin
+    result = @cypher conn begin
         merge(p::Person)
         on_create(p.created=true)
         on_match(p.updated=true)
@@ -686,8 +686,8 @@ end
     @test length(result) >= 1
 end
 
-@testset "dsl.md — @graph OPTIONAL MATCH" begin
-    result = @graph conn begin
+@testset "dsl.md — @cypher OPTIONAL MATCH" begin
+    result = @cypher conn begin
         p::Person
         optional(p >> r::KNOWS >> q::Person)
         ret(p.name, q.name)
@@ -695,9 +695,9 @@ end
     @test length(result) >= 1
 end
 
-@testset "dsl.md — @graph aggregation with WITH" begin
+@testset "dsl.md — @cypher aggregation with WITH" begin
     min_degree = 0
-    result = @graph conn begin
+    result = @cypher conn begin
         p::Person >> r::KNOWS >> q::Person
         with(p, count(r) => :degree)
         where(degree > $min_degree)
@@ -706,26 +706,26 @@ end
     @test length(result) >= 1
 end
 
-@testset "dsl.md — @graph RETURN DISTINCT" begin
-    result = @graph conn begin
+@testset "dsl.md — @cypher RETURN DISTINCT" begin
+    result = @cypher conn begin
         p::Person
         ret(distinct, p.name)
     end
     @test length(result) >= 1
 end
 
-@testset "dsl.md — @graph comprehension forms" begin
+@testset "dsl.md — @cypher comprehension forms" begin
     # One-liner query
-    result = @graph conn [p.name for p in Person if p.age > 25]
+    result = @cypher conn [p.name for p in Person if p.age > 25]
     @test length(result) >= 1
 
     # Without filter
-    result2 = @graph conn [p for p in Person]
+    result2 = @cypher conn [p for p in Person]
     @test length(result2) >= 1
 end
 
-@testset "dsl.md — @graph kwargs pass-through" begin
-    result = @graph conn begin
+@testset "dsl.md — @cypher kwargs pass-through" begin
+    result = @cypher conn begin
         p::Person
         ret(p.name)
     end include_counters = true

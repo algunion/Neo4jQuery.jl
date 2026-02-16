@@ -15,7 +15,7 @@ using .TestGraphUtils
 
 # Include DSL tests
 include("dsl_tests.jl")
-include("graph_dsl_tests.jl")
+include("cypher_dsl_tests.jl")
 
 # Quality assurance and type stability
 include("aqua_tests.jl")
@@ -1562,8 +1562,8 @@ TEST_KEY4=no_quotes
                 include("biomedical_graph_test.jl")
             end
 
-            # ── @graph DSL live integration suite ─────────────────────────────
-            @testset "@graph DSL live integration" begin
+            # ── @cypher DSL live integration suite ─────────────────────────────
+            @testset "@cypher DSL live integration" begin
                 include("graph_dsl_live_test.jl")
             end
 

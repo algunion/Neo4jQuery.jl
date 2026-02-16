@@ -1,9 +1,8 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# @graph DSL — Harsh Live Integration Tests
+# @cypher DSL — Harsh Live Integration Tests
 #
-# Mirrors the rigor of biomedical_graph_test.jl but specifically targets
-# the @graph macro. Tests every clause type, edge case, and mutation path
-# against a real Neo4j instance.
+# Tests every clause type, edge case, and mutation path of the unified
+# @cypher macro against a real Neo4j instance.
 #
 # The database is purged at the start. Graph state is built progressively.
 # ══════════════════════════════════════════════════════════════════════════════
@@ -62,14 +61,14 @@ end
 end
 
 # ════════════════════════════════════════════════════════════════════════════
-# PART 2 — Node Creation via @graph CREATE
+# PART 2 — Node Creation via @cypher CREATE
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "@graph Live — Node Creation" begin
+@testset "@cypher Live — Node Creation" begin
 
-    # Create nodes using @graph create(...)
-    @testset "Create single node via @graph" begin
-        result = @graph conn begin
+    # Create nodes using @cypher create(...)
+    @testset "Create single node via @cypher" begin
+        result = @cypher conn begin
             create(p::Person)
             p.name = "Alice"
             p.age = 30
@@ -82,11 +81,11 @@ end
         @test result[1].p["age"] == 30
     end
 
-    @testset "Create more nodes via @graph" begin
+    @testset "Create more nodes via @cypher" begin
         for (nm, ag) in [("Bob", 25), ("Carol", 35), ("Dave", 45), ("Eve", 22)]
             name_val = nm
             age_val = ag
-            @graph conn begin
+            @cypher conn begin
                 create(p::Person)
                 p.name = $name_val
                 p.age = $age_val
@@ -105,7 +104,7 @@ end
             n = nm
             y = yr
             i = ind
-            @graph conn begin
+            @cypher conn begin
                 create(c::Company)
                 c.name = $n
                 c.founded = $y
@@ -125,7 +124,7 @@ end
             n = nm
             c = co
             p = pop
-            @graph conn begin
+            @cypher conn begin
                 create(ci::City)
                 ci.name = $n
                 ci.country = $c
@@ -137,13 +136,13 @@ end
 end
 
 # ════════════════════════════════════════════════════════════════════════════
-# PART 3 — Relationship Creation via @graph
+# PART 3 — Relationship Creation via @cypher
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "@graph Live — Relationship Creation" begin
+@testset "@cypher Live — Relationship Creation" begin
 
-    @testset "Create relationships via @graph create() with arrow pattern" begin
-        @graph conn begin
+    @testset "Create relationships via @cypher create() with arrow pattern" begin
+        @cypher conn begin
             match(a::Person, b::Person)
             where(a.name == "Alice", b.name == "Bob")
             create((a) - [r::KNOWS] -> (b))
@@ -151,7 +150,7 @@ end
             ret(r)
         end
 
-        @graph conn begin
+        @cypher conn begin
             match(a::Person, b::Person)
             where(a.name == "Alice", b.name == "Carol")
             create((a) - [r::KNOWS] -> (b))
@@ -159,7 +158,7 @@ end
             ret(r)
         end
 
-        @graph conn begin
+        @cypher conn begin
             match(a::Person, b::Person)
             where(a.name == "Bob", b.name == "Carol")
             create((a) - [r::KNOWS] -> (b))
@@ -167,7 +166,7 @@ end
             ret(r)
         end
 
-        @graph conn begin
+        @cypher conn begin
             match(a::Person, b::Person)
             where(a.name == "Carol", b.name == "Dave")
             create((a) - [r::KNOWS] -> (b))
@@ -175,7 +174,7 @@ end
             ret(r)
         end
 
-        @graph conn begin
+        @cypher conn begin
             match(a::Person, b::Person)
             where(a.name == "Dave", b.name == "Eve")
             create((a) - [r::KNOWS] -> (b))
@@ -188,7 +187,7 @@ end
     end
 
     @testset "Create WORKS_AT relationships" begin
-        @graph conn begin
+        @cypher conn begin
             match(p::Person, c::Company)
             where(p.name == "Alice", c.name == "Acme Corp")
             create((p) - [w::WORKS_AT] -> (c))
@@ -197,7 +196,7 @@ end
             ret(w)
         end
 
-        @graph conn begin
+        @cypher conn begin
             match(p::Person, c::Company)
             where(p.name == "Bob", c.name == "TechStart")
             create((p) - [w::WORKS_AT] -> (c))
@@ -206,7 +205,7 @@ end
             ret(w)
         end
 
-        @graph conn begin
+        @cypher conn begin
             match(p::Person, c::Company)
             where(p.name == "Carol", c.name == "DataInc")
             create((p) - [w::WORKS_AT] -> (c))
@@ -220,7 +219,7 @@ end
     end
 
     @testset "Create LIVES_IN relationships" begin
-        @graph conn begin
+        @cypher conn begin
             match(p::Person, ci::City)
             where(p.name == "Alice", ci.name == "Berlin")
             create((p) - [l::LIVES_IN] -> (ci))
@@ -228,7 +227,7 @@ end
             ret(l)
         end
 
-        @graph conn begin
+        @cypher conn begin
             match(p::Person, ci::City)
             where(p.name == "Bob", ci.name == "Boston")
             create((p) - [l::LIVES_IN] -> (ci))
@@ -239,13 +238,13 @@ end
 end
 
 # ════════════════════════════════════════════════════════════════════════════
-# PART 4 — Read Queries via @graph (>> chains)
+# PART 4 — Read Queries via @cypher (>> chains)
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "@graph Live — Read Queries" begin
+@testset "@cypher Live — Read Queries" begin
 
     @testset "Simple node query" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person
             where(p.age > 25)
             ret(p.name => :name, p.age => :age)
@@ -256,7 +255,7 @@ end
     end
 
     @testset ">> chain query" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person >> r::KNOWS >> friend::Person
             where(p.name == "Alice")
             ret(friend.name => :friend_name, r.since => :since)
@@ -271,7 +270,7 @@ end
     @testset "Multi-condition where" begin
         min_age = 20
         max_age = 40
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person
             where(p.age > $min_age, p.age < $max_age)
             ret(p.name => :name, p.age => :age)
@@ -282,7 +281,7 @@ end
     end
 
     @testset "Multi-hop >> chain" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company
             ret(a.name => :person, b.name => :friend, c.name => :company)
         end
@@ -290,7 +289,7 @@ end
     end
 
     @testset "<< left chain query" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person << r::KNOWS << q::Person
             where(p.name == "Bob")
             ret(q.name => :knower)
@@ -300,17 +299,17 @@ end
     end
 
     @testset "Comprehension query" begin
-        result = @graph conn [p.name for p in Person if p.age > 30]
+        result = @cypher conn [p.name for p in Person if p.age > 30]
         @test length(result) >= 2  # Carol(35), Dave(45)
     end
 
     @testset "Comprehension without filter" begin
-        result = @graph conn [p for p in Person]
+        result = @cypher conn [p for p in Person]
         @test length(result) >= 5
     end
 
     @testset "RETURN DISTINCT" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person
             ret(distinct, p.name)
         end
@@ -319,7 +318,7 @@ end
     end
 
     @testset "ORDER BY with direction" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person
             ret(p.name => :name, p.age => :age)
             order(p.age, :desc)
@@ -330,13 +329,13 @@ end
     end
 
     @testset "SKIP + TAKE (pagination)" begin
-        all_result = @graph conn begin
+        all_result = @cypher conn begin
             p::Person
             ret(p.name => :name)
             order(p.name)
         end
 
-        page1 = @graph conn begin
+        page1 = @cypher conn begin
             p::Person
             ret(p.name => :name)
             order(p.name)
@@ -344,7 +343,7 @@ end
         end
         @test length(page1) == 2
 
-        page2 = @graph conn begin
+        page2 = @cypher conn begin
             p::Person
             ret(p.name => :name)
             order(p.name)
@@ -357,16 +356,16 @@ end
 end
 
 # ════════════════════════════════════════════════════════════════════════════
-# PART 5 — Mutations via @graph
+# PART 5 — Mutations via @cypher
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "@graph Live — Mutations" begin
+@testset "@cypher Live — Mutations" begin
 
     @testset "Property update (auto-SET)" begin
         name = "Alice"
         new_age = 31
         new_email = "alice@updated.com"
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person
             where(p.name == $name)
             p.age = $new_age
@@ -380,7 +379,7 @@ end
 
     @testset "MERGE with on_create / on_match" begin
         # First time: creates a new node
-        result1 = @graph conn begin
+        result1 = @cypher conn begin
             merge(p::Person)
             on_create(p.name="MergePerson", p.age=50)
             on_match(p.active=true)
@@ -389,7 +388,7 @@ end
         @test length(result1) >= 1
 
         # Second time: matches and updates
-        result2 = @graph conn begin
+        result2 = @cypher conn begin
             merge(p::Person)
             on_create(p.name="MergePerson2", p.age=60)
             on_match(p.active=true)
@@ -399,7 +398,7 @@ end
     end
 
     @testset "OPTIONAL MATCH" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person
             optional(p >> r::WORKS_AT >> c::Company)
             ret(p.name => :person, c.name => :company)
@@ -415,7 +414,7 @@ end
 
     @testset "WITH clause (aggregation)" begin
         min_degree = 1
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person >> r::KNOWS >> q::Person
             with(p, count(r) => :degree)
             where(degree >= $min_degree)
@@ -428,7 +427,7 @@ end
 
     @testset "DETACH DELETE" begin
         # Create a temp node to delete
-        @graph conn begin
+        @cypher conn begin
             create(temp::Person)
             temp.name = "ToDelete"
             temp.age = 0
@@ -439,7 +438,7 @@ end
         @test check_before[1].c == 1
 
         name = "ToDelete"
-        @graph conn begin
+        @cypher conn begin
             p::Person
             where(p.name == $name)
             detach_delete(p)
@@ -451,7 +450,7 @@ end
 
     @testset "UNWIND" begin
         items = ["NewPerson1", "NewPerson2", "NewPerson3"]
-        result = @graph conn begin
+        result = @cypher conn begin
             unwind($items => :item)
             create(n::Person)
             n.name = item
@@ -462,7 +461,7 @@ end
     end
 
     @testset "Explicit multi-pattern match" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             match(p::Person, c::Company)
             where(p.name == "Alice", c.name == "Acme Corp")
             ret(p.name => :person, c.name => :company)
@@ -477,10 +476,10 @@ end
 # PART 6 — Auto access_mode Inference (live verification)
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "@graph Live — Auto access_mode" begin
+@testset "@cypher Live — Auto access_mode" begin
 
     @testset "Read query succeeds (auto :read)" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person
             where(p.name == "Alice")
             ret(p.name)
@@ -491,7 +490,7 @@ end
     @testset "Write query succeeds (auto :write)" begin
         name = "AccessModeTest"
         age = 99
-        result = @graph conn begin
+        result = @cypher conn begin
             create(p::Person)
             p.name = $name
             p.age = $age
@@ -501,7 +500,7 @@ end
         @test result[1].p["name"] == "AccessModeTest"
 
         # Cleanup
-        @graph conn begin
+        @cypher conn begin
             p::Person
             where(p.name == "AccessModeTest")
             detach_delete(p)
@@ -509,12 +508,12 @@ end
     end
 
     @testset "Comprehension auto :read" begin
-        result = @graph conn [p.name for p in Person if p.age > 20]
+        result = @cypher conn [p.name for p in Person if p.age > 20]
         @test length(result) >= 1
     end
 
     @testset "Explicit access_mode override" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person
             ret(p.name)
         end access_mode = :read
@@ -526,11 +525,11 @@ end
 # PART 7 — Complex Query Patterns
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "@graph Live — Complex Patterns" begin
+@testset "@cypher Live — Complex Patterns" begin
 
     @testset "3-hop path" begin
         # Alice->Bob->Carol->Dave
-        result = @graph conn begin
+        result = @cypher conn begin
             a::Person >> r1::KNOWS >> b::Person >> r2::KNOWS >> c::Person >> r3::KNOWS >> d::Person
             where(a.name == "Alice")
             ret(a.name => :start, d.name => :end_node)
@@ -542,7 +541,7 @@ end
     end
 
     @testset "Mixed chain + optional" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person >> r::KNOWS >> friend::Person
             optional(friend >> w::WORKS_AT >> c::Company)
             where(p.name == "Alice")
@@ -553,7 +552,7 @@ end
     end
 
     @testset "Aggregation pipeline with WITH" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person >> r::KNOWS >> q::Person
             with(p.name => :person, count(q) => :friend_count)
             where(friend_count >= 2)
@@ -568,7 +567,7 @@ end
     end
 
     @testset "Include counters pass-through" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person
             where(p.name == "Alice")
             ret(p)
@@ -577,7 +576,7 @@ end
     end
 
     @testset "Bookmarks from query result" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person
             ret(p.name)
             take(1)
@@ -587,15 +586,15 @@ end
 end
 
 # ════════════════════════════════════════════════════════════════════════════
-# PART 8 — @graph Inside Transactions
+# PART 8 — @cypher Inside Transactions
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "@graph Live — Transactions" begin
+@testset "@cypher Live — Transactions" begin
 
-    @testset "@graph query inside explicit transaction" begin
+    @testset "@cypher query inside explicit transaction" begin
         tx = begin_transaction(conn)
 
-        # Use raw cypher inside tx (since @graph compiles to query())
+        # Use raw cypher inside tx (since @cypher compiles to query())
         result = query(tx, "MATCH (p:Person) WHERE p.name = 'Alice' RETURN p.name AS name")
         @test length(result) >= 1
         @test result[1].name == "Alice"
@@ -623,10 +622,10 @@ end
 # PART 9 — Edge Cases and Error Handling
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "@graph Live — Edge Cases" begin
+@testset "@cypher Live — Edge Cases" begin
 
     @testset "Empty result set" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person
             where(p.name == "NonexistentPerson12345")
             ret(p)
@@ -640,7 +639,7 @@ end
         n2 = "Bob"
         min_age = 20
         max_age = 50
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person >> r::KNOWS >> q::Person
             where(p.name == $n1, q.age > $min_age, q.age < $max_age)
             ret(q.name => :friend, q.age => :age)
@@ -650,7 +649,7 @@ end
 
     @testset "String values with special characters" begin
         special_name = "O'Reilly & Co."
-        @graph conn begin
+        @cypher conn begin
             create(c::Company)
             c.name = $special_name
             c.founded = 2000
@@ -664,14 +663,14 @@ end
     end
 
     @testset "Numeric edge values" begin
-        @graph conn begin
+        @cypher conn begin
             create(p::Person)
             p.name = "NumericTest"
             p.age = 0
             ret(p)
         end
 
-        result = @graph conn begin
+        result = @cypher conn begin
             p::Person
             where(p.name == "NumericTest")
             ret(p.age => :age)
@@ -684,7 +683,7 @@ end
 # PART 10 — Graph Integrity Verification
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "@graph Live — Integrity Checks" begin
+@testset "@cypher Live — Integrity Checks" begin
     counts = graph_counts(conn)
 
     @test counts.nodes >= 10
@@ -697,7 +696,7 @@ end
     query(conn, "MATCH (p:Person) WHERE p.name STARTS WITH 'NewPerson' DETACH DELETE p")
 
     println("\n" * "="^72)
-    println("  @graph DSL Live Integration Tests — COMPLETE")
+    println("  @cypher DSL Live Integration Tests — COMPLETE")
     println("  Nodes: ", counts.nodes)
     println("  Relationships: ", counts.relationships)
     println("="^72 * "\n")

@@ -1,10 +1,10 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# Biomedical Knowledge Graph — @graph DSL Integration Test
+# Biomedical Knowledge Graph — @cypher DSL Integration Test
 #
-# Mirrors the biomedical_graph_test.jl but uses the @graph macro exclusively.
-# Validates that the @graph DSL can express the full complexity of a realistic
+# Uses the unified @cypher macro exclusively.
+# Validates that the @cypher DSL can express the full complexity of a realistic
 # biomedical knowledge graph: schema declarations, node/relationship creation
-# via @graph create(), rich traversals via >> chains, aggregations, OPTIONAL
+# via @cypher create(), rich traversals via >> chains, aggregations, OPTIONAL
 # MATCH, WITH pipelines, UNWIND batch operations, and string functions.
 #
 # The graph is purged at the start of each run, but NOT at the end.
@@ -190,16 +190,16 @@ end
 end
 
 # ════════════════════════════════════════════════════════════════════════════
-# PART 2 — Node Creation via @graph create()
+# PART 2 — Node Creation via @cypher create()
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "Biomedical @graph — Node Creation" begin
+@testset "Biomedical @cypher — Node Creation" begin
 
-    # ── Helper: create a node via @graph and extract it ──────────────────
+    # ── Helper: create a node via @cypher and extract it ──────────────────
 
     # --- Diseases ---
     global breast_cancer = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Disease)
             d.name = "Breast Cancer"
             d.icd10_code = "C50"
@@ -210,7 +210,7 @@ end
         r[1].d
     end
     global lung_cancer = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Disease)
             d.name = "Non-Small Cell Lung Cancer"
             d.icd10_code = "C34.9"
@@ -221,7 +221,7 @@ end
         r[1].d
     end
     global type2_diabetes = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Disease)
             d.name = "Type 2 Diabetes Mellitus"
             d.icd10_code = "E11"
@@ -232,7 +232,7 @@ end
         r[1].d
     end
     global hypertension = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Disease)
             d.name = "Essential Hypertension"
             d.icd10_code = "I10"
@@ -243,7 +243,7 @@ end
         r[1].d
     end
     global alzheimers = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Disease)
             d.name = "Alzheimer Disease"
             d.icd10_code = "G30"
@@ -259,7 +259,7 @@ end
 
     # --- Genes ---
     global brca1 = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(g::Gene)
             g.symbol = "BRCA1"
             g.full_name = "BRCA1 DNA Repair Associated"
@@ -270,7 +270,7 @@ end
         r[1].g
     end
     global tp53 = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(g::Gene)
             g.symbol = "TP53"
             g.full_name = "Tumor Protein P53"
@@ -281,7 +281,7 @@ end
         r[1].g
     end
     global egfr = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(g::Gene)
             g.symbol = "EGFR"
             g.full_name = "Epidermal Growth Factor Receptor"
@@ -292,7 +292,7 @@ end
         r[1].g
     end
     global her2 = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(g::Gene)
             g.symbol = "ERBB2"
             g.full_name = "Erb-B2 Receptor Tyrosine Kinase 2"
@@ -303,7 +303,7 @@ end
         r[1].g
     end
     global apoe = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(g::Gene)
             g.symbol = "APOE"
             g.full_name = "Apolipoprotein E"
@@ -314,7 +314,7 @@ end
         r[1].g
     end
     global kras = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(g::Gene)
             g.symbol = "KRAS"
             g.full_name = "KRAS Proto-Oncogene"
@@ -325,7 +325,7 @@ end
         r[1].g
     end
     global alk_gene = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(g::Gene)
             g.symbol = "ALK"
             g.full_name = "ALK Receptor Tyrosine Kinase"
@@ -336,7 +336,7 @@ end
         r[1].g
     end
     global pik3ca = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(g::Gene)
             g.symbol = "PIK3CA"
             g.full_name = "Phosphatidylinositol-4,5-Bisphosphate 3-Kinase Catalytic Subunit Alpha"
@@ -347,7 +347,7 @@ end
         r[1].g
     end
     global ins_gene = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(g::Gene)
             g.symbol = "INS"
             g.full_name = "Insulin"
@@ -358,7 +358,7 @@ end
         r[1].g
     end
     global ace_gene = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(g::Gene)
             g.symbol = "ACE"
             g.full_name = "Angiotensin I Converting Enzyme"
@@ -373,7 +373,7 @@ end
 
     # --- Proteins ---
     global brca1_protein = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(p::Protein)
             p.uniprot_id = "P38398"
             p.name = "Breast cancer type 1 susceptibility protein"
@@ -384,7 +384,7 @@ end
         r[1].p
     end
     global p53_protein = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(p::Protein)
             p.uniprot_id = "P04637"
             p.name = "Cellular tumor antigen p53"
@@ -395,7 +395,7 @@ end
         r[1].p
     end
     global egfr_protein = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(p::Protein)
             p.uniprot_id = "P00533"
             p.name = "Epidermal growth factor receptor"
@@ -406,7 +406,7 @@ end
         r[1].p
     end
     global her2_protein = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(p::Protein)
             p.uniprot_id = "P04626"
             p.name = "Receptor tyrosine-protein kinase erbB-2"
@@ -417,7 +417,7 @@ end
         r[1].p
     end
     global alk_protein = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(p::Protein)
             p.uniprot_id = "Q9UM73"
             p.name = "ALK tyrosine kinase receptor"
@@ -428,7 +428,7 @@ end
         r[1].p
     end
     global insulin_protein = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(p::Protein)
             p.uniprot_id = "P01308"
             p.name = "Insulin"
@@ -439,7 +439,7 @@ end
         r[1].p
     end
     global ace_protein = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(p::Protein)
             p.uniprot_id = "P12821"
             p.name = "Angiotensin-converting enzyme"
@@ -454,7 +454,7 @@ end
 
     # --- Drugs ---
     global trastuzumab = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Drug)
             d.name = "Trastuzumab"
             d.trade_name = "Herceptin"
@@ -465,7 +465,7 @@ end
         r[1].d
     end
     global erlotinib = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Drug)
             d.name = "Erlotinib"
             d.trade_name = "Tarceva"
@@ -476,7 +476,7 @@ end
         r[1].d
     end
     global olaparib = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Drug)
             d.name = "Olaparib"
             d.trade_name = "Lynparza"
@@ -487,7 +487,7 @@ end
         r[1].d
     end
     global crizotinib = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Drug)
             d.name = "Crizotinib"
             d.trade_name = "Xalkori"
@@ -498,7 +498,7 @@ end
         r[1].d
     end
     global pembrolizumab = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Drug)
             d.name = "Pembrolizumab"
             d.trade_name = "Keytruda"
@@ -509,7 +509,7 @@ end
         r[1].d
     end
     global metformin = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Drug)
             d.name = "Metformin"
             d.trade_name = "Glucophage"
@@ -520,7 +520,7 @@ end
         r[1].d
     end
     global lisinopril = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Drug)
             d.name = "Lisinopril"
             d.trade_name = "Prinivil"
@@ -531,7 +531,7 @@ end
         r[1].d
     end
     global donepezil = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Drug)
             d.name = "Donepezil"
             d.trade_name = "Aricept"
@@ -542,7 +542,7 @@ end
         r[1].d
     end
     global tamoxifen = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(d::Drug)
             d.name = "Tamoxifen"
             d.trade_name = "Nolvadex"
@@ -557,7 +557,7 @@ end
 
     # --- Pathways ---
     global pi3k_pathway = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pw::Pathway)
             pw.name = "PI3K-Akt Signaling Pathway"
             pw.kegg_id = "hsa04151"
@@ -567,7 +567,7 @@ end
         r[1].pw
     end
     global mapk_pathway = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pw::Pathway)
             pw.name = "MAPK Signaling Pathway"
             pw.kegg_id = "hsa04010"
@@ -577,7 +577,7 @@ end
         r[1].pw
     end
     global p53_pathway = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pw::Pathway)
             pw.name = "p53 Signaling Pathway"
             pw.kegg_id = "hsa04115"
@@ -587,7 +587,7 @@ end
         r[1].pw
     end
     global insulin_pathway = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pw::Pathway)
             pw.name = "Insulin Signaling Pathway"
             pw.kegg_id = "hsa04910"
@@ -597,7 +597,7 @@ end
         r[1].pw
     end
     global raas_pathway = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pw::Pathway)
             pw.name = "Renin-Angiotensin-Aldosterone System"
             pw.kegg_id = "hsa04614"
@@ -611,7 +611,7 @@ end
 
     # --- Symptoms ---
     global fatigue = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(s::Symptom)
             s.name = "Fatigue"
             s.severity_scale = "mild/moderate/severe"
@@ -621,7 +621,7 @@ end
         r[1].s
     end
     global dyspnea = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(s::Symptom)
             s.name = "Dyspnea"
             s.severity_scale = "mMRC 0-4"
@@ -631,7 +631,7 @@ end
         r[1].s
     end
     global chest_pain = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(s::Symptom)
             s.name = "Chest Pain"
             s.severity_scale = "NRS 0-10"
@@ -641,7 +641,7 @@ end
         r[1].s
     end
     global memory_loss = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(s::Symptom)
             s.name = "Memory Loss"
             s.severity_scale = "MMSE 0-30"
@@ -651,7 +651,7 @@ end
         r[1].s
     end
     global polyuria = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(s::Symptom)
             s.name = "Polyuria"
             s.severity_scale = "mild/moderate/severe"
@@ -661,7 +661,7 @@ end
         r[1].s
     end
     global lump = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(s::Symptom)
             s.name = "Breast Lump"
             s.severity_scale = "BIRADS 1-6"
@@ -671,7 +671,7 @@ end
         r[1].s
     end
     global headache = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(s::Symptom)
             s.name = "Headache"
             s.severity_scale = "NRS 0-10"
@@ -681,7 +681,7 @@ end
         r[1].s
     end
     global cough = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(s::Symptom)
             s.name = "Chronic Cough"
             s.severity_scale = "LCQ 3-21"
@@ -695,7 +695,7 @@ end
 
     # --- Biomarkers ---
     global ca125 = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(bm::Biomarker)
             bm.name = "CA-125"
             bm.biomarker_type = "Serum protein"
@@ -705,7 +705,7 @@ end
         r[1].bm
     end
     global her2_marker = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(bm::Biomarker)
             bm.name = "HER2 IHC"
             bm.biomarker_type = "Immunohistochemistry"
@@ -715,7 +715,7 @@ end
         r[1].bm
     end
     global hba1c = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(bm::Biomarker)
             bm.name = "HbA1c"
             bm.biomarker_type = "Glycated hemoglobin"
@@ -725,7 +725,7 @@ end
         r[1].bm
     end
     global egfr_mutation = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(bm::Biomarker)
             bm.name = "EGFR Mutation Status"
             bm.biomarker_type = "Genetic"
@@ -735,7 +735,7 @@ end
         r[1].bm
     end
     global pdl1 = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(bm::Biomarker)
             bm.name = "PD-L1 TPS"
             bm.biomarker_type = "Immunohistochemistry"
@@ -745,7 +745,7 @@ end
         r[1].bm
     end
     global bp_systolic = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(bm::Biomarker)
             bm.name = "Systolic Blood Pressure"
             bm.biomarker_type = "Vital sign"
@@ -755,7 +755,7 @@ end
         r[1].bm
     end
     global apoe_genotype = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(bm::Biomarker)
             bm.name = "APOE Genotype"
             bm.biomarker_type = "Genetic"
@@ -765,7 +765,7 @@ end
         r[1].bm
     end
     global brca_status = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(bm::Biomarker)
             bm.name = "BRCA1/2 Mutation Status"
             bm.biomarker_type = "Genetic"
@@ -779,7 +779,7 @@ end
 
     # --- Hospitals ---
     global mgh = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(h::Hospital)
             h.name = "Massachusetts General Hospital"
             h.city = "Boston"
@@ -790,7 +790,7 @@ end
         r[1].h
     end
     global mayo = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(h::Hospital)
             h.name = "Mayo Clinic"
             h.city = "Rochester"
@@ -801,7 +801,7 @@ end
         r[1].h
     end
     global charite = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(h::Hospital)
             h.name = "Charite - Universitaetsmedizin Berlin"
             h.city = "Berlin"
@@ -816,7 +816,7 @@ end
 
     # --- Physicians ---
     global dr_chen = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(ph::Physician)
             ph.name = "Dr. Lisa Chen"
             ph.specialty = "Medical Oncology"
@@ -826,7 +826,7 @@ end
         r[1].ph
     end
     global dr_mueller = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(ph::Physician)
             ph.name = "Dr. Hans Mueller"
             ph.specialty = "Pulmonology"
@@ -836,7 +836,7 @@ end
         r[1].ph
     end
     global dr_patel = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(ph::Physician)
             ph.name = "Dr. Priya Patel"
             ph.specialty = "Endocrinology"
@@ -846,7 +846,7 @@ end
         r[1].ph
     end
     global dr_johnson = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(ph::Physician)
             ph.name = "Dr. Robert Johnson"
             ph.specialty = "Cardiology"
@@ -856,7 +856,7 @@ end
         r[1].ph
     end
     global dr_nakamura = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(ph::Physician)
             ph.name = "Dr. Yuki Nakamura"
             ph.specialty = "Neurology"
@@ -870,7 +870,7 @@ end
 
     # --- Clinical Trials ---
     global trial_keynote = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(ct::ClinicalTrial)
             ct.trial_id = "NCT02478826"
             ct.title = "KEYNOTE-189: Pembrolizumab + Chemo in NSCLC"
@@ -883,7 +883,7 @@ end
         r[1].ct
     end
     global trial_olympiad = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(ct::ClinicalTrial)
             ct.trial_id = "NCT02000622"
             ct.title = "OlympiAD: Olaparib in HER2-negative Breast Cancer"
@@ -896,7 +896,7 @@ end
         r[1].ct
     end
     global trial_profile = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(ct::ClinicalTrial)
             ct.trial_id = "NCT01433913"
             ct.title = "PROFILE 1014: Crizotinib vs Chemo in ALK+ NSCLC"
@@ -909,7 +909,7 @@ end
         r[1].ct
     end
     global trial_cleopatra = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(ct::ClinicalTrial)
             ct.trial_id = "NCT00567190"
             ct.title = "CLEOPATRA: Pertuzumab + Trastuzumab in HER2+ Breast Cancer"
@@ -926,7 +926,7 @@ end
 
     # --- Patients ---
     global patient_a = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pt::Patient)
             pt.patient_id = "PT-2024-001"
             pt.age = 58
@@ -937,7 +937,7 @@ end
         r[1].pt
     end
     global patient_b = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pt::Patient)
             pt.patient_id = "PT-2024-002"
             pt.age = 67
@@ -948,7 +948,7 @@ end
         r[1].pt
     end
     global patient_c = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pt::Patient)
             pt.patient_id = "PT-2024-003"
             pt.age = 45
@@ -959,7 +959,7 @@ end
         r[1].pt
     end
     global patient_d = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pt::Patient)
             pt.patient_id = "PT-2024-004"
             pt.age = 72
@@ -970,7 +970,7 @@ end
         r[1].pt
     end
     global patient_e = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pt::Patient)
             pt.patient_id = "PT-2024-005"
             pt.age = 51
@@ -981,7 +981,7 @@ end
         r[1].pt
     end
     global patient_f = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pt::Patient)
             pt.patient_id = "PT-2024-006"
             pt.age = 63
@@ -996,7 +996,7 @@ end
 
     # --- Publications ---
     global pub_keynote = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pub::Publication)
             pub.doi = "10.1056/NEJMoa1810865"
             pub.title = "Pembrolizumab plus Chemotherapy for NSCLC"
@@ -1007,7 +1007,7 @@ end
         r[1].pub
     end
     global pub_olaparib = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pub::Publication)
             pub.doi = "10.1056/NEJMoa1706450"
             pub.title = "Olaparib for HER2-Negative Metastatic Breast Cancer"
@@ -1018,7 +1018,7 @@ end
         r[1].pub
     end
     global pub_brca_structure = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pub::Publication)
             pub.doi = "10.1038/nature11143"
             pub.title = "BRCA1 RING structure and ubiquitin-ligase activity"
@@ -1029,7 +1029,7 @@ end
         r[1].pub
     end
     global pub_alzheimers_apoe = let
-        r = @graph conn begin
+        r = @cypher conn begin
             create(pub::Publication)
             pub.doi = "10.1016/S1474-4422(19)30373-3"
             pub.title = "APOE e4 and Alzheimer Disease Risk"
@@ -1044,17 +1044,17 @@ end
 end
 
 # ════════════════════════════════════════════════════════════════════════════
-# PART 3 — Relationship Creation via @graph
+# PART 3 — Relationship Creation via @cypher
 #
 # Uses match() + where() + create() pattern with arrow syntax,
-# since @graph doesn't have @relate. Nodes are matched by unique
+# since @cypher doesn't have @relate. Nodes are matched by unique
 # properties, then connected with relationship patterns.
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "Biomedical @graph — Relationships" begin
+@testset "Biomedical @cypher — Relationships" begin
 
     # ── Gene → Disease associations ──────────────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, d::Disease)
         where(g.symbol == "BRCA1", d.name == "Breast Cancer")
         create((g) - [r::ASSOCIATED_WITH] -> (d))
@@ -1063,7 +1063,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, d::Disease)
         where(g.symbol == "TP53", d.name == "Breast Cancer")
         create((g) - [r::ASSOCIATED_WITH] -> (d))
@@ -1072,7 +1072,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, d::Disease)
         where(g.symbol == "TP53", d.name == "Non-Small Cell Lung Cancer")
         create((g) - [r::ASSOCIATED_WITH] -> (d))
@@ -1081,7 +1081,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, d::Disease)
         where(g.symbol == "EGFR", d.name == "Non-Small Cell Lung Cancer")
         create((g) - [r::ASSOCIATED_WITH] -> (d))
@@ -1090,7 +1090,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, d::Disease)
         where(g.symbol == "ERBB2", d.name == "Breast Cancer")
         create((g) - [r::ASSOCIATED_WITH] -> (d))
@@ -1099,7 +1099,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, d::Disease)
         where(g.symbol == "KRAS", d.name == "Non-Small Cell Lung Cancer")
         create((g) - [r::ASSOCIATED_WITH] -> (d))
@@ -1108,7 +1108,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, d::Disease)
         where(g.symbol == "ALK", d.name == "Non-Small Cell Lung Cancer")
         create((g) - [r::ASSOCIATED_WITH] -> (d))
@@ -1117,7 +1117,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, d::Disease)
         where(g.symbol == "PIK3CA", d.name == "Breast Cancer")
         create((g) - [r::ASSOCIATED_WITH] -> (d))
@@ -1126,7 +1126,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, d::Disease)
         where(g.symbol == "APOE", d.name == "Alzheimer Disease")
         create((g) - [r::ASSOCIATED_WITH] -> (d))
@@ -1135,7 +1135,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, d::Disease)
         where(g.symbol == "INS", d.name == "Type 2 Diabetes Mellitus")
         create((g) - [r::ASSOCIATED_WITH] -> (d))
@@ -1144,7 +1144,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, d::Disease)
         where(g.symbol == "ACE", d.name == "Essential Hypertension")
         create((g) - [r::ASSOCIATED_WITH] -> (d))
@@ -1154,7 +1154,7 @@ end
     end
 
     # ── Gene → Protein (ENCODES) ────────────────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "BRCA1", p.uniprot_id == "P38398")
         create((g) - [r::ENCODES] -> (p))
@@ -1162,7 +1162,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "TP53", p.uniprot_id == "P04637")
         create((g) - [r::ENCODES] -> (p))
@@ -1170,7 +1170,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "EGFR", p.uniprot_id == "P00533")
         create((g) - [r::ENCODES] -> (p))
@@ -1178,7 +1178,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "ERBB2", p.uniprot_id == "P04626")
         create((g) - [r::ENCODES] -> (p))
@@ -1186,7 +1186,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "ALK", p.uniprot_id == "Q9UM73")
         create((g) - [r::ENCODES] -> (p))
@@ -1194,7 +1194,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "INS", p.uniprot_id == "P01308")
         create((g) - [r::ENCODES] -> (p))
@@ -1202,7 +1202,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "ACE", p.uniprot_id == "P12821")
         create((g) - [r::ENCODES] -> (p))
@@ -1211,7 +1211,7 @@ end
     end
 
     # ── Drug → Protein (TARGETS) ────────────────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, p::Protein)
         where(drug.name == "Trastuzumab", p.uniprot_id == "P04626")
         create((drug) - [r::TARGETS] -> (p))
@@ -1220,7 +1220,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, p::Protein)
         where(drug.name == "Erlotinib", p.uniprot_id == "P00533")
         create((drug) - [r::TARGETS] -> (p))
@@ -1229,7 +1229,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, p::Protein)
         where(drug.name == "Crizotinib", p.uniprot_id == "Q9UM73")
         create((drug) - [r::TARGETS] -> (p))
@@ -1238,7 +1238,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, p::Protein)
         where(drug.name == "Lisinopril", p.uniprot_id == "P12821")
         create((drug) - [r::TARGETS] -> (p))
@@ -1248,7 +1248,7 @@ end
     end
 
     # ── Drug → Protein (INHIBITS) ───────────────────────────────────────
-    result_inhibit = @graph conn begin
+    result_inhibit = @cypher conn begin
         match(drug::Drug, p::Protein)
         where(drug.name == "Olaparib", p.uniprot_id == "P38398")
         create((drug) - [r::INHIBITS] -> (p))
@@ -1257,7 +1257,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, p::Protein)
         where(drug.name == "Erlotinib", p.uniprot_id == "P00533")
         create((drug) - [r::INHIBITS] -> (p))
@@ -1266,7 +1266,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, p::Protein)
         where(drug.name == "Crizotinib", p.uniprot_id == "Q9UM73")
         create((drug) - [r::INHIBITS] -> (p))
@@ -1278,7 +1278,7 @@ end
     @test result_inhibit[1].r isa Relationship
 
     # ── Drug → Disease (TREATS) ─────────────────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, d::Disease)
         where(drug.name == "Trastuzumab", d.name == "Breast Cancer")
         create((drug) - [r::TREATS] -> (d))
@@ -1287,7 +1287,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, d::Disease)
         where(drug.name == "Olaparib", d.name == "Breast Cancer")
         create((drug) - [r::TREATS] -> (d))
@@ -1296,7 +1296,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, d::Disease)
         where(drug.name == "Tamoxifen", d.name == "Breast Cancer")
         create((drug) - [r::TREATS] -> (d))
@@ -1305,7 +1305,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, d::Disease)
         where(drug.name == "Erlotinib", d.name == "Non-Small Cell Lung Cancer")
         create((drug) - [r::TREATS] -> (d))
@@ -1314,7 +1314,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, d::Disease)
         where(drug.name == "Crizotinib", d.name == "Non-Small Cell Lung Cancer")
         create((drug) - [r::TREATS] -> (d))
@@ -1323,7 +1323,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, d::Disease)
         where(drug.name == "Pembrolizumab", d.name == "Non-Small Cell Lung Cancer")
         create((drug) - [r::TREATS] -> (d))
@@ -1332,7 +1332,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, d::Disease)
         where(drug.name == "Metformin", d.name == "Type 2 Diabetes Mellitus")
         create((drug) - [r::TREATS] -> (d))
@@ -1341,7 +1341,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, d::Disease)
         where(drug.name == "Lisinopril", d.name == "Essential Hypertension")
         create((drug) - [r::TREATS] -> (d))
@@ -1350,7 +1350,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, d::Disease)
         where(drug.name == "Donepezil", d.name == "Alzheimer Disease")
         create((drug) - [r::TREATS] -> (d))
@@ -1360,7 +1360,7 @@ end
     end
 
     # ── Drug side effects ────────────────────────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, s::Symptom)
         where(drug.name == "Trastuzumab", s.name == "Fatigue")
         create((drug) - [r::HAS_SIDE_EFFECT] -> (s))
@@ -1369,7 +1369,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, s::Symptom)
         where(drug.name == "Trastuzumab", s.name == "Dyspnea")
         create((drug) - [r::HAS_SIDE_EFFECT] -> (s))
@@ -1378,7 +1378,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, s::Symptom)
         where(drug.name == "Erlotinib", s.name == "Fatigue")
         create((drug) - [r::HAS_SIDE_EFFECT] -> (s))
@@ -1387,7 +1387,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, s::Symptom)
         where(drug.name == "Olaparib", s.name == "Fatigue")
         create((drug) - [r::HAS_SIDE_EFFECT] -> (s))
@@ -1396,7 +1396,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, s::Symptom)
         where(drug.name == "Olaparib", s.name == "Headache")
         create((drug) - [r::HAS_SIDE_EFFECT] -> (s))
@@ -1405,7 +1405,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, s::Symptom)
         where(drug.name == "Pembrolizumab", s.name == "Fatigue")
         create((drug) - [r::HAS_SIDE_EFFECT] -> (s))
@@ -1414,7 +1414,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, s::Symptom)
         where(drug.name == "Metformin", s.name == "Headache")
         create((drug) - [r::HAS_SIDE_EFFECT] -> (s))
@@ -1424,7 +1424,7 @@ end
     end
 
     # ── Protein → Pathway (PARTICIPATES_IN) ─────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(p::Protein, pw::Pathway)
         where(p.uniprot_id == "P00533", pw.kegg_id == "hsa04151")
         create((p) - [r::PARTICIPATES_IN] -> (pw))
@@ -1432,7 +1432,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(p::Protein, pw::Pathway)
         where(p.uniprot_id == "P00533", pw.kegg_id == "hsa04010")
         create((p) - [r::PARTICIPATES_IN] -> (pw))
@@ -1440,7 +1440,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(p::Protein, pw::Pathway)
         where(p.uniprot_id == "P04626", pw.kegg_id == "hsa04151")
         create((p) - [r::PARTICIPATES_IN] -> (pw))
@@ -1448,7 +1448,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(p::Protein, pw::Pathway)
         where(p.uniprot_id == "P04626", pw.kegg_id == "hsa04010")
         create((p) - [r::PARTICIPATES_IN] -> (pw))
@@ -1456,7 +1456,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(p::Protein, pw::Pathway)
         where(p.uniprot_id == "P04637", pw.kegg_id == "hsa04115")
         create((p) - [r::PARTICIPATES_IN] -> (pw))
@@ -1464,7 +1464,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(p::Protein, pw::Pathway)
         where(p.uniprot_id == "P38398", pw.kegg_id == "hsa04115")
         create((p) - [r::PARTICIPATES_IN] -> (pw))
@@ -1472,7 +1472,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(p::Protein, pw::Pathway)
         where(p.uniprot_id == "P01308", pw.kegg_id == "hsa04910")
         create((p) - [r::PARTICIPATES_IN] -> (pw))
@@ -1480,7 +1480,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(p::Protein, pw::Pathway)
         where(p.uniprot_id == "P12821", pw.kegg_id == "hsa04614")
         create((p) - [r::PARTICIPATES_IN] -> (pw))
@@ -1489,7 +1489,7 @@ end
     end
 
     # ── Gene → Protein (EXPRESSES) ──────────────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "BRCA1", p.uniprot_id == "P38398")
         create((g) - [r::EXPRESSES] -> (p))
@@ -1498,7 +1498,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "BRCA1", p.uniprot_id == "P38398")
         create((g) - [r::EXPRESSES] -> (p))
@@ -1507,7 +1507,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "EGFR", p.uniprot_id == "P00533")
         create((g) - [r::EXPRESSES] -> (p))
@@ -1516,7 +1516,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "ERBB2", p.uniprot_id == "P04626")
         create((g) - [r::EXPRESSES] -> (p))
@@ -1525,7 +1525,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "APOE", p.uniprot_id == "P12821")
         create((g) - [r::EXPRESSES] -> (p))
@@ -1534,7 +1534,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(g::Gene, p::Protein)
         where(g.symbol == "INS", p.uniprot_id == "P01308")
         create((g) - [r::EXPRESSES] -> (p))
@@ -1544,7 +1544,7 @@ end
     end
 
     # ── Disease → Symptom (PRESENTS_WITH) ───────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(d::Disease, s::Symptom)
         where(d.name == "Breast Cancer", s.name == "Breast Lump")
         create((d) - [r::PRESENTS_WITH] -> (s))
@@ -1553,7 +1553,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(d::Disease, s::Symptom)
         where(d.name == "Breast Cancer", s.name == "Fatigue")
         create((d) - [r::PRESENTS_WITH] -> (s))
@@ -1562,7 +1562,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(d::Disease, s::Symptom)
         where(d.name == "Non-Small Cell Lung Cancer", s.name == "Chronic Cough")
         create((d) - [r::PRESENTS_WITH] -> (s))
@@ -1571,7 +1571,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(d::Disease, s::Symptom)
         where(d.name == "Non-Small Cell Lung Cancer", s.name == "Dyspnea")
         create((d) - [r::PRESENTS_WITH] -> (s))
@@ -1580,7 +1580,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(d::Disease, s::Symptom)
         where(d.name == "Non-Small Cell Lung Cancer", s.name == "Chest Pain")
         create((d) - [r::PRESENTS_WITH] -> (s))
@@ -1589,7 +1589,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(d::Disease, s::Symptom)
         where(d.name == "Type 2 Diabetes Mellitus", s.name == "Polyuria")
         create((d) - [r::PRESENTS_WITH] -> (s))
@@ -1598,7 +1598,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(d::Disease, s::Symptom)
         where(d.name == "Type 2 Diabetes Mellitus", s.name == "Fatigue")
         create((d) - [r::PRESENTS_WITH] -> (s))
@@ -1607,7 +1607,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(d::Disease, s::Symptom)
         where(d.name == "Essential Hypertension", s.name == "Headache")
         create((d) - [r::PRESENTS_WITH] -> (s))
@@ -1616,7 +1616,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(d::Disease, s::Symptom)
         where(d.name == "Essential Hypertension", s.name == "Chest Pain")
         create((d) - [r::PRESENTS_WITH] -> (s))
@@ -1625,7 +1625,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(d::Disease, s::Symptom)
         where(d.name == "Alzheimer Disease", s.name == "Memory Loss")
         create((d) - [r::PRESENTS_WITH] -> (s))
@@ -1634,7 +1634,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(d::Disease, s::Symptom)
         where(d.name == "Alzheimer Disease", s.name == "Fatigue")
         create((d) - [r::PRESENTS_WITH] -> (s))
@@ -1644,7 +1644,7 @@ end
     end
 
     # ── Biomarker → Disease (INDICATES) ─────────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(bm::Biomarker, d::Disease)
         where(bm.name == "HER2 IHC", d.name == "Breast Cancer")
         create((bm) - [r::INDICATES] -> (d))
@@ -1653,7 +1653,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(bm::Biomarker, d::Disease)
         where(bm.name == "BRCA1/2 Mutation Status", d.name == "Breast Cancer")
         create((bm) - [r::INDICATES] -> (d))
@@ -1662,7 +1662,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(bm::Biomarker, d::Disease)
         where(bm.name == "EGFR Mutation Status", d.name == "Non-Small Cell Lung Cancer")
         create((bm) - [r::INDICATES] -> (d))
@@ -1671,7 +1671,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(bm::Biomarker, d::Disease)
         where(bm.name == "PD-L1 TPS", d.name == "Non-Small Cell Lung Cancer")
         create((bm) - [r::INDICATES] -> (d))
@@ -1680,7 +1680,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(bm::Biomarker, d::Disease)
         where(bm.name == "HbA1c", d.name == "Type 2 Diabetes Mellitus")
         create((bm) - [r::INDICATES] -> (d))
@@ -1689,7 +1689,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(bm::Biomarker, d::Disease)
         where(bm.name == "Systolic Blood Pressure", d.name == "Essential Hypertension")
         create((bm) - [r::INDICATES] -> (d))
@@ -1698,7 +1698,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(bm::Biomarker, d::Disease)
         where(bm.name == "APOE Genotype", d.name == "Alzheimer Disease")
         create((bm) - [r::INDICATES] -> (d))
@@ -1708,7 +1708,7 @@ end
     end
 
     # ── Patient → Disease (DIAGNOSED_WITH) ──────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(pt::Patient, d::Disease)
         where(pt.patient_id == "PT-2024-001", d.name == "Breast Cancer")
         create((pt) - [r::DIAGNOSED_WITH] -> (d))
@@ -1717,7 +1717,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(pt::Patient, d::Disease)
         where(pt.patient_id == "PT-2024-002", d.name == "Non-Small Cell Lung Cancer")
         create((pt) - [r::DIAGNOSED_WITH] -> (d))
@@ -1726,7 +1726,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(pt::Patient, d::Disease)
         where(pt.patient_id == "PT-2024-003", d.name == "Breast Cancer")
         create((pt) - [r::DIAGNOSED_WITH] -> (d))
@@ -1735,7 +1735,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(pt::Patient, d::Disease)
         where(pt.patient_id == "PT-2024-004", d.name == "Type 2 Diabetes Mellitus")
         create((pt) - [r::DIAGNOSED_WITH] -> (d))
@@ -1743,7 +1743,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(pt::Patient, d::Disease)
         where(pt.patient_id == "PT-2024-004", d.name == "Essential Hypertension")
         create((pt) - [r::DIAGNOSED_WITH] -> (d))
@@ -1751,7 +1751,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(pt::Patient, d::Disease)
         where(pt.patient_id == "PT-2024-005", d.name == "Non-Small Cell Lung Cancer")
         create((pt) - [r::DIAGNOSED_WITH] -> (d))
@@ -1760,7 +1760,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(pt::Patient, d::Disease)
         where(pt.patient_id == "PT-2024-006", d.name == "Alzheimer Disease")
         create((pt) - [r::DIAGNOSED_WITH] -> (d))
@@ -1769,7 +1769,7 @@ end
     end
 
     # ── Patient → ClinicalTrial (ENROLLED_IN) ──────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(pt::Patient, ct::ClinicalTrial)
         where(pt.patient_id == "PT-2024-001", ct.trial_id == "NCT02000622")
         create((pt) - [r::ENROLLED_IN] -> (ct))
@@ -1778,7 +1778,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(pt::Patient, ct::ClinicalTrial)
         where(pt.patient_id == "PT-2024-002", ct.trial_id == "NCT02478826")
         create((pt) - [r::ENROLLED_IN] -> (ct))
@@ -1787,7 +1787,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(pt::Patient, ct::ClinicalTrial)
         where(pt.patient_id == "PT-2024-003", ct.trial_id == "NCT00567190")
         create((pt) - [r::ENROLLED_IN] -> (ct))
@@ -1796,7 +1796,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(pt::Patient, ct::ClinicalTrial)
         where(pt.patient_id == "PT-2024-005", ct.trial_id == "NCT02478826")
         create((pt) - [r::ENROLLED_IN] -> (ct))
@@ -1806,7 +1806,7 @@ end
     end
 
     # ── Physician → Hospital (LOCATED_AT) ───────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(ph::Physician, h::Hospital)
         where(ph.license_no == "MA-ONC-4421", h.name == "Massachusetts General Hospital")
         create((ph) - [r::LOCATED_AT] -> (h))
@@ -1814,7 +1814,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(ph::Physician, h::Hospital)
         where(ph.license_no == "MA-CAR-1178", h.name == "Massachusetts General Hospital")
         create((ph) - [r::LOCATED_AT] -> (h))
@@ -1822,7 +1822,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(ph::Physician, h::Hospital)
         where(ph.license_no == "MN-END-2259", h.name == "Mayo Clinic")
         create((ph) - [r::LOCATED_AT] -> (h))
@@ -1830,7 +1830,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(ph::Physician, h::Hospital)
         where(ph.license_no == "MN-NEU-5543", h.name == "Mayo Clinic")
         create((ph) - [r::LOCATED_AT] -> (h))
@@ -1838,7 +1838,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(ph::Physician, h::Hospital)
         where(ph.license_no == "DE-PUL-8837", h.name == "Charite - Universitaetsmedizin Berlin")
         create((ph) - [r::LOCATED_AT] -> (h))
@@ -1847,7 +1847,7 @@ end
     end
 
     # ── Drug → Physician (PRESCRIBED_BY) ────────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, ph::Physician)
         where(drug.name == "Trastuzumab", ph.license_no == "MA-ONC-4421")
         create((drug) - [r::PRESCRIBED_BY] -> (ph))
@@ -1855,7 +1855,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, ph::Physician)
         where(drug.name == "Olaparib", ph.license_no == "MA-ONC-4421")
         create((drug) - [r::PRESCRIBED_BY] -> (ph))
@@ -1863,7 +1863,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, ph::Physician)
         where(drug.name == "Pembrolizumab", ph.license_no == "DE-PUL-8837")
         create((drug) - [r::PRESCRIBED_BY] -> (ph))
@@ -1871,7 +1871,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, ph::Physician)
         where(drug.name == "Metformin", ph.license_no == "MN-END-2259")
         create((drug) - [r::PRESCRIBED_BY] -> (ph))
@@ -1879,7 +1879,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, ph::Physician)
         where(drug.name == "Lisinopril", ph.license_no == "MA-CAR-1178")
         create((drug) - [r::PRESCRIBED_BY] -> (ph))
@@ -1887,7 +1887,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(drug::Drug, ph::Physician)
         where(drug.name == "Donepezil", ph.license_no == "MN-NEU-5543")
         create((drug) - [r::PRESCRIBED_BY] -> (ph))
@@ -1896,7 +1896,7 @@ end
     end
 
     # ── Publication → Disease (PUBLISHED_IN) ────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(pub::Publication, d::Disease)
         where(pub.doi == "10.1056/NEJMoa1810865", d.name == "Non-Small Cell Lung Cancer")
         create((pub) - [r::PUBLISHED_IN] -> (d))
@@ -1904,7 +1904,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(pub::Publication, d::Disease)
         where(pub.doi == "10.1056/NEJMoa1706450", d.name == "Breast Cancer")
         create((pub) - [r::PUBLISHED_IN] -> (d))
@@ -1912,7 +1912,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(pub::Publication, d::Disease)
         where(pub.doi == "10.1038/nature11143", d.name == "Breast Cancer")
         create((pub) - [r::PUBLISHED_IN] -> (d))
@@ -1920,7 +1920,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(pub::Publication, d::Disease)
         where(pub.doi == "10.1016/S1474-4422(19)30373-3", d.name == "Alzheimer Disease")
         create((pub) - [r::PUBLISHED_IN] -> (d))
@@ -1929,7 +1929,7 @@ end
     end
 
     # ── Drug ↔ Drug (INTERACTS_WITH) ────────────────────────────────────
-    @graph conn begin
+    @cypher conn begin
         match(d1::Drug, d2::Drug)
         where(d1.name == "Metformin", d2.name == "Lisinopril")
         create((d1) - [r::INTERACTS_WITH] -> (d2))
@@ -1938,7 +1938,7 @@ end
         ret(r)
     end
 
-    @graph conn begin
+    @cypher conn begin
         match(d1::Drug, d2::Drug)
         where(d1.name == "Tamoxifen", d2.name == "Olaparib")
         create((d1) - [r::INTERACTS_WITH] -> (d2))
@@ -1951,15 +1951,15 @@ end
 end
 
 # ════════════════════════════════════════════════════════════════════════════
-# PART 4 — Complex Queries via @graph (>> chains, where(), ret(), etc.)
+# PART 4 — Complex Queries via @cypher (>> chains, where(), ret(), etc.)
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "Biomedical @graph — Complex Queries" begin
+@testset "Biomedical @cypher — Complex Queries" begin
 
     # ── 4.1 Multi-hop: Gene → Protein → Pathway for a disease ───────────
     @testset "Gene-Protein-Pathway for Breast Cancer (>>)" begin
         disease_name = "Breast Cancer"
-        result = @graph conn begin
+        result = @cypher conn begin
             g::Gene >> ::ASSOCIATED_WITH >> d::Disease
             g >> ::ENCODES >> p::Protein >> ::PARTICIPATES_IN >> pw::Pathway
             where(d.name == $disease_name)
@@ -1974,7 +1974,7 @@ end
     # ── 4.2 Drug repurposing candidates (shared pathways) ───────────────
     @testset "Drug repurposing — shared pathway targets (>>)" begin
         target_disease = "Breast Cancer"
-        result = @graph conn begin
+        result = @cypher conn begin
             drug::Drug >> ::TARGETS >> prot::Protein >> ::PARTICIPATES_IN >> pw::Pathway
             prot2::Protein >> ::PARTICIPATES_IN >> pw
             g::Gene >> ::ENCODES >> prot2
@@ -1988,7 +1988,7 @@ end
 
     # ── 4.3 Patient cohort analysis ─────────────────────────────────────
     @testset "Patients by disease with trial enrollment" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             pt::Patient >> dx::DIAGNOSED_WITH >> d::Disease
             optional(pt >> e::ENROLLED_IN >> ct::ClinicalTrial)
             ret(pt.patient_id => :patient, d.name => :disease,
@@ -2002,7 +2002,7 @@ end
 
     # ── 4.4 Aggregation: drugs per disease with avg efficacy ────────────
     @testset "Drug count and average efficacy per disease" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             drug::Drug >> t::TREATS >> d::Disease
             with(d.name => :disease, count(drug) => :drug_count, avg(t.efficacy) => :mean_efficacy)
             where(drug_count > 1)
@@ -2017,7 +2017,7 @@ end
 
     # ── 4.5 Side effect overlap between drugs ───────────────────────────
     @testset "Common side effects across oncology drugs" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             d1::Drug >> ::HAS_SIDE_EFFECT >> s::Symptom
             d2::Drug >> ::HAS_SIDE_EFFECT >> s
             where(d1.name < d2.name)
@@ -2030,7 +2030,7 @@ end
     # ── 4.6 Complete patient journey ────────────────────────────────────
     @testset "Full patient journey — diagnosis to treatment" begin
         pid = "PT-2024-001"
-        result = @graph conn begin
+        result = @cypher conn begin
             pt::Patient >> dx::DIAGNOSED_WITH >> d::Disease
             drug::Drug >> t::TREATS >> d
             where(pt.patient_id == $pid)
@@ -2049,7 +2049,7 @@ end
     # ── 4.7 Gene-disease network density ────────────────────────────────
     @testset "Genes with multiple disease associations" begin
         min_diseases = 2
-        result = @graph conn begin
+        result = @cypher conn begin
             g::Gene >> a::ASSOCIATED_WITH >> d::Disease
             with(g.symbol => :gene, count(d) => :disease_count, collect(d.name) => :diseases)
             where(disease_count >= $min_diseases)
@@ -2064,7 +2064,7 @@ end
 
     # ── 4.8 Hospital workload — physicians per hospital ─────────────────
     @testset "Hospital physician coverage" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             ph::Physician >> ::LOCATED_AT >> h::Hospital
             ret(h.name => :hospital, collect(ph.specialty) => :specialties,
                 count(ph) => :physician_count)
@@ -2075,7 +2075,7 @@ end
 
     # ── 4.9 Biomarker-guided treatment selection ────────────────────────
     @testset "Biomarker → Disease → Drug pipeline" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             bm::Biomarker >> ::INDICATES >> d::Disease
             drug::Drug >> ::TREATS >> d
             ret(bm.name => :biomarker, d.name => :disease,
@@ -2089,7 +2089,7 @@ end
 
     # ── 4.10 Full knowledge chain: Biomarker→Disease→Gene→Protein→Pathway
     @testset "Full knowledge chain — five-hop traversal" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             bm::Biomarker >> ::INDICATES >> d::Disease
             g::Gene >> ::ASSOCIATED_WITH >> d
             g >> ::ENCODES >> p::Protein >> ::PARTICIPATES_IN >> pw::Pathway
@@ -2103,7 +2103,7 @@ end
     # ── 4.11 MERGE — upsert treatment guidelines ───────────────────────
     @testset "MERGE — upsert treatment guidelines" begin
         now = "2026-02-15"
-        result = @graph conn begin
+        result = @cypher conn begin
             merge(d::Disease)
             on_match(d.last_reviewed=$now)
             ret(d)
@@ -2121,7 +2121,7 @@ end
             Dict("drug_name" => "Olaparib", "event" => "Anemia", "grade" => 2),
         ]
 
-        result = @graph conn begin
+        result = @cypher conn begin
             unwind($adverse_events => :ae)
             drug::Drug
             where(drug.name == ae.drug_name)
@@ -2136,7 +2136,7 @@ end
 
     # ── 4.13 Complex WHERE with string functions ────────────────────────
     @testset "Complex WHERE — string functions" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             g::Gene >> ::ASSOCIATED_WITH >> d::Disease
             where(startswith(g.chromosome, "17"), d.category == "Oncology")
             ret(g.symbol => :gene, g.chromosome => :chr, d.name => :disease)
@@ -2149,7 +2149,7 @@ end
 
     # ── 4.14 WITH + aggregation pipeline ────────────────────────────────
     @testset "WITH pipeline — treatment landscape" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             drug::Drug >> t::TREATS >> d::Disease
             with(d, count(drug) => :n_drugs, avg(t.efficacy) => :avg_eff)
             g::Gene >> ::ASSOCIATED_WITH >> d
@@ -2161,7 +2161,7 @@ end
 
     # ── 4.15 OPTIONAL MATCH — drugs without side effects ────────────────
     @testset "OPTIONAL MATCH — drugs without side effects" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             drug::Drug >> ::TREATS >> d::Disease
             optional(drug >> ::HAS_SIDE_EFFECT >> se::Symptom)
             ret(drug.name => :drug, d.name => :disease, count(se) => :side_effect_count)
@@ -2172,7 +2172,7 @@ end
 
     # ── 4.16 Publication impact ─────────────────────────────────────────
     @testset "Publication → Disease knowledge network" begin
-        result = @graph conn begin
+        result = @cypher conn begin
             pub::Publication >> ::PUBLISHED_IN >> d::Disease
             drug::Drug >> ::TREATS >> d
             with(pub, d, collect(drug.name) => :drugs)
@@ -2188,7 +2188,7 @@ end
 # PART 5 — Graph Integrity Verification
 # ════════════════════════════════════════════════════════════════════════════
 
-@testset "Biomedical @graph — Integrity Checks" begin
+@testset "Biomedical @cypher — Integrity Checks" begin
 
     counts = graph_counts(conn)
 
@@ -2208,7 +2208,7 @@ end
     @test brca1_expr[1].edge_count == 2
     @test brca1_expr[1].edge_count == brca1_expr[1].distinct_tissues
 
-    # Check label types exist using @graph comprehension
+    # Check label types exist using @cypher comprehension
     for label in ["Disease", "Gene", "Protein", "Drug", "ClinicalTrial",
         "Patient", "Hospital", "Physician", "Pathway",
         "Symptom", "Biomarker", "Publication"]
@@ -2217,7 +2217,7 @@ end
     end
 
     println("\n" * "="^72)
-    println("  Biomedical Knowledge Graph (@graph DSL) — COMPLETE")
+    println("  Biomedical Knowledge Graph (@cypher DSL) — COMPLETE")
     println("  Total nodes: ", counts.nodes)
     println("  Total relationships: ", counts.relationships)
     println("  Graph persisted in Neo4j — inspect with Neo4j Browser")

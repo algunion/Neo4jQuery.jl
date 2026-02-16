@@ -95,8 +95,7 @@ validate_rel_properties
 ## DSL — Macros
 
 ```@docs
-@query
-@graph
+@cypher
 @create
 @merge
 @relate

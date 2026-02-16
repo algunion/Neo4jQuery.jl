@@ -1448,4 +1448,3 @@ end
         @test _rel_type_to_string(Meta.parse("r:KNOWS")) == "r:KNOWS"
     end
 
-end  # @testset "DSL"

@@ -15,7 +15,7 @@ A modern Julia client for [Neo4j](https://neo4j.com/) using the **Query API v2**
 - **Explicit & implicit transactions** — auto-commit queries and full begin/commit/rollback lifecycle with a convenient do-block API
 - **Streaming results** — row-by-row JSONL iteration for memory-efficient processing of large result sets
 - **Rich type mapping** — automatic round-trip conversion between Julia types (`Int64`, `Float64`, `Date`, `DateTime`, `ZonedDateTime`, …) and Neo4j's type system, including spatial (`CypherPoint`), temporal (`CypherDuration`), and vector (`CypherVector`) values
-- **Graph DSL** — `@query`, `@graph`, `@create`, `@merge`, `@relate` macros compile to parameterised Cypher at macro-expansion time. `@graph` provides a hyper-ergonomic syntax with `>>` chain operators and comprehension forms
+- **Graph DSL** — the unified `@cypher` macro plus `@create`, `@merge`, `@relate` compile to parameterised Cypher at macro-expansion time. `@cypher` provides `>>` chain operators, function-call clauses, auto-SET, and comprehension forms
 - **Full Cypher coverage** — the DSL supports directed, left-arrow, and undirected patterns; variable-length relationships; CASE/WHEN expressions; EXISTS subqueries; regex matching; UNION/UNION ALL; CALL subqueries; LOAD CSV; FOREACH; and index/constraint management
 - **Schema declarations** — `@node` and `@rel` register typed schemas with property validation
 - **Flexible auth** — `BasicAuth` (RFC 7617) and `BearerAuth` token authentication, with a simple extension point for custom strategies
@@ -55,69 +55,9 @@ result = query(conn, q)
 
 ## DSL
 
-Neo4jQuery provides two DSL macros: `@query` (Cypher-parallel syntax with `@sub-macro` clauses) and `@graph` (hyper-ergonomic Julia-native syntax).
+Neo4jQuery provides a unified `@cypher` macro that compiles Julia expressions into parameterised Cypher at macro-expansion time.
 
-### `@graph` — hyper-ergonomic DSL
-
-```julia
-# >> chain operators for relationship traversal
-result = @graph conn begin
-    p::Person >> r::KNOWS >> q::Person
-    where(p.age > 25, q.name != "Bob")
-    ret(p.name => :name, q.name => :friend)
-    order(p.name)
-    take(10)
-end
-
-# Multi-hop traversal
-result = @graph conn begin
-    a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company
-    ret(a.name, c.name)
-end
-
-# Auto-SET from bare assignments
-@graph conn begin
-    p::Person
-    where(p.name == $name)
-    p.age = $new_age
-    p.email = $new_email
-    ret(p)
-end
-
-# Left-directed chains
-result = @graph conn begin
-    p::Person << r::KNOWS << q::Person
-    ret(p.name)
-end
-
-# Comprehension one-liners
-result = @graph conn [p.name for p in Person if p.age > 25]
-
-# Merge with on_create / on_match
-@graph conn begin
-    merge(p::Person)
-    on_create(p.created = true)
-    on_match(p.updated = true)
-    ret(p)
-end
-
-# OPTIONAL MATCH
-@graph conn begin
-    p::Person
-    optional(p >> r::KNOWS >> q::Person)
-    ret(p.name, q.name)
-end
-
-# Aggregation with WITH
-result = @graph conn begin
-    p::Person >> r::KNOWS >> q::Person
-    with(p, count(r) => :degree)
-    where(degree > $min_degree)
-    ret(p.name, degree)
-end
-```
-
-### `@query` — Cypher-parallel DSL
+### `@cypher` — unified query builder
 
 ```julia
 # Declare schemas
@@ -130,80 +70,128 @@ end
     since::Int
 end
 
-# Type-safe query builder
-result = @query conn begin
-    @match (p:Person)-[r:KNOWS]->(q:Person)
-    @where p.age > 25 && matches(q.name, "A.*")
-    @return p.name => :name, q.name => :friend
-    @orderby p.name
-    @limit 10
+# >> chain operators for relationship traversal
+result = @cypher conn begin
+    p::Person >> r::KNOWS >> q::Person
+    where(p.age > 25, q.name != "Bob")
+    ret(p.name => :name, q.name => :friend)
+    order(p.name)
+    take(10)
 end
 
-# Left-arrow and undirected patterns
-result = @query conn begin
-    @match (a:Person)<-[r:KNOWS]-(b:Person)
-    @return a.name => :name
+# Multi-hop traversal
+result = @cypher conn begin
+    a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company
+    ret(a.name, c.name)
+end
+
+# Auto-SET from bare assignments
+@cypher conn begin
+    p::Person
+    where(p.name == $name)
+    p.age = $new_age
+    p.email = $new_email
+    ret(p)
+end
+
+# Left-directed chains
+result = @cypher conn begin
+    p::Person << r::KNOWS << q::Person
+    ret(p.name)
+end
+
+# Comprehension one-liners
+result = @cypher conn [p.name for p in Person if p.age > 25]
+
+# Arrow syntax also works
+result = @cypher conn begin
+    (p:Person)-[r:KNOWS]->(q:Person)
+    where(p.age > 25)
+    ret(p.name => :name)
 end
 
 # Variable-length relationships
-result = @query conn begin
-    @match (a:Person)-[r:KNOWS, 1, 3]->(b:Person)
-    @return a.name => :start, b.name => :end_node
+result = @cypher conn begin
+    (a:Person)-[r:KNOWS, 1, 3]->(b:Person)
+    ret(a.name => :start, b.name => :end_node)
 end
 
 # CASE/WHEN expressions
-result = @query conn begin
-    @match (p:Person)
-    @return p.name => :name, if p.age > 30; "senior"; else; "junior"; end => :category
+result = @cypher conn begin
+    p::Person
+    ret(p.name => :name, if p.age > 30; "senior"; else; "junior"; end => :category)
 end
 
 # EXISTS subqueries
-result = @query conn begin
-    @match (p:Person)
-    @where exists((p)-[:KNOWS]->(:Person))
-    @return p.name => :name
+result = @cypher conn begin
+    p::Person
+    where(exists((p)-[:KNOWS]->(:Person)))
+    ret(p.name => :name)
+end
+
+# MERGE with on_create / on_match
+@cypher conn begin
+    merge(p::Person)
+    on_create(p.created = true)
+    on_match(p.updated = true)
+    ret(p)
+end
+
+# OPTIONAL MATCH
+@cypher conn begin
+    p::Person
+    optional(p >> r::KNOWS >> q::Person)
+    ret(p.name, q.name)
+end
+
+# Aggregation with WITH
+result = @cypher conn begin
+    p::Person >> r::KNOWS >> q::Person
+    with(p, count(r) => :degree)
+    where(degree > $min_degree)
+    ret(p.name, degree)
 end
 
 # UNION
-result = @query conn begin
-    @match (p:Person)
-    @where p.age > 30
-    @return p.name => :name
-    @union
-    @match (p:Person)
-    @where startswith(p.name, "A")
-    @return p.name => :name
+result = @cypher conn begin
+    p::Person
+    where(p.age > 30)
+    ret(p.name => :name)
+    union()
+    p::Person
+    where(startswith(p.name, "A"))
+    ret(p.name => :name)
 end
 
 # CALL subquery
-result = @query conn begin
-    @match (p:Person)
-    @call begin
-        @with p
-        @match (p)-[:KNOWS]->(f:Person)
-        @return count(f) => :friend_count
-    end
-    @return p.name => :name, friend_count
+result = @cypher conn begin
+    p::Person
+    call(begin
+        with(p)
+        p >> r::KNOWS >> friend::Person
+        ret(count(friend) => :friend_count)
+    end)
+    ret(p.name => :name, friend_count)
 end
 
 # FOREACH for batch updates
-result = @query conn begin
-    @match (p:Person)
-    @foreach n :in collect(p) begin
-        @set n.processed = true
-    end
+@cypher conn begin
+    p::Person
+    foreach(n, :in, collect(p), begin
+        set(n.processed = true)
+    end)
 end
 
 # Index and constraint management
-@query conn begin
-    @create_index :Person :name
+@cypher conn begin
+    create_index(:Person, :name)
 end
-@query conn begin
-    @create_constraint :Person :email :unique
+@cypher conn begin
+    create_constraint(:Person, :email, :unique)
 end
 ```
 
-Both macros compile to parameterised Cypher at macro-expansion time. `@graph` is recommended for new code; `@query` remains fully supported and offers access to advanced features like `@call` subqueries, `@load_csv`, `@foreach`, and index/constraint management.
+`@cypher` automatically infers `access_mode` (:read vs :write) from the clauses used.
 
 ## Documentation
 
@@ -220,7 +208,7 @@ julia --project=. benchmark/dsl_microbench.jl
 This script reports timing and per-call allocations for:
 
 - `_condition_to_cypher` (expression compilation)
-- `@query` `macroexpand` (DSL expansion cost)
+- `@cypher` `macroexpand` (DSL expansion cost)
 - `_build_query_body` (runtime request payload assembly)
 
 ## Coverage (including live Aura tests)
