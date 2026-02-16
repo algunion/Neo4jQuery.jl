@@ -4,7 +4,6 @@ version = "0.3.1"
 authors = ["Marius Fersigan <marius.fersigan@gmail.com> and contributors"]
 
 [deps]
-Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
