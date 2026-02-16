@@ -99,6 +99,34 @@ end
 
 See [DSL](@ref dsl) for the full guide with advanced examples.
 
+## Quick `@graph` Example
+
+The `@graph` macro provides a hyper-ergonomic alternative with Julia-native syntax:
+
+```julia
+# Same query as above, but with @graph syntax
+min_age = 20
+result = @graph conn begin
+    p::Person >> r::KNOWS >> friend::Person
+    where(p.name == "Alice", friend.age > $min_age)
+    ret(friend.name => :name, r.since => :since)
+    order(r.since, :desc)
+end
+
+# Or as a one-liner comprehension
+result = @graph conn [p.name for p in Person if p.age > 20]
+
+# Mutations with auto-SET
+@graph conn begin
+    p::Person
+    where(p.name == "Alice")
+    p.age = 31
+    ret(p)
+end
+```
+
+See [DSL — @graph](@ref dsl) for the full guide.
+
 ## What's Next?
 
 - [Queries](@ref queries) — parameterised queries, counters, bookmarks
