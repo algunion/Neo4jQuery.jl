@@ -94,11 +94,11 @@ The scheme in `NEO4J_URI` is mapped to HTTP or HTTPS:
 | `neo4j://`     | HTTP     | 7474         |
 | `bolt://`      | HTTP     | 7474         |
 | `http://`      | HTTP     | 7474         |
-| `neo4j+s://`   | HTTPS    | 7473         |
-| `neo4j+ssc://` | HTTPS    | 7473         |
-| `bolt+s://`    | HTTPS    | 7473         |
-| `bolt+ssc://`  | HTTPS    | 7473         |
-| `https://`     | HTTPS    | 7473         |
+| `neo4j+s://`   | HTTPS    | 443          |
+| `neo4j+ssc://` | HTTPS    | 443          |
+| `bolt+s://`    | HTTPS    | 443          |
+| `bolt+ssc://`  | HTTPS    | 443          |
+| `https://`     | HTTPS    | 443          |
 
 ## Custom authentication
 

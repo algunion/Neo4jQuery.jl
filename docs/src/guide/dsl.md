@@ -69,25 +69,35 @@ LIMIT 10
 
 ### Available clauses
 
-| Clause            | Description                                      |
-| :---------------- | :----------------------------------------------- |
-| `@match`          | `MATCH` pattern                                  |
-| `@optional_match` | `OPTIONAL MATCH` pattern                         |
-| `@where`          | `WHERE` conditions                               |
-| `@return`         | `RETURN` expressions (with `=> :alias` for `AS`) |
-| `@with`           | `WITH` projection (pipe between query parts)     |
-| `@unwind`         | `UNWIND list AS variable`                        |
-| `@create`         | `CREATE` pattern                                 |
-| `@merge`          | `MERGE` pattern                                  |
-| `@set`            | `SET` property assignments                       |
-| `@remove`         | `REMOVE` labels or properties                    |
-| `@delete`         | `DELETE` variables                               |
-| `@detach_delete`  | `DETACH DELETE` variables                        |
-| `@orderby`        | `ORDER BY` expressions                           |
-| `@skip`           | `SKIP n`                                         |
-| `@limit`          | `LIMIT n`                                        |
-| `@on_create_set`  | `ON CREATE SET` (inside `@merge`)                |
-| `@on_match_set`   | `ON MATCH SET` (inside `@merge`)                 |
+| Clause               | Description                                               |
+| :------------------- | :-------------------------------------------------------- |
+| `@match`             | `MATCH` pattern                                           |
+| `@optional_match`    | `OPTIONAL MATCH` pattern                                  |
+| `@where`             | `WHERE` conditions                                        |
+| `@return`            | `RETURN` expressions (with `=> :alias` for `AS`)          |
+| `@with`              | `WITH` projection (pipe between query parts)              |
+| `@unwind`            | `UNWIND list AS variable`                                 |
+| `@create`            | `CREATE` pattern                                          |
+| `@merge`             | `MERGE` pattern                                           |
+| `@set`               | `SET` property assignments (multiple SETs merge into one) |
+| `@remove`            | `REMOVE` labels or properties                             |
+| `@delete`            | `DELETE` variables                                        |
+| `@detach_delete`     | `DETACH DELETE` variables                                 |
+| `@orderby`           | `ORDER BY` expressions                                    |
+| `@skip`              | `SKIP n`                                                  |
+| `@limit`             | `LIMIT n`                                                 |
+| `@on_create_set`     | `ON CREATE SET` (after `@merge`)                          |
+| `@on_match_set`      | `ON MATCH SET` (after `@merge`)                           |
+| `@union`             | `UNION` (deduplicated)                                    |
+| `@union_all`         | `UNION ALL` (preserves duplicates)                        |
+| `@call`              | `CALL { ... }` subquery block                             |
+| `@load_csv`          | `LOAD CSV FROM 'url' AS row`                              |
+| `@load_csv_headers`  | `LOAD CSV WITH HEADERS FROM 'url' AS row`                 |
+| `@foreach`           | `FOREACH (var IN expr \| ...)`                            |
+| `@create_index`      | `CREATE INDEX FOR (n:Label) ON (n.prop)`                  |
+| `@drop_index`        | `DROP INDEX name IF EXISTS`                               |
+| `@create_constraint` | `CREATE CONSTRAINT ... REQUIRE ... IS UNIQUE/NOT NULL`    |
+| `@drop_constraint`   | `DROP CONSTRAINT name IF EXISTS`                          |
 
 ### Pattern syntax
 
@@ -95,11 +105,34 @@ LIMIT 10
 # Labeled node
 @match (p:Person)
 
-# Simple directed edge
+# Anonymous labeled node
+@match (:Person)
+
+# Variable-only node
+@match (p)
+
+# Right arrow (simple directed)
 @match (a) --> (b)
 
-# Typed relationship
+# Typed relationship (right arrow)
 @match (p:Person)-[r:KNOWS]->(q:Person)
+
+# Left arrow (simple)
+@match (a) <-- (b)
+
+# Typed relationship (left arrow)
+@match (a:Person)<-[r:KNOWS]-(b:Person)
+
+# Undirected relationship
+@match (a:Person)-[r:KNOWS]-(b:Person)
+
+# Variable-length relationship (range)
+@match (a:Person)-[r:KNOWS, 1, 3]->(b:Person)
+# Generates: (a:Person)-[r:KNOWS*1..3]->(b:Person)
+
+# Variable-length relationship (exact)
+@match (a:Person)-[r:KNOWS, 2]->(b:Person)
+# Generates: (a:Person)-[r:KNOWS*2]->(b:Person)
 
 # Chained path
 @match (a)-[r:R]->(b)-[s:S]->(c)
@@ -112,22 +145,31 @@ LIMIT 10
 
 Julia operators are translated to Cypher:
 
-| Julia        | Cypher        |
-| :----------- | :------------ |
-| `==`         | `=`           |
-| `!=`         | `<>`          |
-| `&&`         | `AND`         |
-| `\|\|`       | `OR`          |
-| `!`          | `NOT`         |
-| `>=`         | `>=`          |
-| `<=`         | `<=`          |
-| `startswith` | `STARTS WITH` |
-| `endswith`   | `ENDS WITH`   |
-| `contains`   | `CONTAINS`    |
-| `in` / `∈`   | `IN`          |
-| `isnothing`  | `IS NULL`     |
+| Julia                            | Cypher                                |
+| :------------------------------- | :------------------------------------ |
+| `==`                             | `=`                                   |
+| `!=`                             | `<>`                                  |
+| `&&`                             | `AND`                                 |
+| `\|\|`                           | `OR`                                  |
+| `!`                              | `NOT`                                 |
+| `>=`                             | `>=`                                  |
+| `<=`                             | `<=`                                  |
+| `>`, `<`                         | `>`, `<`                              |
+| `startswith`                     | `STARTS WITH`                         |
+| `endswith`                       | `ENDS WITH`                           |
+| `contains`                       | `CONTAINS`                            |
+| `in` / `∈`                       | `IN`                                  |
+| `isnothing`                      | `IS NULL`                             |
+| `matches`                        | `=~` (regex match)                    |
+| `exists((p)-[:R]->(q))`          | `EXISTS { MATCH ... }`                |
+| `if ... elseif ... else ... end` | `CASE WHEN ... THEN ... ELSE ... END` |
 
-Arithmetic operators (`+`, `-`, `*`, `/`, `%`, `^`) are also supported within expressions.
+Arithmetic operators (`+`, `-`, `*`, `/`, `%`, `^`) are also supported within expressions:
+
+```julia
+@where p.score * 2 + 10 > $threshold
+@where p.id % 2 == 0
+```
 
 ### Parameter capture
 
@@ -401,6 +443,199 @@ println("Total: ", result[1].total)
 println("Average age: ", result[1].avg_age)
 println("Names: ", result[1].names)
 ```
+
+### Step 15: Pattern direction variants
+
+```julia
+# Left-arrow — match incoming relationships
+result = @query conn begin
+    @match (a:Person)<-[r:KNOWS]-(b:Person)
+    @return a.name => :target, b.name => :source, r.since => :since
+end access_mode=:read
+
+# Undirected — match regardless of direction
+result = @query conn begin
+    @match (a:Person)-[r:KNOWS]-(b:Person)
+    @return a.name => :person1, b.name => :person2
+end access_mode=:read
+
+# Variable-length — find paths of 1 to 3 hops
+result = @query conn begin
+    @match (a:Person)-[r:KNOWS, 1, 3]->(b:Person)
+    @return a.name => :start, b.name => :reachable
+end access_mode=:read
+```
+
+### Step 16: Regex matching
+
+```julia
+# Find names matching a pattern
+result = @query conn begin
+    @match (p:Person)
+    @where matches(p.name, "^A.*e$")
+    @return p.name => :name
+end access_mode=:read
+```
+
+### Step 17: CASE/WHEN expressions
+
+Use Julia's `if`/`elseif`/`else`/`end` syntax to generate Cypher CASE expressions:
+
+```julia
+result = @query conn begin
+    @match (p:Person)
+    @return p.name => :name, if p.age > 65; "senior"; elseif p.age > 30; "adult"; else; "young"; end => :category
+end access_mode=:read
+```
+
+This generates:
+```cypher
+RETURN p.name AS name, CASE WHEN p.age > 65 THEN 'senior' WHEN p.age > 30 THEN 'adult' ELSE 'young' END AS category
+```
+
+### Step 18: EXISTS subqueries
+
+```julia
+# Find people who have at least one friend
+result = @query conn begin
+    @match (p:Person)
+    @where exists((p)-[:KNOWS]->(:Person))
+    @return p.name => :name
+end access_mode=:read
+
+# Negated EXISTS
+result = @query conn begin
+    @match (p:Person)
+    @where !(exists((p)-[:KNOWS]->(:Person)))
+    @return p.name => :loner
+end access_mode=:read
+```
+
+### Step 19: UNION and UNION ALL
+
+Combine multiple query parts:
+
+```julia
+# UNION (deduplicated results)
+result = @query conn begin
+    @match (p:Person)
+    @where p.age > 30
+    @return p.name => :name
+    @union
+    @match (p:Person)
+    @where startswith(p.name, "A")
+    @return p.name => :name
+end access_mode=:read
+
+# UNION ALL (preserves duplicates)
+result = @query conn begin
+    @match (p:Person)
+    @return p.name => :name
+    @union_all
+    @match (c:Company)
+    @return c.name => :name
+end access_mode=:read
+```
+
+### Step 20: CALL subqueries
+
+Nest a full sub-query with `@call`:
+
+```julia
+result = @query conn begin
+    @match (p:Person)
+    @call begin
+        @with p
+        @match (p)-[r:KNOWS]->(friend:Person)
+        @return count(friend) => :friend_count
+    end
+    @return p.name => :name, friend_count
+    @orderby friend_count :desc
+end access_mode=:read
+```
+
+### Step 21: LOAD CSV
+
+Import data from CSV files:
+
+```julia
+# Without headers (rows are arrays)
+@query conn begin
+    @load_csv "file:///data/people.csv" => :row
+    @create (p:Person)
+    @set p.name = row[0]
+    @set p.age = row[1]
+end
+
+# With headers (rows are maps)
+@query conn begin
+    @load_csv_headers "file:///data/people.csv" => :row
+    @create (p:Person)
+    @set p.name = row.name
+    @set p.age = row.age
+end
+```
+
+### Step 22: FOREACH
+
+Apply updates over a collection:
+
+```julia
+names = ["Alice", "Bob", "Carol"]
+@query conn begin
+    @match (p:Person)
+    @where in(p.name, $names)
+    @foreach n :in collect(p) begin
+        @set n.verified = true
+    end
+end
+```
+
+FOREACH body supports `@create`, `@merge`, `@set`, `@delete`, `@detach_delete`, `@remove`, and nested `@foreach`.
+
+### Step 23: Index and constraint management
+
+```julia
+# Create an index on Person.name
+@query conn begin
+    @create_index :Person :name
+end
+
+# Create a named index
+@query conn begin
+    @create_index :Person :email :person_email_idx
+end
+
+# Drop an index
+@query conn begin
+    @drop_index :person_email_idx
+end
+
+# Create a uniqueness constraint
+@query conn begin
+    @create_constraint :Person :email :unique
+end
+
+# Create a NOT NULL constraint (named)
+@query conn begin
+    @create_constraint :Person :name :not_null :person_name_required
+end
+
+# Drop a constraint
+@query conn begin
+    @drop_constraint :person_name_required
+end
+```
+
+## Known limitations
+
+These Cypher features are **not supported** by the DSL:
+
+- Inline property patterns in MATCH (`{name: $v}`) — Julia's parser cannot parse `{…}` as an expression; use `@where` instead
+- Shortest path functions (`shortestPath`, `allShortestPaths`)
+- `MERGE` on relationship patterns within `@query` (only node patterns)
+- Procedure calls via `CALL db.xxx()` (distinct from CALL subqueries)
+- Map projections and list comprehensions
 
 ## Standalone mutations
 
