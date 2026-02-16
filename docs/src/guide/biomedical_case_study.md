@@ -11,6 +11,9 @@ Neo4jQuery offers two macro-based query interfaces:
 
 Both compile to **identical Cypher** at macro expansion time. The examples below show all three approaches.
 
+!!! note "Unified pattern syntax in `@graph`"
+    The `@graph` macro uses `>>` chains as its **single, canonical pattern language** — for queries, mutations, merges, everything. The same `>>` syntax works in `create()`, `merge()`, `optional()`, `match()`, and bare implicit MATCH. Arrow syntax (`-[]->`), while backward-compatible, is not needed in `@graph`.
+
 The full runnable scripts are:
 - [`test/biomedical_graph_test.jl`](https://github.com/algunion/Neo4jQuery.jl/blob/main/test/biomedical_graph_test.jl) — `@query` / `@create` / `@relate` version
 - [`test/biomedical_graph_dsl_test.jl`](https://github.com/algunion/Neo4jQuery.jl/blob/main/test/biomedical_graph_dsl_test.jl) — `@graph` version
@@ -202,6 +205,8 @@ end
 
 The `@graph` approach uses `create()` + property assignments (`d.name = "..."`) which compile to `CREATE (d:Disease) SET d.name = '...'`. Properties are set via auto-SET detection.
 
+For creating nodes, `create(d::Disease)` is a single-node pattern. For creating relationships, `create()` takes a `>>` chain (see next section).
+
 ---
 
 ## 3. Creating relationships
@@ -233,11 +238,11 @@ No need to re-match nodes by property. The DSL uses `elementId()` from the retur
 ### Julia DSL — `@graph` macro
 
 ```julia
-# Match nodes by property, then create the relationship with arrow syntax
+# Match nodes by property, then create the relationship with >> chain
 @graph conn begin
     match(g::Gene, d::Disease)
     where(g.symbol == "BRCA1", d.name == "Breast Cancer")
-    create((g) - [r::ASSOCIATED_WITH] -> (d))
+    create(g >> r::ASSOCIATED_WITH >> d)
     r.score = 0.95
     r.source = "ClinVar"
     ret(r)
@@ -246,14 +251,14 @@ end
 @graph conn begin
     match(drug::Drug, d::Disease)
     where(drug.name == "Trastuzumab", d.name == "Breast Cancer")
-    create((drug) - [r::TREATS] -> (d))
+    create(drug >> r::TREATS >> d)
     r.efficacy = 0.85
     r.evidence_level = "1A"
     ret(r)
 end
 ```
 
-The `@graph` approach uses `match()` + `where()` to locate nodes, then `create()` with arrow patterns. Relationship properties are set via auto-SET.
+The same `>>` pattern syntax used in queries also works in `create()`, `merge()`, and `optional()`. Relationship properties are set via auto-SET.
 
 ---
 
@@ -293,7 +298,7 @@ result = @graph conn begin
 end
 ```
 
-The `>>` chains replace `-[]->` arrow syntax. Bare patterns become implicit `MATCH` clauses.
+The `>>` chains are the canonical pattern syntax in `@graph` — they work uniformly for queries, mutations, and everything in between. Bare patterns become implicit `MATCH` clauses.
 
 ---
 
@@ -683,7 +688,7 @@ result = @graph conn begin
     unwind($adverse_events => :ae)
     drug::Drug
     where(drug.name == ae.drug_name)
-    create((drug) - [::REPORTED_AE] -> (event::AdverseEvent))
+    create(drug >> ::REPORTED_AE >> event::AdverseEvent)
     event.name = ae.event
     event.grade = ae.grade
     ret(drug.name => :drug, event.name => :event, event.grade => :grade)
@@ -802,22 +807,22 @@ end
 
 ## Key takeaways
 
-| Aspect                | Raw Cypher                         | `@query` DSL                        | `@graph` DSL                         |
-| :-------------------- | :--------------------------------- | :---------------------------------- | :----------------------------------- |
-| **Injection safety**  | Manual parameterisation            | Automatic — `$var` captures safely  | Same — `$var` captures safely        |
-| **Schema validation** | None built-in                      | `@node`/`@rel` with runtime checks  | Same shared schema registry          |
-| **Node references**   | Re-match by property               | `elementId()` via `@relate`         | `match()` + `where()` + `create()`   |
-| **Patterns**          | `(p:Person)-[r:KNOWS]->(q:Person)` | Same Cypher-like syntax             | `p::Person >> r::KNOWS >> q::Person` |
-| **Clauses**           | Cypher keywords                    | `@match`, `@where`, `@return`       | `where()`, `ret()`, `order()`        |
-| **Operator mapping**  | `<>`, `AND`, `STARTS WITH`         | `!=`, `&&`, `startswith`            | Same Julia-native operators          |
-| **Return aliases**    | `expr AS alias`                    | `expr => :alias`                    | `expr => :alias`                     |
-| **Mutations**         | `CREATE`, `SET`                    | `@create`, `@set`                   | `create()` + auto-SET assignments    |
-| **OPTIONAL MATCH**    | `OPTIONAL MATCH`                   | `@optional_match`                   | `optional()`                         |
-| **Compile-time**      | String at runtime                  | Cypher assembled at macro expansion | Same — identical Cypher output       |
+| Aspect                | Raw Cypher                         | `@query` DSL                        | `@graph` DSL                                      |
+| :-------------------- | :--------------------------------- | :---------------------------------- | :------------------------------------------------ |
+| **Injection safety**  | Manual parameterisation            | Automatic — `$var` captures safely  | Same — `$var` captures safely                     |
+| **Schema validation** | None built-in                      | `@node`/`@rel` with runtime checks  | Same shared schema registry                       |
+| **Node references**   | Re-match by property               | `elementId()` via `@relate`         | `match()` + `where()` + `create()`                |
+| **Patterns**          | `(p:Person)-[r:KNOWS]->(q:Person)` | Same Cypher-like syntax             | `p::Person >> r::KNOWS >> q::Person` (everywhere) |
+| **Clauses**           | Cypher keywords                    | `@match`, `@where`, `@return`       | `where()`, `ret()`, `order()`                     |
+| **Operator mapping**  | `<>`, `AND`, `STARTS WITH`         | `!=`, `&&`, `startswith`            | Same Julia-native operators                       |
+| **Return aliases**    | `expr AS alias`                    | `expr => :alias`                    | `expr => :alias`                                  |
+| **Mutations**         | `CREATE`, `SET`                    | `@create`, `@set`                   | `create()` + auto-SET assignments                 |
+| **OPTIONAL MATCH**    | `OPTIONAL MATCH`                   | `@optional_match`                   | `optional()`                                      |
+| **Compile-time**      | String at runtime                  | Cypher assembled at macro expansion | Same — identical Cypher output                    |
 
 ### `@query` vs `@graph` — when to use which?
 
-- **`@query`** — closest to raw Cypher; familiar if you already know Cypher syntax. Best with `@create`/`@relate` for schema-validated mutations.
-- **`@graph`** — Julia-native feel with `::` type annotation syntax and `>>` chain operators. Best for complex multi-hop traversals where the chain notation improves readability.
+- **`@query`** — closest to raw Cypher; familiar if you already know Cypher syntax. Best with `@create`/`@relate` for schema-validated single-entity mutations.
+- **`@graph`** — Julia-native feel with `::` type annotation syntax and `>>` chain operators. The `>>` syntax works uniformly across queries (`MATCH`), mutations (`CREATE`, `MERGE`), and `OPTIONAL MATCH` — one pattern language for everything.
 
 Both compile to **identical Cypher** at macro expansion time — there is zero runtime overhead for query construction. Only parameter values are captured at runtime.

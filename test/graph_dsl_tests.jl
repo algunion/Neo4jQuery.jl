@@ -880,4 +880,163 @@ end
         @test_throws LoadError @eval @graph conn 42
     end
 
+    # ════════════════════════════════════════════════════════════════════
+    # Unified >> syntax — falsifying tests
+    #
+    # Principle: >> chains are THE pattern language for @graph.
+    # They must work in ALL clause types: match, create, merge, optional,
+    # delete context, etc.  Arrow syntax (-[]->) remains backward-compatible
+    # but >> is the canonical, documented form.
+    # ════════════════════════════════════════════════════════════════════
+
+    @testset "Unified >> — create with >> chain" begin
+        block = Meta.parse("""
+        begin
+            match(a::Person, b::Person)
+            where(a.name == \$n1, b.name == \$n2)
+            create(a >> r::KNOWS >> b)
+            r.since = \$year
+            ret(r)
+        end
+        """)
+        clauses = _parse_graph_block(block)
+        cypher, params = _compile_graph_block(clauses)
+        @test contains(cypher, "MATCH (a:Person), (b:Person)")
+        @test contains(cypher, "WHERE a.name = \$n1 AND b.name = \$n2")
+        @test contains(cypher, "CREATE (a)-[r:KNOWS]->(b)")
+        @test contains(cypher, "SET r.since = \$year")
+        @test contains(cypher, "RETURN r")
+        @test :n1 in params && :n2 in params && :year in params
+    end
+
+    @testset "Unified >> — create full pattern (nodes + rel)" begin
+        block = Meta.parse("""
+        begin
+            create(p::Person >> r::WORKS_AT >> c::Company)
+            p.name = \$name
+            c.name = \$company
+            r.since = \$year
+            ret(p, r, c)
+        end
+        """)
+        clauses = _parse_graph_block(block)
+        cypher, params = _compile_graph_block(clauses)
+        @test contains(cypher, "CREATE (p:Person)-[r:WORKS_AT]->(c:Company)")
+        @test contains(cypher, "SET p.name = \$name, c.name = \$company, r.since = \$year")
+        @test :name in params && :company in params && :year in params
+    end
+
+    @testset "Unified >> — create with << (left direction)" begin
+        block = Meta.parse("""
+        begin
+            match(a::Person, b::Person)
+            create(a << r::KNOWS << b)
+            ret(r)
+        end
+        """)
+        clauses = _parse_graph_block(block)
+        cypher, _ = _compile_graph_block(clauses)
+        @test contains(cypher, "CREATE (a)<-[r:KNOWS]-(b)")
+    end
+
+    @testset "Unified >> — merge with >> chain" begin
+        block = Meta.parse("""
+        begin
+            merge(p::Person >> r::KNOWS >> q::Person)
+            on_create(r.since = 2024)
+            on_match(r.weight = 1.0)
+            ret(r)
+        end
+        """)
+        clauses = _parse_graph_block(block)
+        cypher, _ = _compile_graph_block(clauses)
+        @test contains(cypher, "MERGE (p:Person)-[r:KNOWS]->(q:Person)")
+        @test contains(cypher, "ON CREATE SET r.since = 2024")
+        @test contains(cypher, "ON MATCH SET r.weight = 1.0")
+    end
+
+    @testset "Unified >> — optional with >> chain" begin
+        block = Meta.parse("""
+        begin
+            p::Person
+            optional(p >> r::WORKS_AT >> c::Company)
+            ret(p.name, c.name)
+        end
+        """)
+        clauses = _parse_graph_block(block)
+        cypher, _ = _compile_graph_block(clauses)
+        @test cypher == "MATCH (p:Person) OPTIONAL MATCH (p)-[r:WORKS_AT]->(c:Company) RETURN p.name, c.name"
+    end
+
+    @testset "Unified >> — multi-hop create" begin
+        # This is an advanced case: creating a full path with >>
+        block = Meta.parse("""
+        begin
+            create(a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company)
+            a.name = "Alice"
+            b.name = "Bob"
+            c.name = "Acme"
+            ret(a, b, c)
+        end
+        """)
+        clauses = _parse_graph_block(block)
+        cypher, _ = _compile_graph_block(clauses)
+        @test contains(cypher, "CREATE (a:Person)-[r:KNOWS]->(b:Person)-[s:WORKS_AT]->(c:Company)")
+    end
+
+    @testset "Unified >> — anonymous rel in create" begin
+        block = Meta.parse("""
+        begin
+            match(a::Person, b::Person)
+            create(a >> KNOWS >> b)
+            ret(a, b)
+        end
+        """)
+        clauses = _parse_graph_block(block)
+        cypher, _ = _compile_graph_block(clauses)
+        @test contains(cypher, "CREATE (a)-[:KNOWS]->(b)")
+    end
+
+    @testset "Unified >> — @graph macro expansion with >> in create" begin
+        ex = @macroexpand @graph conn begin
+            match(g::Gene, d::Disease)
+            where(g.symbol == "BRCA1", d.name == "Breast Cancer")
+            create(g >> r::ASSOCIATED_WITH >> d)
+            r.score = 0.95
+            r.source = "ClinVar"
+            ret(r)
+        end
+        cypher = _find_cypher(ex)
+        @test contains(cypher, "MATCH (g:Gene), (d:Disease)")
+        @test contains(cypher, "CREATE (g)-[r:ASSOCIATED_WITH]->(d)")
+        @test contains(cypher, "SET r.score = 0.95, r.source = 'ClinVar'")
+        @test _find_access_mode(ex) == :write
+    end
+
+    @testset "Unified >> — @graph macro expansion with >> in merge" begin
+        ex = @macroexpand @graph conn begin
+            merge(p::Person >> r::KNOWS >> q::Person)
+            on_create(r.since=2024)
+            ret(r)
+        end
+        cypher = _find_cypher(ex)
+        @test contains(cypher, "MERGE (p:Person)-[r:KNOWS]->(q:Person)")
+        @test contains(cypher, "ON CREATE SET r.since = 2024")
+        @test _find_access_mode(ex) == :write
+    end
+
+    @testset "Unified >> — backward compat: arrow syntax still works in create" begin
+        # Arrow syntax must continue working — but >> is canonical
+        block = Meta.parse("""
+        begin
+            match(a::Person, b::Person)
+            create((a)-[r::KNOWS]->(b))
+            ret(r)
+        end
+        """)
+        clauses = _parse_graph_block(block)
+        cypher, _ = _compile_graph_block(clauses)
+        @test contains(cypher, "CREATE (a)-[r:KNOWS]->(b)")
+    end
+
 end # @testset "@graph DSL"

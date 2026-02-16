@@ -488,6 +488,9 @@ end
 Hyper-ergonomic graph query DSL that compiles to parameterized Cypher.
 
 # Pattern Syntax
+#
+# The >> chain is the single, canonical pattern language for @graph.
+# It works uniformly in match, create, merge, optional — everywhere.
 
 | Julia                                          | Cypher                              |
 |:-----------------------------------------------|:------------------------------------|
@@ -496,8 +499,6 @@ Hyper-ergonomic graph query DSL that compiles to parameterized Cypher.
 | `p::Person >> r::KNOWS >> q::Person`           | `(p:Person)-[r:KNOWS]->(q:Person)`  |
 | `p::Person >> KNOWS >> q::Person`              | `(p:Person)-[:KNOWS]->(q:Person)`   |
 | `p::Person << r::KNOWS << q::Person`           | `(p:Person)<-[r:KNOWS]-(q:Person)`  |
-| `(p::Person)-[r::KNOWS]->(q::Person)`          | `(p:Person)-[r:KNOWS]->(q:Person)`  |
-| `(p) --> (q)`                                  | `(p)-->(q)`                         |
 | `a::A >> R1 >> b::B >> R2 >> c::C`             | `(a:A)-[:R1]->(b:B)-[:R2]->(c:C)`  |
 
 # Clause Functions (no `@` prefix needed)
@@ -562,12 +563,28 @@ end
     ret(p)
 end
 
+# ── Create a relationship (>> in create) ──
+@graph conn begin
+    match(a::Person, b::Person)
+    where(a.name == \$n1, b.name == \$n2)
+    create(a >> r::KNOWS >> b)
+    r.since = \$year
+    ret(r)
+end
+
 # ── Merge with on_create / on_match ──
 @graph conn begin
     merge(p::Person)
     on_create(p.created = true)
     on_match(p.updated = true)
     ret(p)
+end
+
+# ── Merge a relationship (>> in merge) ──
+@graph conn begin
+    merge(p::Person >> r::KNOWS >> q::Person)
+    on_create(r.since = 2024)
+    ret(r)
 end
 
 # ── Comprehension form (simple queries) ──
