@@ -1066,4 +1066,762 @@ end
         @test contains(cypher, "CREATE (a)-[r:FOLLOWS")
     end
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # Extended DSL tests: Complex Cypher patterns (inspired by Neo4j docs)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # ── Deep boolean nesting in WHERE ────────────────────────────────────────
+
+    @testset "WHERE: deeply nested boolean conditions (3+ levels)" begin
+        params = Symbol[]
+        # (A AND B) AND (C OR D)
+        ex = Meta.parse("(p.age > 18 && p.active) && (p.role == \"admin\" || p.role == \"moderator\")")
+        result = _condition_to_cypher(ex, params)
+        @test contains(result, "AND")
+        @test contains(result, "OR")
+        @test contains(result, "p.age > 18")
+        @test contains(result, "p.active")
+        @test contains(result, "p.role = 'admin'")
+        @test contains(result, "p.role = 'moderator'")
+    end
+
+    @testset "WHERE: triple AND chain" begin
+        params = Symbol[]
+        ex = Meta.parse("p.a > 1 && p.b > 2 && p.c > 3")
+        result = _condition_to_cypher(ex, params)
+        @test contains(result, "p.a > 1")
+        @test contains(result, "p.b > 2")
+        @test contains(result, "p.c > 3")
+        # Should have two AND operators
+        @test count("AND", result) == 2
+    end
+
+    @testset "WHERE: NOT combined with OR" begin
+        params = Symbol[]
+        ex = Meta.parse("!(p.deleted || p.archived)")
+        result = _condition_to_cypher(ex, params)
+        @test startswith(result, "NOT (")
+        @test contains(result, "OR")
+    end
+
+    @testset "WHERE: nested NOT" begin
+        params = Symbol[]
+        ex = Meta.parse("!(!(p.active))")
+        result = _condition_to_cypher(ex, params)
+        @test result == "NOT (NOT (p.active))"
+    end
+
+    # ── Arithmetic in WHERE conditions ───────────────────────────────────────
+
+    @testset "WHERE: arithmetic expressions in comparisons" begin
+        params = Symbol[]
+        # p.score * 2 + 10 > $threshold
+        ex = Meta.parse("p.score * 2 + 10 > \$threshold")
+        result = _condition_to_cypher(ex, params)
+        @test contains(result, "*")
+        @test contains(result, "+")
+        @test contains(result, ">")
+        @test contains(result, "\$threshold")
+        @test :threshold in params
+    end
+
+    @testset "WHERE: modulo for even/odd check" begin
+        params = Symbol[]
+        ex = Meta.parse("p.id % 2 == 0")
+        result = _condition_to_cypher(ex, params)
+        @test result == "p.id % 2 = 0"
+    end
+
+    # ── String function edge cases ───────────────────────────────────────────
+
+    @testset "WHERE: startswith with parameter" begin
+        params = Symbol[]
+        ex = Meta.parse("startswith(p.name, \$prefix)")
+        result = _condition_to_cypher(ex, params)
+        @test result == "p.name STARTS WITH \$prefix"
+        @test :prefix in params
+    end
+
+    @testset "WHERE: endswith with parameter" begin
+        params = Symbol[]
+        ex = Meta.parse("endswith(p.email, \$domain)")
+        result = _condition_to_cypher(ex, params)
+        @test result == "p.email ENDS WITH \$domain"
+        @test :domain in params
+    end
+
+    @testset "WHERE: contains with literal" begin
+        params = Symbol[]
+        ex = Meta.parse("contains(p.bio, \"graph\")")
+        result = _condition_to_cypher(ex, params)
+        @test result == "p.bio CONTAINS 'graph'"
+    end
+
+    @testset "WHERE: combined string predicates" begin
+        params = Symbol[]
+        ex = Meta.parse("startswith(p.name, \"A\") && endswith(p.email, \".com\")")
+        result = _condition_to_cypher(ex, params)
+        @test contains(result, "p.name STARTS WITH 'A'")
+        @test contains(result, "p.email ENDS WITH '.com'")
+        @test contains(result, "AND")
+    end
+
+    # ── IS NULL edge cases ───────────────────────────────────────────────────
+
+    @testset "WHERE: IS NULL combined with AND" begin
+        params = Symbol[]
+        ex = Meta.parse("isnothing(p.email) && p.active")
+        result = _condition_to_cypher(ex, params)
+        @test result == "p.email IS NULL AND p.active"
+    end
+
+    @testset "WHERE: IS NULL combined with NOT" begin
+        params = Symbol[]
+        ex = Meta.parse("!(isnothing(p.name))")
+        result = _condition_to_cypher(ex, params)
+        @test result == "NOT (p.name IS NULL)"
+    end
+
+    # ── Cypher string escaping edge cases ────────────────────────────────────
+
+    @testset "_escape_cypher_string: edge cases" begin
+        # Empty string
+        @test _escape_cypher_string("") == ""
+
+        # String with only single quote
+        @test _escape_cypher_string("'") == "\\'"
+
+        # String with only backslash
+        @test _escape_cypher_string("\\") == "\\\\"
+
+        # Mixed quotes and backslashes
+        @test _escape_cypher_string("it's a \\test\\") == "it\\'s a \\\\test\\\\"
+
+        # Multi-line strings (newlines preserved)
+        @test _escape_cypher_string("line1\nline2") == "line1\nline2"
+
+        # Unicode (should pass through)
+        @test _escape_cypher_string("café") == "café"
+        @test _escape_cypher_string("日本語") == "日本語"
+    end
+
+    # ── RETURN edge cases ────────────────────────────────────────────────────
+
+    @testset "RETURN: star (wildcard)" begin
+        @test _return_to_cypher(:*) == "*"
+    end
+
+    @testset "RETURN: nested function calls" begin
+        # toString(count(p))
+        ex = Meta.parse("toString(count(p)) => :total_str")
+        result = _return_to_cypher(ex)
+        @test result == "toString(count(p)) AS total_str"
+    end
+
+    @testset "RETURN: multiple aggregate functions" begin
+        ex = Meta.parse("(min(p.age) => :youngest, max(p.age) => :oldest, sum(p.score) => :total_score)")
+        result = _return_to_cypher(ex)
+        @test contains(result, "min(p.age) AS youngest")
+        @test contains(result, "max(p.age) AS oldest")
+        @test contains(result, "sum(p.score) AS total_score")
+    end
+
+    @testset "RETURN: coalesce function" begin
+        ex = Meta.parse("coalesce(p.nickname, p.name) => :display_name")
+        result = _return_to_cypher(ex)
+        @test result == "coalesce(p.nickname, p.name) AS display_name"
+    end
+
+    @testset "RETURN: numeric literal" begin
+        @test _return_to_cypher(42) == "42"
+    end
+
+    @testset "RETURN: string literal" begin
+        result = _return_to_cypher("hello")
+        @test result == "'hello'"
+    end
+
+    # ── ORDER BY edge cases ──────────────────────────────────────────────────
+
+    @testset "ORDER BY: single field DESC" begin
+        ex = Meta.parse("p.created_at")
+        @test _orderby_to_cypher([ex, QuoteNode(:desc)]) == "p.created_at DESC"
+    end
+
+    @testset "ORDER BY: function call in order by" begin
+        # ORDER BY count(r) DESC — typically used with WITH, but syntax should compile
+        ex = Meta.parse("count(r)")
+        @test _orderby_to_cypher([ex, QuoteNode(:desc)]) == "count(r) DESC"
+    end
+
+    @testset "ORDER BY: three fields all with directions" begin
+        e1 = Meta.parse("p.last_name")
+        e2 = Meta.parse("p.first_name")
+        e3 = Meta.parse("p.age")
+        result = _orderby_to_cypher([e1, QuoteNode(:asc), e2, QuoteNode(:asc), e3, QuoteNode(:desc)])
+        @test result == "p.last_name ASC, p.first_name ASC, p.age DESC"
+    end
+
+    # ── SET edge cases ───────────────────────────────────────────────────────
+
+    @testset "SET: literal string value" begin
+        params = Symbol[]
+        ex = Meta.parse("p.status = \"active\"")
+        result = _set_to_cypher(ex, params)
+        @test result == "p.status = 'active'"
+        @test isempty(params)
+    end
+
+    @testset "SET: literal numeric value" begin
+        params = Symbol[]
+        ex = Meta.parse("p.score = 100")
+        result = _set_to_cypher(ex, params)
+        @test result == "p.score = 100"
+    end
+
+    @testset "SET: null value" begin
+        params = Symbol[]
+        ex = Expr(:(=), Meta.parse("p.email"), nothing)
+        result = _set_to_cypher(ex, params)
+        @test result == "p.email = null"
+    end
+
+    @testset "SET: error on non-assignment" begin
+        params = Symbol[]
+        @test_throws ErrorException _set_to_cypher(:p, params)
+    end
+
+    # ── DELETE edge cases ────────────────────────────────────────────────────
+
+    @testset "DELETE: multiple items" begin
+        ex = Meta.parse("(p, r, q)")
+        result = _delete_to_cypher(ex)
+        @test result == "p, r, q"
+    end
+
+    @testset "DELETE: single variable" begin
+        @test _delete_to_cypher(:n) == "n"
+    end
+
+    # ── WITH clause edge cases ───────────────────────────────────────────────
+
+    @testset "WITH: single variable" begin
+        @test _with_to_cypher(:p) == "p"
+    end
+
+    @testset "WITH: multiple items with aliases" begin
+        ex = Meta.parse("(p.name => :name, count(r) => :cnt)")
+        result = _with_to_cypher(ex)
+        @test result == "p.name AS name, count(r) AS cnt"
+    end
+
+    # ── UNWIND edge cases ────────────────────────────────────────────────────
+
+    @testset "UNWIND: error on invalid expression" begin
+        params = Symbol[]
+        @test_throws ErrorException _unwind_to_cypher(:invalid, params)
+    end
+
+    # ── LIMIT/SKIP edge cases ────────────────────────────────────────────────
+
+    @testset "LIMIT/SKIP: zero" begin
+        params = Symbol[]
+        @test _limit_skip_to_cypher(0, params) == "0"
+    end
+
+    @testset "LIMIT/SKIP: large number" begin
+        params = Symbol[]
+        @test _limit_skip_to_cypher(1000000, params) == "1000000"
+    end
+
+    @testset "LIMIT/SKIP: error on invalid type" begin
+        params = Symbol[]
+        @test_throws ErrorException _limit_skip_to_cypher(3.14, params)
+    end
+
+    # ── Node pattern error cases ─────────────────────────────────────────────
+
+    @testset "_node_to_cypher: error on number" begin
+        @test_throws ErrorException _node_to_cypher(42)
+    end
+
+    @testset "_node_to_cypher: error on string" begin
+        @test_throws ErrorException _node_to_cypher("invalid")
+    end
+
+    # ── Relationship bracket error cases ─────────────────────────────────────
+
+    @testset "_rel_bracket_to_cypher: error on empty brackets" begin
+        # [] — empty vect
+        ex = Expr(:vect)
+        @test_throws ErrorException _rel_bracket_to_cypher(ex)
+    end
+
+    @testset "_rel_bracket_to_cypher: error on non-vect" begin
+        @test_throws ErrorException _rel_bracket_to_cypher(:invalid)
+    end
+
+    # ── _expr_to_cypher error cases ──────────────────────────────────────────
+
+    @testset "_expr_to_cypher: error on unsupported type" begin
+        # Bool <: Number so it's handled; use a Regex which is truly unsupported
+        @test_throws ErrorException Neo4jQuery._expr_to_cypher(r"regex")
+    end
+
+    # ── _condition_to_cypher error cases ─────────────────────────────────────
+
+    @testset "_condition_to_cypher: error on unsupported AST" begin
+        params = Symbol[]
+        # An unsupported Expr type
+        @test_throws ErrorException _condition_to_cypher(Expr(:curly, :x), params)
+    end
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Complex @query macro scenarios (Cypher-doc-inspired patterns)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @testset "@query: shortest path style (multi-hop)" begin
+        ex = @macroexpand @query conn begin
+            @match (a:Person) - [r1:KNOWS] -> (b:Person) - [r2:KNOWS] -> (c:Person) - [r3:KNOWS] -> (d:Person)
+            @where a.name == $start_name && d.name == $end_name
+            @return a.name, b.name, c.name, d.name
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "(a:Person)-[r1:KNOWS]->(b:Person)-[r2:KNOWS]->(c:Person)-[r3:KNOWS]->(d:Person)")
+        @test contains(cypher_str, "a.name = \$start_name")
+        @test contains(cypher_str, "d.name = \$end_name")
+    end
+
+    @testset "@query: recommendation engine pattern" begin
+        # Friends who like the same things but person doesn't have yet
+        ex = @macroexpand @query conn begin
+            @match (me:User) - [:FRIENDS_WITH] -> (friend:User) - [:LIKES] -> (item:Product)
+            @where me.name == $user_name
+            @return distinct item.name => :recommendation, count(friend) => :num_friends
+            @orderby count(friend) :desc
+            @limit 10
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "(me:User)-[:FRIENDS_WITH]->(friend:User)-[:LIKES]->(item:Product)")
+        @test contains(cypher_str, "RETURN DISTINCT")
+        @test contains(cypher_str, "count(friend) AS num_friends")
+        @test contains(cypher_str, "ORDER BY count(friend) DESC")
+    end
+
+    @testset "@query: graph analytics — degree distribution" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person) - [r:KNOWS] -> (q:Person)
+            @with p, count(r) => :degree
+            @return degree, count(p) => :num_people
+            @orderby degree :desc
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "WITH p, count(r) AS degree")
+        @test contains(cypher_str, "RETURN degree, count(p) AS num_people")
+        @test contains(cypher_str, "ORDER BY degree DESC")
+    end
+
+    @testset "@query: UNWIND + MERGE for idempotent batch import" begin
+        ex = @macroexpand @query conn begin
+            @unwind $batch => :row
+            @merge (p:Person)
+            @on_create_set p.name = row.name
+            @on_create_set p.created_at = row.ts
+            @on_match_set p.updated_at = row.ts
+            @return p
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "UNWIND \$batch AS row")
+        @test contains(cypher_str, "MERGE (p:Person)")
+        @test contains(cypher_str, "ON CREATE SET p.name = row.name")
+        @test contains(cypher_str, "ON CREATE SET p.created_at = row.ts")
+        @test contains(cypher_str, "ON MATCH SET p.updated_at = row.ts")
+    end
+
+    @testset "@query: multiple MATCH clauses" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @match (c:Company)
+            @where p.employer == c.name
+            @return p.name => :employee, c.name => :company
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "MATCH (p:Person) MATCH (c:Company)")
+    end
+
+    @testset "@query: MATCH + OPTIONAL MATCH + WHERE on optional" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @where p.age > 18
+            @optional_match (p) - [r:REVIEWED] -> (m:Movie)
+            @return p.name => :person, collect(m.title) => :reviewed_movies
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "MATCH (p:Person)")
+        @test contains(cypher_str, "WHERE p.age > 18")
+        @test contains(cypher_str, "OPTIONAL MATCH (p)-[r:REVIEWED]->(m:Movie)")
+        @test contains(cypher_str, "collect(m.title) AS reviewed_movies")
+    end
+
+    @testset "@query: CREATE relationship pattern in @query" begin
+        ex = @macroexpand @query conn begin
+            @match (a:Person), (b:Person)
+            @where a.name == $name1 && b.name == $name2
+            @create (a) - [r:KNOWS] -> (b)
+            @set r.since = $year
+            @return r
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "MATCH (a:Person), (b:Person)")
+        @test contains(cypher_str, "CREATE (a)-[r:KNOWS]->(b)")
+        @test contains(cypher_str, "SET r.since = \$year")
+    end
+
+    @testset "@query: SET without RETURN (mutation-only)" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @where p.name == $name
+            @set p.verified = true
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "MATCH (p:Person)")
+        @test contains(cypher_str, "WHERE p.name = \$name")
+        @test contains(cypher_str, "SET p.verified = true")
+        @test !contains(cypher_str, "RETURN")
+    end
+
+    @testset "@query: DELETE without RETURN" begin
+        ex = @macroexpand @query conn begin
+            @match (p:TempNode)
+            @detach_delete p
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "MATCH (p:TempNode)")
+        @test contains(cypher_str, "DETACH DELETE p")
+        @test !contains(cypher_str, "RETURN")
+    end
+
+    @testset "@query: WHERE with IN and list parameter" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @where in(p.name, $allowed_names)
+            @return p
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "p.name IN \$allowed_names")
+    end
+
+    @testset "@query: WHERE with multiple parameters reused" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @where p.age >= $min_val && p.age <= $max_val && p.score >= $min_val
+            @return p.name
+        end
+        # min_val used twice but should appear once in params
+        param_names = _extract_param_names_from_expansion(ex)
+        @test count(==("min_val"), param_names) == 1
+        @test "max_val" in param_names
+    end
+
+    @testset "@query: WHERE with equality to string literal containing special chars" begin
+        ex = @macroexpand @query conn begin
+            @match (b:Book)
+            @where b.title == "Gödel's Theorem"
+            @return b
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "b.title = 'Gödel\\'s Theorem'")
+    end
+
+    @testset "@query: complex aggregation pipeline" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person) - [r:KNOWS] -> (q:Person)
+            @with p.name => :person, count(q) => :friend_count, collect(q.name) => :friends
+            @where friend_count > $min_friends
+            @return person, friend_count, friends
+            @orderby friend_count :desc
+            @limit $top_n
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "WITH p.name AS person, count(q) AS friend_count, collect(q.name) AS friends")
+        @test contains(cypher_str, "WHERE friend_count > \$min_friends")
+        @test contains(cypher_str, "RETURN person, friend_count, friends")
+    end
+
+    @testset "@query: RETURN * (wildcard)" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person) - [r:KNOWS] -> (q:Person)
+            @return *
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "RETURN *")
+    end
+
+    @testset "@query: anonymous nodes and relationships" begin
+        ex = @macroexpand @query conn begin
+            @match (:Person) - [:KNOWS] -> (:Person) - [:WORKS_AT] -> (c:Company)
+            @return c.name => :company
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "(:Person)-[:KNOWS]->(:Person)-[:WORKS_AT]->(c:Company)")
+    end
+
+    @testset "@query: simple directed arrow (no relationship type)" begin
+        ex = @macroexpand @query conn begin
+            @match (a:Node) --> (b:Node)
+            @return a, b
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "(a:Node)-->(b:Node)")
+    end
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Schema edge cases
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @testset "Schema: empty properties validation passes" begin
+        schema = NodeSchema(:Empty, PropertyDef[])
+        # No required props, any props valid (with warnings)
+        @test_logs (:warn,) validate_node_properties(schema, Dict{String,Any}("x" => 1))
+        # No props at all — valid
+        validate_node_properties(schema, Dict{String,Any}())
+    end
+
+    @testset "Schema: all-optional properties" begin
+        schema = NodeSchema(:AllOpt, [
+            PropertyDef(:a, :String, false, ""),
+            PropertyDef(:b, :Int, false, 0),
+        ])
+        # Valid even with no props supplied
+        validate_node_properties(schema, Dict{String,Any}())
+        # Valid with partial
+        validate_node_properties(schema, Dict{String,Any}("a" => "hello"))
+    end
+
+    @testset "Schema: multiple required missing" begin
+        schema = NodeSchema(:Strict, [
+            PropertyDef(:x, :Int, true, nothing),
+            PropertyDef(:y, :Int, true, nothing),
+            PropertyDef(:z, :Int, true, nothing),
+        ])
+        # Missing one required
+        @test_throws ErrorException validate_node_properties(schema, Dict{String,Any}("x" => 1, "y" => 2))
+        # Missing all required
+        @test_throws ErrorException validate_node_properties(schema, Dict{String,Any}())
+    end
+
+    @testset "Schema: RelSchema validation for missing required" begin
+        schema = RelSchema(:EMPLOYS, [
+            PropertyDef(:since, :Int, true, nothing),
+            PropertyDef(:role, :String, true, nothing),
+        ])
+        @test_throws ErrorException validate_rel_properties(schema, Dict{String,Any}("since" => 2020))
+        # All required present
+        validate_rel_properties(schema, Dict{String,Any}("since" => 2020, "role" => "dev"))
+    end
+
+    @testset "Schema: _parse_schema_block errors" begin
+        # Non-block expr
+        @test_throws ErrorException _parse_schema_block(:(x + y))
+
+        # Invalid entry (just a number)
+        @test_throws ErrorException _parse_schema_block(:(
+            begin
+                42
+            end
+        ))
+    end
+
+    @testset "Schema: overwrite existing schema" begin
+        empty!(Neo4jQuery._NODE_SCHEMAS)
+        @node Overwrite begin
+            a::Int
+        end
+        @test length(Overwrite.properties) == 1
+        # Redefine with different properties
+        @node Overwrite begin
+            b::String
+            c::Float64
+        end
+        @test length(Overwrite.properties) == 2
+        @test Overwrite.properties[1].name == :b
+        # Registry should have the latest
+        @test get_node_schema(:Overwrite).properties[1].name == :b
+    end
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # @create / @merge / @relate edge cases & error paths
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @testset "@create: multiple properties" begin
+        ex = @macroexpand @create conn Widget(name="Gear", weight=5.5, color="blue", active=true)
+        cypher = _find_cypher_string(ex)
+        @test cypher !== nothing
+        @test contains(cypher, "CREATE (n:Widget")
+        @test contains(cypher, "name: \$name")
+        @test contains(cypher, "weight: \$weight")
+        @test contains(cypher, "color: \$color")
+        @test contains(cypher, "active: \$active")
+    end
+
+    @testset "@merge: simple merge (no on_create/on_match)" begin
+        ex = @macroexpand @merge conn Device(serial="XYZ", model="A1")
+        cypher = _find_cypher_string(ex)
+        @test cypher !== nothing
+        @test contains(cypher, "MERGE (n:Device")
+        @test contains(cypher, "serial: \$serial")
+        @test contains(cypher, "model: \$model")
+        @test !contains(cypher, "ON CREATE")
+        @test !contains(cypher, "ON MATCH")
+    end
+
+    @testset "@relate: relationship with multiple properties" begin
+        ex = @macroexpand @relate conn alice => RATED(score=5, comment="great", date="2026-01-01") => bob
+        cypher = _find_cypher_string(ex)
+        @test cypher !== nothing
+        @test contains(cypher, "CREATE (a)-[r:RATED")
+        @test contains(cypher, "score: \$score")
+        @test contains(cypher, "comment: \$comment")
+        @test contains(cypher, "date: \$date")
+    end
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Mixed clause ordering sanity checks
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @testset "@query: SET flushed before ORDER BY" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @set p.seen = true
+            @orderby p.name
+            @return p
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        # SET should appear before ORDER BY
+        set_idx = findfirst("SET", cypher_str)
+        order_idx = findfirst("ORDER BY", cypher_str)
+        @test set_idx !== nothing
+        @test order_idx !== nothing
+        @test first(set_idx) < first(order_idx)
+    end
+
+    @testset "@query: SET flushed before SKIP" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @set p.counter = 0
+            @skip 5
+            @return p
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        set_idx = findfirst("SET", cypher_str)
+        skip_idx = findfirst("SKIP", cypher_str)
+        @test set_idx !== nothing
+        @test skip_idx !== nothing
+        @test first(set_idx) < first(skip_idx)
+    end
+
+    @testset "@query: SET flushed before LIMIT" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @set p.processed = true
+            @limit 1
+            @return p
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        set_idx = findfirst("SET", cypher_str)
+        limit_idx = findfirst("LIMIT", cypher_str)
+        @test set_idx !== nothing
+        @test limit_idx !== nothing
+        @test first(set_idx) < first(limit_idx)
+    end
+
+    @testset "@query: multiple SET coalesced before RETURN" begin
+        ex = @macroexpand @query conn begin
+            @match (p:Person)
+            @set p.a = 1
+            @set p.b = 2
+            @set p.c = 3
+            @return p
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        # All three assignments in a single SET clause
+        @test contains(cypher_str, "SET p.a = 1, p.b = 2, p.c = 3")
+    end
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # @query block parser error paths
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @testset "_parse_query_block: non-macro inside block" begin
+        block = :(
+            begin
+                x = 1
+            end
+        )
+        @test_throws ErrorException _parse_query_block(block)
+    end
+
+    @testset "_parse_query_block: non-block argument" begin
+        @test_throws ErrorException _parse_query_block(:(x + y))
+    end
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Cypher doc-inspired real-world patterns (compile-time only)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @testset "@query: biomedical graph pattern" begin
+        ex = @macroexpand @query conn begin
+            @match (g:Gene) - [:ASSOCIATED_WITH] -> (d:Disease)
+            @match (d) - [:TREATED_BY] -> (drug:Drug)
+            @where g.name == $gene_name
+            @return g.name => :gene, d.name => :disease, collect(drug.name) => :drugs
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "(g:Gene)-[:ASSOCIATED_WITH]->(d:Disease)")
+        @test contains(cypher_str, "MATCH (d)-[:TREATED_BY]->(drug:Drug)")
+        @test contains(cypher_str, "collect(drug.name) AS drugs")
+    end
+
+    @testset "@query: knowledge graph pattern" begin
+        ex = @macroexpand @query conn begin
+            @match (e:Entity) - [r:RELATED_TO] -> (t:Topic)
+            @optional_match (t) - [:HAS_SUBTOPIC] -> (sub:Topic)
+            @with e, t, collect(sub.name) => :subtopics
+            @return e.name => :entity, t.name => :topic, subtopics
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "(e:Entity)-[r:RELATED_TO]->(t:Topic)")
+        @test contains(cypher_str, "OPTIONAL MATCH (t)-[:HAS_SUBTOPIC]->(sub:Topic)")
+        @test contains(cypher_str, "WITH e, t, collect(sub.name) AS subtopics")
+    end
+
+    @testset "@query: access control graph" begin
+        ex = @macroexpand @query conn begin
+            @match (u:User) - [:MEMBER_OF] -> (g:Group) - [:HAS_PERMISSION] -> (r:Resource)
+            @where u.name == $username && r.type == $resource_type
+            @return distinct r.name => :resource
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "(u:User)-[:MEMBER_OF]->(g:Group)-[:HAS_PERMISSION]->(r:Resource)")
+        @test contains(cypher_str, "u.name = \$username")
+        @test contains(cypher_str, "r.type = \$resource_type")
+        @test contains(cypher_str, "RETURN DISTINCT")
+    end
+
+    @testset "@query: social network mutual friends (via two matches)" begin
+        # The DSL supports left-to-right arrows only; model mutual friends
+        # as two separate MATCH clauses pointing toward the mutual node.
+        ex = @macroexpand @query conn begin
+            @match (a:Person) - [:KNOWS] -> (mutual:Person)
+            @match (b:Person) - [:KNOWS] -> (mutual:Person)
+            @where a.name == $person_a && b.name == $person_b
+            @return mutual.name => :mutual_friend
+        end
+        cypher_str = _extract_cypher_from_expansion(ex)
+        @test contains(cypher_str, "MATCH (a:Person)-[:KNOWS]->(mutual:Person)")
+        @test contains(cypher_str, "MATCH (b:Person)-[:KNOWS]->(mutual:Person)")
+        @test contains(cypher_str, "a.name = \$person_a")
+        @test contains(cypher_str, "b.name = \$person_b")
+    end
+
 end  # @testset "DSL"
