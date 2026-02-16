@@ -1,7 +1,7 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Biomedical Case Study · Neo4jQuery.jl</title><meta name="title" content="Biomedical Case Study · Neo4jQuery.jl"/><meta property="og:title" content="Biomedical Case Study · Neo4jQuery.jl"/><meta property="twitter:title" content="Biomedical Case Study · Neo4jQuery.jl"/><meta name="description" content="Documentation for Neo4jQuery.jl."/><meta property="og:description" content="Documentation for Neo4jQuery.jl."/><meta property="twitter:description" content="Documentation for Neo4jQuery.jl."/><meta property="og:url" content="https://algunion.github.io/Neo4jQuery.jl/guide/biomedical_case_study/"/><meta property="twitter:url" content="https://algunion.github.io/Neo4jQuery.jl/guide/biomedical_case_study/"/><link rel="canonical" href="https://algunion.github.io/Neo4jQuery.jl/guide/biomedical_case_study/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">Neo4jQuery.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../getting_started/">Getting Started</a></li><li><span class="tocitem">Guide</span><ul><li><a class="tocitem" href="../connections/">Connections</a></li><li><a class="tocitem" href="../queries/">Queries</a></li><li><a class="tocitem" href="../transactions/">Transactions</a></li><li><a class="tocitem" href="../streaming/">Streaming</a></li><li><a class="tocitem" href="../dsl/">DSL</a></li><li class="is-active"><a class="tocitem" href>Biomedical Case Study</a><ul class="internal"><li><a class="tocitem" href="#Domain-model"><span>Domain model</span></a></li><li><a class="tocitem" href="#1.-Schema-declarations"><span>1. Schema declarations</span></a></li><li><a class="tocitem" href="#2.-Creating-nodes"><span>2. Creating nodes</span></a></li><li><a class="tocitem" href="#3.-Creating-relationships"><span>3. Creating relationships</span></a></li><li><a class="tocitem" href="#4.-Complex-queries-—-side-by-side"><span>4. Complex queries — side by side</span></a></li><li><a class="tocitem" href="#Key-takeaways"><span>Key takeaways</span></a></li></ul></li></ul></li><li><a class="tocitem" href="../../api/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Guide</a></li><li class="is-active"><a href>Biomedical Case Study</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Biomedical Case Study</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/algunion/Neo4jQuery.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/algunion/Neo4jQuery.jl/blob/main/docs/src/guide/biomedical_case_study.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="biomedical-case-study"><a class="docs-heading-anchor" href="#biomedical-case-study">Biomedical Knowledge Graph — Case Study</a><a id="biomedical-case-study-1"></a><a class="docs-heading-anchor-permalink" href="#biomedical-case-study" title="Permalink"></a></h1><p>This case study demonstrates building a realistic biomedical knowledge graph using the Neo4jQuery DSL. It covers schema declarations, node/relationship creation, and complex analytical queries — with side-by-side comparisons of <strong>raw Cypher</strong> vs the <strong>Julia DSL</strong>.</p><p>The full runnable script is in <a href="https://github.com/algunion/Neo4jQuery.jl/blob/main/test/biomedical_graph_test.jl"><code>test/biomedical_graph_test.jl</code></a>.</p><hr/><h2 id="Domain-model"><a class="docs-heading-anchor" href="#Domain-model">Domain model</a><a id="Domain-model-1"></a><a class="docs-heading-anchor-permalink" href="#Domain-model" title="Permalink"></a></h2><p>The graph models a clinical/biomedical knowledge base with <strong>12 node types</strong> and <strong>17 relationship types</strong>:</p><table><tr><th style="text-align: left">Node Labels</th><th style="text-align: left">Relationship Types</th></tr><tr><td style="text-align: left">Disease</td><td style="text-align: left">ASSOCIATED_WITH</td></tr><tr><td style="text-align: left">Gene</td><td style="text-align: left">TARGETS</td></tr><tr><td style="text-align: left">Protein</td><td style="text-align: left">INHIBITS</td></tr><tr><td style="text-align: left">Drug</td><td style="text-align: left">ENCODES</td></tr><tr><td style="text-align: left">ClinicalTrial</td><td style="text-align: left">PARTICIPATES_IN</td></tr><tr><td style="text-align: left">Patient</td><td style="text-align: left">DIAGNOSED_WITH</td></tr><tr><td style="text-align: left">Hospital</td><td style="text-align: left">ENROLLED_IN</td></tr><tr><td style="text-align: left">Physician</td><td style="text-align: left">TREATS</td></tr><tr><td style="text-align: left">Pathway</td><td style="text-align: left">PRESCRIBED_BY</td></tr><tr><td style="text-align: left">Symptom</td><td style="text-align: left">LOCATED_AT</td></tr><tr><td style="text-align: left">Biomarker</td><td style="text-align: left">PRESENTS_WITH</td></tr><tr><td style="text-align: left">Publication</td><td style="text-align: left">INDICATES, PUBLISHED_IN</td></tr><tr><td style="text-align: left"></td><td style="text-align: left">EXPRESSES, HAS_SIDE_EFFECT</td></tr><tr><td style="text-align: left"></td><td style="text-align: left">INTERACTS_WITH</td></tr></table><hr/><h2 id="1.-Schema-declarations"><a class="docs-heading-anchor" href="#1.-Schema-declarations">1. Schema declarations</a><a id="1.-Schema-declarations-1"></a><a class="docs-heading-anchor-permalink" href="#1.-Schema-declarations" title="Permalink"></a></h2><h3 id="Raw-Cypher"><a class="docs-heading-anchor" href="#Raw-Cypher">Raw Cypher</a><a id="Raw-Cypher-1"></a><a class="docs-heading-anchor-permalink" href="#Raw-Cypher" title="Permalink"></a></h3><p>Cypher has no built-in schema declarations. You rely on conventions and documentation:</p><pre><code class="language-cypher hljs">// No schema — just hope everyone remembers the properties
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Biomedical Case Study · Neo4jQuery.jl</title><meta name="title" content="Biomedical Case Study · Neo4jQuery.jl"/><meta property="og:title" content="Biomedical Case Study · Neo4jQuery.jl"/><meta property="twitter:title" content="Biomedical Case Study · Neo4jQuery.jl"/><meta name="description" content="Documentation for Neo4jQuery.jl."/><meta property="og:description" content="Documentation for Neo4jQuery.jl."/><meta property="twitter:description" content="Documentation for Neo4jQuery.jl."/><meta property="og:url" content="https://algunion.github.io/Neo4jQuery.jl/guide/biomedical_case_study/"/><meta property="twitter:url" content="https://algunion.github.io/Neo4jQuery.jl/guide/biomedical_case_study/"/><link rel="canonical" href="https://algunion.github.io/Neo4jQuery.jl/guide/biomedical_case_study/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">Neo4jQuery.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../getting_started/">Getting Started</a></li><li><span class="tocitem">Guide</span><ul><li><a class="tocitem" href="../connections/">Connections</a></li><li><a class="tocitem" href="../queries/">Queries</a></li><li><a class="tocitem" href="../transactions/">Transactions</a></li><li><a class="tocitem" href="../streaming/">Streaming</a></li><li><a class="tocitem" href="../dsl/">DSL</a></li><li class="is-active"><a class="tocitem" href>Biomedical Case Study</a><ul class="internal"><li><a class="tocitem" href="#Domain-model"><span>Domain model</span></a></li><li><a class="tocitem" href="#1.-Schema-declarations"><span>1. Schema declarations</span></a></li><li><a class="tocitem" href="#2.-Creating-nodes"><span>2. Creating nodes</span></a></li><li><a class="tocitem" href="#3.-Creating-relationships"><span>3. Creating relationships</span></a></li><li><a class="tocitem" href="#4.-Complex-queries-—-side-by-side"><span>4. Complex queries — side by side</span></a></li><li><a class="tocitem" href="#Key-takeaways"><span>Key takeaways</span></a></li></ul></li></ul></li><li><a class="tocitem" href="../../api/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Guide</a></li><li class="is-active"><a href>Biomedical Case Study</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Biomedical Case Study</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/algunion/Neo4jQuery.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/algunion/Neo4jQuery.jl/blob/main/docs/src/guide/biomedical_case_study.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="biomedical-case-study"><a class="docs-heading-anchor" href="#biomedical-case-study">Biomedical Knowledge Graph — Case Study</a><a id="biomedical-case-study-1"></a><a class="docs-heading-anchor-permalink" href="#biomedical-case-study" title="Permalink"></a></h1><p>This case study demonstrates building a realistic biomedical knowledge graph using the Neo4jQuery DSL. It covers schema declarations, node/relationship creation, and complex analytical queries — with side-by-side comparisons of <strong>raw Cypher</strong> vs the <strong><code>@query</code> DSL</strong> vs the <strong><code>@graph</code> DSL</strong>.</p><p>Neo4jQuery offers two macro-based query interfaces:</p><ul><li><strong><code>@query</code></strong> — uses <code>@sub-macro</code> syntax (<code>@match</code>, <code>@where</code>, <code>@return</code>, …) and Cypher-like patterns <code>(p:Person)-[r:KNOWS]-&gt;(q:Person)</code></li><li><strong><code>@graph</code></strong> — uses plain function-call syntax (<code>where()</code>, <code>ret()</code>, <code>order()</code>, …) and Julia-native <code>&gt;&gt;</code> chain patterns <code>p::Person &gt;&gt; r::KNOWS &gt;&gt; q::Person</code></li></ul><p>Both compile to <strong>identical Cypher</strong> at macro expansion time. The examples below show all three approaches.</p><p>The full runnable scripts are:</p><ul><li><a href="https://github.com/algunion/Neo4jQuery.jl/blob/main/test/biomedical_graph_test.jl"><code>test/biomedical_graph_test.jl</code></a> — <code>@query</code> / <code>@create</code> / <code>@relate</code> version</li><li><a href="https://github.com/algunion/Neo4jQuery.jl/blob/main/test/biomedical_graph_dsl_test.jl"><code>test/biomedical_graph_dsl_test.jl</code></a> — <code>@graph</code> version</li></ul><hr/><h2 id="Domain-model"><a class="docs-heading-anchor" href="#Domain-model">Domain model</a><a id="Domain-model-1"></a><a class="docs-heading-anchor-permalink" href="#Domain-model" title="Permalink"></a></h2><p>The graph models a clinical/biomedical knowledge base with <strong>12 node types</strong> and <strong>17 relationship types</strong>:</p><table><tr><th style="text-align: left">Node Labels</th><th style="text-align: left">Relationship Types</th></tr><tr><td style="text-align: left">Disease</td><td style="text-align: left">ASSOCIATED_WITH</td></tr><tr><td style="text-align: left">Gene</td><td style="text-align: left">TARGETS</td></tr><tr><td style="text-align: left">Protein</td><td style="text-align: left">INHIBITS</td></tr><tr><td style="text-align: left">Drug</td><td style="text-align: left">ENCODES</td></tr><tr><td style="text-align: left">ClinicalTrial</td><td style="text-align: left">PARTICIPATES_IN</td></tr><tr><td style="text-align: left">Patient</td><td style="text-align: left">DIAGNOSED_WITH</td></tr><tr><td style="text-align: left">Hospital</td><td style="text-align: left">ENROLLED_IN</td></tr><tr><td style="text-align: left">Physician</td><td style="text-align: left">TREATS</td></tr><tr><td style="text-align: left">Pathway</td><td style="text-align: left">PRESCRIBED_BY</td></tr><tr><td style="text-align: left">Symptom</td><td style="text-align: left">LOCATED_AT</td></tr><tr><td style="text-align: left">Biomarker</td><td style="text-align: left">PRESENTS_WITH</td></tr><tr><td style="text-align: left">Publication</td><td style="text-align: left">INDICATES, PUBLISHED_IN</td></tr><tr><td style="text-align: left"></td><td style="text-align: left">EXPRESSES, HAS_SIDE_EFFECT</td></tr><tr><td style="text-align: left"></td><td style="text-align: left">INTERACTS_WITH</td></tr></table><hr/><h2 id="1.-Schema-declarations"><a class="docs-heading-anchor" href="#1.-Schema-declarations">1. Schema declarations</a><a id="1.-Schema-declarations-1"></a><a class="docs-heading-anchor-permalink" href="#1.-Schema-declarations" title="Permalink"></a></h2><h3 id="Raw-Cypher"><a class="docs-heading-anchor" href="#Raw-Cypher">Raw Cypher</a><a id="Raw-Cypher-1"></a><a class="docs-heading-anchor-permalink" href="#Raw-Cypher" title="Permalink"></a></h3><p>Cypher has no built-in schema declarations. You rely on conventions and documentation:</p><pre><code class="language-cypher hljs">// No schema — just hope everyone remembers the properties
 CREATE (d:Disease {name: &quot;Breast Cancer&quot;, icd10_code: &quot;C50&quot;, category: &quot;Oncology&quot;, chronic: true})
-// Oops, someone writes: CREATE (d:Disease {naam: &quot;Lung Cancer&quot;})  — no error</code></pre><h3 id="Julia-DSL"><a class="docs-heading-anchor" href="#Julia-DSL">Julia DSL</a><a id="Julia-DSL-1"></a><a class="docs-heading-anchor-permalink" href="#Julia-DSL" title="Permalink"></a></h3><pre><code class="language-julia hljs">using Neo4jQuery
+// Oops, someone writes: CREATE (d:Disease {naam: &quot;Lung Cancer&quot;})  — no error</code></pre><h3 id="Julia-DSL-(@query-and-@graph-share-the-same-schemas)"><a class="docs-heading-anchor" href="#Julia-DSL-(@query-and-@graph-share-the-same-schemas)">Julia DSL (<code>@query</code> and <code>@graph</code> share the same schemas)</a><a id="Julia-DSL-(@query-and-@graph-share-the-same-schemas)-1"></a><a class="docs-heading-anchor-permalink" href="#Julia-DSL-(@query-and-@graph-share-the-same-schemas)" title="Permalink"></a></h3><pre><code class="language-julia hljs">using Neo4jQuery
 
 @node Disease begin
     name::String
@@ -58,7 +58,7 @@ end
 @rel DIAGNOSED_WITH begin
     diagnosis_date::String
     stage::String = &quot;&quot;
-end</code></pre><p>Schemas enable <strong>runtime validation</strong> — misspelled properties, missing required fields, and type mismatches are caught immediately.</p><hr/><h2 id="2.-Creating-nodes"><a class="docs-heading-anchor" href="#2.-Creating-nodes">2. Creating nodes</a><a id="2.-Creating-nodes-1"></a><a class="docs-heading-anchor-permalink" href="#2.-Creating-nodes" title="Permalink"></a></h2><h3 id="Raw-Cypher-2"><a class="docs-heading-anchor" href="#Raw-Cypher-2">Raw Cypher</a><a class="docs-heading-anchor-permalink" href="#Raw-Cypher-2" title="Permalink"></a></h3><pre><code class="language-cypher hljs">CREATE (d:Disease {name: &#39;Breast Cancer&#39;, icd10_code: &#39;C50&#39;, category: &#39;Oncology&#39;, chronic: true})
+end</code></pre><p>Schemas enable <strong>runtime validation</strong> — misspelled properties, missing required fields, and type mismatches are caught immediately. Both <code>@query</code> and <code>@graph</code> use the same schema registry.</p><hr/><h2 id="2.-Creating-nodes"><a class="docs-heading-anchor" href="#2.-Creating-nodes">2. Creating nodes</a><a id="2.-Creating-nodes-1"></a><a class="docs-heading-anchor-permalink" href="#2.-Creating-nodes" title="Permalink"></a></h2><h3 id="Raw-Cypher-2"><a class="docs-heading-anchor" href="#Raw-Cypher-2">Raw Cypher</a><a class="docs-heading-anchor-permalink" href="#Raw-Cypher-2" title="Permalink"></a></h3><pre><code class="language-cypher hljs">CREATE (d:Disease {name: &#39;Breast Cancer&#39;, icd10_code: &#39;C50&#39;, category: &#39;Oncology&#39;, chronic: true})
 RETURN d
 
 CREATE (g:Gene {symbol: &#39;BRCA1&#39;, full_name: &#39;BRCA1 DNA Repair Associated&#39;,
@@ -67,7 +67,7 @@ RETURN g
 
 CREATE (drug:Drug {name: &#39;Trastuzumab&#39;, trade_name: &#39;Herceptin&#39;,
                    mechanism: &#39;HER2 monoclonal antibody&#39;, approved_year: 1998})
-RETURN drug</code></pre><h3 id="Julia-DSL-2"><a class="docs-heading-anchor" href="#Julia-DSL-2">Julia DSL</a><a class="docs-heading-anchor-permalink" href="#Julia-DSL-2" title="Permalink"></a></h3><pre><code class="language-julia hljs">breast_cancer = @create conn Disease(
+RETURN drug</code></pre><h3 id="Julia-DSL-—-@create-macro"><a class="docs-heading-anchor" href="#Julia-DSL-—-@create-macro">Julia DSL — <code>@create</code> macro</a><a id="Julia-DSL-—-@create-macro-1"></a><a class="docs-heading-anchor-permalink" href="#Julia-DSL-—-@create-macro" title="Permalink"></a></h3><pre><code class="language-julia hljs">breast_cancer = @create conn Disease(
     name=&quot;Breast Cancer&quot;,
     icd10_code=&quot;C50&quot;,
     category=&quot;Oncology&quot;,
@@ -82,32 +82,90 @@ brca1 = @create conn Gene(
 trastuzumab = @create conn Drug(
     name=&quot;Trastuzumab&quot;, trade_name=&quot;Herceptin&quot;,
     mechanism=&quot;HER2 monoclonal antibody&quot;, approved_year=1998
-)</code></pre><p>Each call returns a <code>Node</code> object you can use directly to create relationships.</p><hr/><h2 id="3.-Creating-relationships"><a class="docs-heading-anchor" href="#3.-Creating-relationships">3. Creating relationships</a><a id="3.-Creating-relationships-1"></a><a class="docs-heading-anchor-permalink" href="#3.-Creating-relationships" title="Permalink"></a></h2><h3 id="Raw-Cypher-3"><a class="docs-heading-anchor" href="#Raw-Cypher-3">Raw Cypher</a><a class="docs-heading-anchor-permalink" href="#Raw-Cypher-3" title="Permalink"></a></h3><pre><code class="language-cypher hljs">// Need to match nodes by some property first
+)</code></pre><p>Each call returns a <code>Node</code> object you can use directly to create relationships.</p><h3 id="Julia-DSL-—-@graph-macro"><a class="docs-heading-anchor" href="#Julia-DSL-—-@graph-macro">Julia DSL — <code>@graph</code> macro</a><a id="Julia-DSL-—-@graph-macro-1"></a><a class="docs-heading-anchor-permalink" href="#Julia-DSL-—-@graph-macro" title="Permalink"></a></h3><pre><code class="language-julia hljs">breast_cancer = let
+    r = @graph conn begin
+        create(d::Disease)
+        d.name = &quot;Breast Cancer&quot;
+        d.icd10_code = &quot;C50&quot;
+        d.category = &quot;Oncology&quot;
+        d.chronic = true
+        ret(d)
+    end
+    r[1].d
+end
+
+brca1 = let
+    r = @graph conn begin
+        create(g::Gene)
+        g.symbol = &quot;BRCA1&quot;
+        g.full_name = &quot;BRCA1 DNA Repair Associated&quot;
+        g.chromosome = &quot;17q21.31&quot;
+        g.locus = &quot;17q21&quot;
+        ret(g)
+    end
+    r[1].g
+end
+
+trastuzumab = let
+    r = @graph conn begin
+        create(d::Drug)
+        d.name = &quot;Trastuzumab&quot;
+        d.trade_name = &quot;Herceptin&quot;
+        d.mechanism = &quot;HER2 monoclonal antibody&quot;
+        d.approved_year = 1998
+        ret(d)
+    end
+    r[1].d
+end</code></pre><p>The <code>@graph</code> approach uses <code>create()</code> + property assignments (<code>d.name = &quot;...&quot;</code>) which compile to <code>CREATE (d:Disease) SET d.name = &#39;...&#39;</code>. Properties are set via auto-SET detection.</p><hr/><h2 id="3.-Creating-relationships"><a class="docs-heading-anchor" href="#3.-Creating-relationships">3. Creating relationships</a><a id="3.-Creating-relationships-1"></a><a class="docs-heading-anchor-permalink" href="#3.-Creating-relationships" title="Permalink"></a></h2><h3 id="Raw-Cypher-3"><a class="docs-heading-anchor" href="#Raw-Cypher-3">Raw Cypher</a><a class="docs-heading-anchor-permalink" href="#Raw-Cypher-3" title="Permalink"></a></h3><pre><code class="language-cypher hljs">// Need to match nodes by some property first
 MATCH (g:Gene {symbol: &#39;BRCA1&#39;}), (d:Disease {name: &#39;Breast Cancer&#39;})
 CREATE (g)-[r:ASSOCIATED_WITH {score: 0.95, source: &#39;ClinVar&#39;}]-&gt;(d)
 RETURN r
 
 MATCH (drug:Drug {name: &#39;Trastuzumab&#39;}), (d:Disease {name: &#39;Breast Cancer&#39;})
 CREATE (drug)-[r:TREATS {efficacy: 0.85, evidence_level: &#39;1A&#39;}]-&gt;(d)
-RETURN r</code></pre><h3 id="Julia-DSL-3"><a class="docs-heading-anchor" href="#Julia-DSL-3">Julia DSL</a><a class="docs-heading-anchor-permalink" href="#Julia-DSL-3" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Nodes already in scope from @create — @relate uses elementId() automatically
+RETURN r</code></pre><h3 id="Julia-DSL-—-@relate-macro"><a class="docs-heading-anchor" href="#Julia-DSL-—-@relate-macro">Julia DSL — <code>@relate</code> macro</a><a id="Julia-DSL-—-@relate-macro-1"></a><a class="docs-heading-anchor-permalink" href="#Julia-DSL-—-@relate-macro" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Nodes already in scope from @create — @relate uses elementId() automatically
 @relate conn brca1 =&gt; ASSOCIATED_WITH(score=0.95, source=&quot;ClinVar&quot;) =&gt; breast_cancer
 
-@relate conn trastuzumab =&gt; TREATS(efficacy=0.85, evidence_level=&quot;1A&quot;) =&gt; breast_cancer</code></pre><p>No need to re-match nodes by property. The DSL uses <code>elementId()</code> from the returned <code>Node</code> objects — zero ambiguity, zero duplication.</p><hr/><h2 id="4.-Complex-queries-—-side-by-side"><a class="docs-heading-anchor" href="#4.-Complex-queries-—-side-by-side">4. Complex queries — side by side</a><a id="4.-Complex-queries-—-side-by-side-1"></a><a class="docs-heading-anchor-permalink" href="#4.-Complex-queries-—-side-by-side" title="Permalink"></a></h2><h3 id="4.1-Multi-hop:-Gene-Protein-Pathway-for-a-disease"><a class="docs-heading-anchor" href="#4.1-Multi-hop:-Gene-Protein-Pathway-for-a-disease">4.1 Multi-hop: Gene → Protein → Pathway for a disease</a><a id="4.1-Multi-hop:-Gene-Protein-Pathway-for-a-disease-1"></a><a class="docs-heading-anchor-permalink" href="#4.1-Multi-hop:-Gene-Protein-Pathway-for-a-disease" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (g:Gene)-[:ASSOCIATED_WITH]-&gt;(d:Disease {name: &#39;Breast Cancer&#39;})
+@relate conn trastuzumab =&gt; TREATS(efficacy=0.85, evidence_level=&quot;1A&quot;) =&gt; breast_cancer</code></pre><p>No need to re-match nodes by property. The DSL uses <code>elementId()</code> from the returned <code>Node</code> objects — zero ambiguity, zero duplication.</p><h3 id="Julia-DSL-—-@graph-macro-2"><a class="docs-heading-anchor" href="#Julia-DSL-—-@graph-macro-2">Julia DSL — <code>@graph</code> macro</a><a class="docs-heading-anchor-permalink" href="#Julia-DSL-—-@graph-macro-2" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Match nodes by property, then create the relationship with arrow syntax
+@graph conn begin
+    match(g::Gene, d::Disease)
+    where(g.symbol == &quot;BRCA1&quot;, d.name == &quot;Breast Cancer&quot;)
+    create((g) - [r::ASSOCIATED_WITH] -&gt; (d))
+    r.score = 0.95
+    r.source = &quot;ClinVar&quot;
+    ret(r)
+end
+
+@graph conn begin
+    match(drug::Drug, d::Disease)
+    where(drug.name == &quot;Trastuzumab&quot;, d.name == &quot;Breast Cancer&quot;)
+    create((drug) - [r::TREATS] -&gt; (d))
+    r.efficacy = 0.85
+    r.evidence_level = &quot;1A&quot;
+    ret(r)
+end</code></pre><p>The <code>@graph</code> approach uses <code>match()</code> + <code>where()</code> to locate nodes, then <code>create()</code> with arrow patterns. Relationship properties are set via auto-SET.</p><hr/><h2 id="4.-Complex-queries-—-side-by-side"><a class="docs-heading-anchor" href="#4.-Complex-queries-—-side-by-side">4. Complex queries — side by side</a><a id="4.-Complex-queries-—-side-by-side-1"></a><a class="docs-heading-anchor-permalink" href="#4.-Complex-queries-—-side-by-side" title="Permalink"></a></h2><h3 id="4.1-Multi-hop:-Gene-Protein-Pathway-for-a-disease"><a class="docs-heading-anchor" href="#4.1-Multi-hop:-Gene-Protein-Pathway-for-a-disease">4.1 Multi-hop: Gene → Protein → Pathway for a disease</a><a id="4.1-Multi-hop:-Gene-Protein-Pathway-for-a-disease-1"></a><a class="docs-heading-anchor-permalink" href="#4.1-Multi-hop:-Gene-Protein-Pathway-for-a-disease" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (g:Gene)-[:ASSOCIATED_WITH]-&gt;(d:Disease {name: &#39;Breast Cancer&#39;})
 MATCH (g)-[:ENCODES]-&gt;(p:Protein)-[:PARTICIPATES_IN]-&gt;(pw:Pathway)
 RETURN g.symbol AS gene, p.name AS protein, pw.name AS pathway
-ORDER BY g.symbol</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">disease_name = &quot;Breast Cancer&quot;
+ORDER BY g.symbol</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">disease_name = &quot;Breast Cancer&quot;
 result = @query conn begin
     @match (g:Gene)-[:ASSOCIATED_WITH]-&gt;(d:Disease)
     @match (g)-[:ENCODES]-&gt;(p:Protein)-[:PARTICIPATES_IN]-&gt;(pw:Pathway)
     @where d.name == $disease_name
     @return g.symbol =&gt; :gene, p.name =&gt; :protein, pw.name =&gt; :pathway
     @orderby g.symbol
-end</code></pre><hr/><h3 id="4.2-Drug-repurposing-—-shared-pathway-targets"><a class="docs-heading-anchor" href="#4.2-Drug-repurposing-—-shared-pathway-targets">4.2 Drug repurposing — shared pathway targets</a><a id="4.2-Drug-repurposing-—-shared-pathway-targets-1"></a><a class="docs-heading-anchor-permalink" href="#4.2-Drug-repurposing-—-shared-pathway-targets" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (drug:Drug)-[:TARGETS]-&gt;(prot:Protein)-[:PARTICIPATES_IN]-&gt;(pw:Pathway)
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">disease_name = &quot;Breast Cancer&quot;
+result = @graph conn begin
+    g::Gene &gt;&gt; ::ASSOCIATED_WITH &gt;&gt; d::Disease
+    g &gt;&gt; ::ENCODES &gt;&gt; p::Protein &gt;&gt; ::PARTICIPATES_IN &gt;&gt; pw::Pathway
+    where(d.name == $disease_name)
+    ret(g.symbol =&gt; :gene, p.name =&gt; :protein, pw.name =&gt; :pathway)
+    order(g.symbol)
+end</code></pre><p>The <code>&gt;&gt;</code> chains replace <code>-[]-&gt;</code> arrow syntax. Bare patterns become implicit <code>MATCH</code> clauses.</p><hr/><h3 id="4.2-Drug-repurposing-—-shared-pathway-targets"><a class="docs-heading-anchor" href="#4.2-Drug-repurposing-—-shared-pathway-targets">4.2 Drug repurposing — shared pathway targets</a><a id="4.2-Drug-repurposing-—-shared-pathway-targets-1"></a><a class="docs-heading-anchor-permalink" href="#4.2-Drug-repurposing-—-shared-pathway-targets" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (drug:Drug)-[:TARGETS]-&gt;(prot:Protein)-[:PARTICIPATES_IN]-&gt;(pw:Pathway)
 MATCH (prot2:Protein)-[:PARTICIPATES_IN]-&gt;(pw)
 MATCH (g:Gene)-[:ENCODES]-&gt;(prot2)
 MATCH (g)-[:ASSOCIATED_WITH]-&gt;(d:Disease {name: &#39;Breast Cancer&#39;})
 RETURN drug.name AS drug, pw.name AS pathway, g.symbol AS gene
-ORDER BY drug.name</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">target_disease = &quot;Breast Cancer&quot;
+ORDER BY drug.name</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">target_disease = &quot;Breast Cancer&quot;
 result = @query conn begin
     @match (drug:Drug)-[:TARGETS]-&gt;(prot:Protein)-[:PARTICIPATES_IN]-&gt;(pw:Pathway)
     @match (prot2:Protein)-[:PARTICIPATES_IN]-&gt;(pw)
@@ -116,36 +174,63 @@ result = @query conn begin
     @where d.name == $target_disease
     @return drug.name =&gt; :drug, pw.name =&gt; :pathway, g.symbol =&gt; :gene
     @orderby drug.name
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">target_disease = &quot;Breast Cancer&quot;
+result = @graph conn begin
+    drug::Drug &gt;&gt; ::TARGETS &gt;&gt; prot::Protein &gt;&gt; ::PARTICIPATES_IN &gt;&gt; pw::Pathway
+    prot2::Protein &gt;&gt; ::PARTICIPATES_IN &gt;&gt; pw
+    g::Gene &gt;&gt; ::ENCODES &gt;&gt; prot2
+    g &gt;&gt; ::ASSOCIATED_WITH &gt;&gt; d::Disease
+    where(d.name == $target_disease)
+    ret(drug.name =&gt; :drug, pw.name =&gt; :pathway, g.symbol =&gt; :gene)
+    order(drug.name)
 end</code></pre><hr/><h3 id="4.3-Patient-cohort-analysis-with-optional-trial-enrollment"><a class="docs-heading-anchor" href="#4.3-Patient-cohort-analysis-with-optional-trial-enrollment">4.3 Patient cohort analysis with optional trial enrollment</a><a id="4.3-Patient-cohort-analysis-with-optional-trial-enrollment-1"></a><a class="docs-heading-anchor-permalink" href="#4.3-Patient-cohort-analysis-with-optional-trial-enrollment" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (pt:Patient)-[dx:DIAGNOSED_WITH]-&gt;(d:Disease)
 OPTIONAL MATCH (pt)-[e:ENROLLED_IN]-&gt;(ct:ClinicalTrial)
 RETURN pt.patient_id AS patient, d.name AS disease,
        dx.stage AS stage, ct.trial_id AS trial
-ORDER BY d.name, pt.patient_id</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
+ORDER BY d.name, pt.patient_id</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
     @match (pt:Patient)-[dx:DIAGNOSED_WITH]-&gt;(d:Disease)
     @optional_match (pt)-[e:ENROLLED_IN]-&gt;(ct:ClinicalTrial)
     @return pt.patient_id =&gt; :patient, d.name =&gt; :disease,
             dx.stage =&gt; :stage, ct.trial_id =&gt; :trial
     @orderby d.name pt.patient_id
-end</code></pre><hr/><h3 id="4.4-Aggregation:-drug-count-and-average-efficacy-per-disease"><a class="docs-heading-anchor" href="#4.4-Aggregation:-drug-count-and-average-efficacy-per-disease">4.4 Aggregation: drug count and average efficacy per disease</a><a id="4.4-Aggregation:-drug-count-and-average-efficacy-per-disease-1"></a><a class="docs-heading-anchor-permalink" href="#4.4-Aggregation:-drug-count-and-average-efficacy-per-disease" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (drug:Drug)-[t:TREATS]-&gt;(d:Disease)
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @graph conn begin
+    pt::Patient &gt;&gt; dx::DIAGNOSED_WITH &gt;&gt; d::Disease
+    optional(pt &gt;&gt; e::ENROLLED_IN &gt;&gt; ct::ClinicalTrial)
+    ret(pt.patient_id =&gt; :patient, d.name =&gt; :disease,
+        dx.stage =&gt; :stage, ct.trial_id =&gt; :trial)
+    order(d.name, pt.patient_id)
+end</code></pre><p><code>optional()</code> maps to <code>OPTIONAL MATCH</code> and accepts the same <code>&gt;&gt;</code> chain patterns.</p><hr/><h3 id="4.4-Aggregation:-drug-count-and-average-efficacy-per-disease"><a class="docs-heading-anchor" href="#4.4-Aggregation:-drug-count-and-average-efficacy-per-disease">4.4 Aggregation: drug count and average efficacy per disease</a><a id="4.4-Aggregation:-drug-count-and-average-efficacy-per-disease-1"></a><a class="docs-heading-anchor-permalink" href="#4.4-Aggregation:-drug-count-and-average-efficacy-per-disease" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (drug:Drug)-[t:TREATS]-&gt;(d:Disease)
 WITH d.name AS disease, count(drug) AS drug_count, avg(t.efficacy) AS mean_efficacy
 WHERE drug_count &gt; 1
 RETURN disease, drug_count, mean_efficacy
-ORDER BY drug_count DESC</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
+ORDER BY drug_count DESC</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
     @match (drug:Drug)-[t:TREATS]-&gt;(d:Disease)
     @with d.name =&gt; :disease, count(drug) =&gt; :drug_count, avg(t.efficacy) =&gt; :mean_efficacy
     @where drug_count &gt; 1
     @return disease, drug_count, mean_efficacy
     @orderby drug_count :desc
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @graph conn begin
+    drug::Drug &gt;&gt; t::TREATS &gt;&gt; d::Disease
+    with(d.name =&gt; :disease, count(drug) =&gt; :drug_count, avg(t.efficacy) =&gt; :mean_efficacy)
+    where(drug_count &gt; 1)
+    ret(disease, drug_count, mean_efficacy)
+    order(drug_count, :desc)
 end</code></pre><hr/><h3 id="4.5-Side-effect-overlap-between-drugs"><a class="docs-heading-anchor" href="#4.5-Side-effect-overlap-between-drugs">4.5 Side effect overlap between drugs</a><a id="4.5-Side-effect-overlap-between-drugs-1"></a><a class="docs-heading-anchor-permalink" href="#4.5-Side-effect-overlap-between-drugs" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (d1:Drug)-[:HAS_SIDE_EFFECT]-&gt;(s:Symptom)
 MATCH (d2:Drug)-[:HAS_SIDE_EFFECT]-&gt;(s)
 WHERE d1.name &lt; d2.name
 RETURN d1.name AS drug1, d2.name AS drug2, collect(s.name) AS shared_effects
-ORDER BY d1.name</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
+ORDER BY d1.name</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
     @match (d1:Drug)-[:HAS_SIDE_EFFECT]-&gt;(s:Symptom)
     @match (d2:Drug)-[:HAS_SIDE_EFFECT]-&gt;(s)
     @where d1.name &lt; d2.name
     @return d1.name =&gt; :drug1, d2.name =&gt; :drug2, collect(s.name) =&gt; :shared_effects
     @orderby d1.name
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @graph conn begin
+    d1::Drug &gt;&gt; ::HAS_SIDE_EFFECT &gt;&gt; s::Symptom
+    d2::Drug &gt;&gt; ::HAS_SIDE_EFFECT &gt;&gt; s
+    where(d1.name &lt; d2.name)
+    ret(d1.name =&gt; :drug1, d2.name =&gt; :drug2, collect(s.name) =&gt; :shared_effects)
+    order(d1.name)
 end</code></pre><hr/><h3 id="4.6-Full-patient-journey-—-diagnosis-to-treatment"><a class="docs-heading-anchor" href="#4.6-Full-patient-journey-—-diagnosis-to-treatment">4.6 Full patient journey — diagnosis to treatment</a><a id="4.6-Full-patient-journey-—-diagnosis-to-treatment-1"></a><a class="docs-heading-anchor-permalink" href="#4.6-Full-patient-journey-—-diagnosis-to-treatment" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (pt:Patient {patient_id: $pid})-[dx:DIAGNOSED_WITH]-&gt;(d:Disease)
 MATCH (drug:Drug)-[t:TREATS]-&gt;(d)
 OPTIONAL MATCH (pt)-[e:ENROLLED_IN]-&gt;(ct:ClinicalTrial)
@@ -153,7 +238,7 @@ OPTIONAL MATCH (drug)-[:HAS_SIDE_EFFECT]-&gt;(se:Symptom)
 RETURN d.name AS disease, drug.name AS drug_option,
        t.efficacy AS efficacy, ct.title AS trial,
        collect(se.name) AS side_effects
-ORDER BY t.efficacy DESC</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">pid = &quot;PT-2024-001&quot;
+ORDER BY t.efficacy DESC</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">pid = &quot;PT-2024-001&quot;
 result = @query conn begin
     @match (pt:Patient)-[dx:DIAGNOSED_WITH]-&gt;(d:Disease)
     @match (drug:Drug)-[t:TREATS]-&gt;(d)
@@ -164,53 +249,89 @@ result = @query conn begin
             t.efficacy =&gt; :efficacy, ct.title =&gt; :trial,
             collect(se.name) =&gt; :side_effects
     @orderby t.efficacy :desc
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">pid = &quot;PT-2024-001&quot;
+result = @graph conn begin
+    pt::Patient &gt;&gt; dx::DIAGNOSED_WITH &gt;&gt; d::Disease
+    drug::Drug &gt;&gt; t::TREATS &gt;&gt; d
+    where(pt.patient_id == $pid)
+    optional(pt &gt;&gt; e::ENROLLED_IN &gt;&gt; ct::ClinicalTrial)
+    optional(drug &gt;&gt; ::HAS_SIDE_EFFECT &gt;&gt; se::Symptom)
+    ret(d.name =&gt; :disease, drug.name =&gt; :drug_option,
+        t.efficacy =&gt; :efficacy, ct.title =&gt; :trial,
+        collect(se.name) =&gt; :side_effects)
+    order(t.efficacy, :desc)
 end</code></pre><hr/><h3 id="4.7-Genes-with-multiple-disease-associations"><a class="docs-heading-anchor" href="#4.7-Genes-with-multiple-disease-associations">4.7 Genes with multiple disease associations</a><a id="4.7-Genes-with-multiple-disease-associations-1"></a><a class="docs-heading-anchor-permalink" href="#4.7-Genes-with-multiple-disease-associations" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (g:Gene)-[a:ASSOCIATED_WITH]-&gt;(d:Disease)
 WITH g.symbol AS gene, count(d) AS disease_count, collect(d.name) AS diseases
 WHERE disease_count &gt;= $min_diseases
 RETURN gene, disease_count, diseases
-ORDER BY disease_count DESC</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">min_diseases = 2
+ORDER BY disease_count DESC</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">min_diseases = 2
 result = @query conn begin
     @match (g:Gene)-[a:ASSOCIATED_WITH]-&gt;(d:Disease)
     @with g.symbol =&gt; :gene, count(d) =&gt; :disease_count, collect(d.name) =&gt; :diseases
     @where disease_count &gt;= $min_diseases
     @return gene, disease_count, diseases
     @orderby disease_count :desc
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">min_diseases = 2
+result = @graph conn begin
+    g::Gene &gt;&gt; a::ASSOCIATED_WITH &gt;&gt; d::Disease
+    with(g.symbol =&gt; :gene, count(d) =&gt; :disease_count, collect(d.name) =&gt; :diseases)
+    where(disease_count &gt;= $min_diseases)
+    ret(gene, disease_count, diseases)
+    order(disease_count, :desc)
 end</code></pre><hr/><h3 id="4.8-Hospital-physician-coverage"><a class="docs-heading-anchor" href="#4.8-Hospital-physician-coverage">4.8 Hospital physician coverage</a><a id="4.8-Hospital-physician-coverage-1"></a><a class="docs-heading-anchor-permalink" href="#4.8-Hospital-physician-coverage" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (ph:Physician)-[:LOCATED_AT]-&gt;(h:Hospital)
 RETURN h.name AS hospital, collect(ph.specialty) AS specialties,
        count(ph) AS physician_count
-ORDER BY physician_count DESC</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
+ORDER BY physician_count DESC</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
     @match (ph:Physician)-[:LOCATED_AT]-&gt;(h:Hospital)
     @return h.name =&gt; :hospital, collect(ph.specialty) =&gt; :specialties,
             count(ph) =&gt; :physician_count
     @orderby physician_count :desc
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @graph conn begin
+    ph::Physician &gt;&gt; ::LOCATED_AT &gt;&gt; h::Hospital
+    ret(h.name =&gt; :hospital, collect(ph.specialty) =&gt; :specialties,
+        count(ph) =&gt; :physician_count)
+    order(physician_count, :desc)
 end</code></pre><hr/><h3 id="4.9-Biomarker-guided-treatment-selection"><a class="docs-heading-anchor" href="#4.9-Biomarker-guided-treatment-selection">4.9 Biomarker-guided treatment selection</a><a id="4.9-Biomarker-guided-treatment-selection-1"></a><a class="docs-heading-anchor-permalink" href="#4.9-Biomarker-guided-treatment-selection" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (bm:Biomarker)-[:INDICATES]-&gt;(d:Disease)
 MATCH (drug:Drug)-[:TREATS]-&gt;(d)
 RETURN bm.name AS biomarker, d.name AS disease,
        drug.name AS drug, drug.mechanism AS mechanism
-ORDER BY bm.name, drug.name</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
+ORDER BY bm.name, drug.name</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
     @match (bm:Biomarker)-[:INDICATES]-&gt;(d:Disease)
     @match (drug:Drug)-[:TREATS]-&gt;(d)
     @return bm.name =&gt; :biomarker, d.name =&gt; :disease,
             drug.name =&gt; :drug, drug.mechanism =&gt; :mechanism
     @orderby bm.name drug.name
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @graph conn begin
+    bm::Biomarker &gt;&gt; ::INDICATES &gt;&gt; d::Disease
+    drug::Drug &gt;&gt; ::TREATS &gt;&gt; d
+    ret(bm.name =&gt; :biomarker, d.name =&gt; :disease,
+        drug.name =&gt; :drug, drug.mechanism =&gt; :mechanism)
+    order(bm.name, drug.name)
 end</code></pre><hr/><h3 id="4.10-Full-knowledge-chain:-Biomarker-Disease-Gene-Protein-Pathway"><a class="docs-heading-anchor" href="#4.10-Full-knowledge-chain:-Biomarker-Disease-Gene-Protein-Pathway">4.10 Full knowledge chain: Biomarker → Disease → Gene → Protein → Pathway</a><a id="4.10-Full-knowledge-chain:-Biomarker-Disease-Gene-Protein-Pathway-1"></a><a class="docs-heading-anchor-permalink" href="#4.10-Full-knowledge-chain:-Biomarker-Disease-Gene-Protein-Pathway" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (bm:Biomarker)-[:INDICATES]-&gt;(d:Disease)
 MATCH (g:Gene)-[:ASSOCIATED_WITH]-&gt;(d)
 MATCH (g)-[:ENCODES]-&gt;(p:Protein)-[:PARTICIPATES_IN]-&gt;(pw:Pathway)
 RETURN bm.name AS biomarker, d.name AS disease,
        g.symbol AS gene, p.name AS protein, pw.name AS pathway
-ORDER BY d.name, g.symbol</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
+ORDER BY d.name, g.symbol</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
     @match (bm:Biomarker)-[:INDICATES]-&gt;(d:Disease)
     @match (g:Gene)-[:ASSOCIATED_WITH]-&gt;(d)
     @match (g)-[:ENCODES]-&gt;(p:Protein)-[:PARTICIPATES_IN]-&gt;(pw:Pathway)
     @return bm.name =&gt; :biomarker, d.name =&gt; :disease,
             g.symbol =&gt; :gene, p.name =&gt; :protein, pw.name =&gt; :pathway
     @orderby d.name g.symbol
-end</code></pre><p>A <strong>five-hop traversal</strong> across the entire knowledge base — expressed as readable Julia.</p><hr/><h3 id="4.11-Batch-insert-with-UNWIND"><a class="docs-heading-anchor" href="#4.11-Batch-insert-with-UNWIND">4.11 Batch insert with UNWIND</a><a id="4.11-Batch-insert-with-UNWIND-1"></a><a class="docs-heading-anchor-permalink" href="#4.11-Batch-insert-with-UNWIND" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">UNWIND $adverse_events AS ae
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @graph conn begin
+    bm::Biomarker &gt;&gt; ::INDICATES &gt;&gt; d::Disease
+    g::Gene &gt;&gt; ::ASSOCIATED_WITH &gt;&gt; d
+    g &gt;&gt; ::ENCODES &gt;&gt; p::Protein &gt;&gt; ::PARTICIPATES_IN &gt;&gt; pw::Pathway
+    ret(bm.name =&gt; :biomarker, d.name =&gt; :disease,
+        g.symbol =&gt; :gene, p.name =&gt; :protein, pw.name =&gt; :pathway)
+    order(d.name, g.symbol)
+end</code></pre><p>A <strong>five-hop traversal</strong> across the entire knowledge base — expressed as readable Julia. The <code>&gt;&gt;</code> chains make the directionality explicit and composable.</p><hr/><h3 id="4.11-Batch-insert-with-UNWIND"><a class="docs-heading-anchor" href="#4.11-Batch-insert-with-UNWIND">4.11 Batch insert with UNWIND</a><a id="4.11-Batch-insert-with-UNWIND-1"></a><a class="docs-heading-anchor-permalink" href="#4.11-Batch-insert-with-UNWIND" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">UNWIND $adverse_events AS ae
 MATCH (drug:Drug)
 WHERE drug.name = ae.drug_name
 CREATE (drug)-[:REPORTED_AE]-&gt;(event:AdverseEvent)
 SET event.name = ae.event, event.grade = ae.grade
-RETURN drug.name AS drug, event.name AS event, event.grade AS grade</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">adverse_events = [
+RETURN drug.name AS drug, event.name AS event, event.grade AS grade</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">adverse_events = [
     Dict(&quot;drug_name&quot; =&gt; &quot;Trastuzumab&quot;, &quot;event&quot; =&gt; &quot;Cardiotoxicity&quot;, &quot;grade&quot; =&gt; 2),
     Dict(&quot;drug_name&quot; =&gt; &quot;Erlotinib&quot;, &quot;event&quot; =&gt; &quot;Rash&quot;, &quot;grade&quot; =&gt; 1),
     Dict(&quot;drug_name&quot; =&gt; &quot;Pembrolizumab&quot;, &quot;event&quot; =&gt; &quot;Pneumonitis&quot;, &quot;grade&quot; =&gt; 3),
@@ -225,35 +346,68 @@ result = @query conn begin
     @set event.name = ae.event
     @set event.grade = ae.grade
     @return drug.name =&gt; :drug, event.name =&gt; :event, event.grade =&gt; :grade
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">adverse_events = [
+    Dict(&quot;drug_name&quot; =&gt; &quot;Trastuzumab&quot;, &quot;event&quot; =&gt; &quot;Cardiotoxicity&quot;, &quot;grade&quot; =&gt; 2),
+    Dict(&quot;drug_name&quot; =&gt; &quot;Erlotinib&quot;, &quot;event&quot; =&gt; &quot;Rash&quot;, &quot;grade&quot; =&gt; 1),
+    Dict(&quot;drug_name&quot; =&gt; &quot;Pembrolizumab&quot;, &quot;event&quot; =&gt; &quot;Pneumonitis&quot;, &quot;grade&quot; =&gt; 3),
+    Dict(&quot;drug_name&quot; =&gt; &quot;Olaparib&quot;, &quot;event&quot; =&gt; &quot;Anemia&quot;, &quot;grade&quot; =&gt; 2),
+]
+
+result = @graph conn begin
+    unwind($adverse_events =&gt; :ae)
+    drug::Drug
+    where(drug.name == ae.drug_name)
+    create((drug) - [::REPORTED_AE] -&gt; (event::AdverseEvent))
+    event.name = ae.event
+    event.grade = ae.grade
+    ret(drug.name =&gt; :drug, event.name =&gt; :event, event.grade =&gt; :grade)
 end</code></pre><hr/><h3 id="4.12-Complex-WHERE-with-string-functions"><a class="docs-heading-anchor" href="#4.12-Complex-WHERE-with-string-functions">4.12 Complex WHERE with string functions</a><a id="4.12-Complex-WHERE-with-string-functions-1"></a><a class="docs-heading-anchor-permalink" href="#4.12-Complex-WHERE-with-string-functions" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (g:Gene)-[:ASSOCIATED_WITH]-&gt;(d:Disease)
 WHERE g.chromosome STARTS WITH &#39;17&#39; AND d.category = &#39;Oncology&#39;
 RETURN g.symbol AS gene, g.chromosome AS chr, d.name AS disease
-ORDER BY g.symbol</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
+ORDER BY g.symbol</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
     @match (g:Gene)-[:ASSOCIATED_WITH]-&gt;(d:Disease)
     @where startswith(g.chromosome, &quot;17&quot;) &amp;&amp; d.category == &quot;Oncology&quot;
     @return g.symbol =&gt; :gene, g.chromosome =&gt; :chr, d.name =&gt; :disease
     @orderby g.symbol
-end</code></pre><hr/><h3 id="4.13-WITH-pipeline-—-treatment-landscape"><a class="docs-heading-anchor" href="#4.13-WITH-pipeline-—-treatment-landscape">4.13 WITH pipeline — treatment landscape</a><a id="4.13-WITH-pipeline-—-treatment-landscape-1"></a><a class="docs-heading-anchor-permalink" href="#4.13-WITH-pipeline-—-treatment-landscape" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (drug:Drug)-[t:TREATS]-&gt;(d:Disease)
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @graph conn begin
+    g::Gene &gt;&gt; ::ASSOCIATED_WITH &gt;&gt; d::Disease
+    where(startswith(g.chromosome, &quot;17&quot;), d.category == &quot;Oncology&quot;)
+    ret(g.symbol =&gt; :gene, g.chromosome =&gt; :chr, d.name =&gt; :disease)
+    order(g.symbol)
+end</code></pre><p>Multi-condition <code>where()</code> auto-ANDs conditions — no need for <code>&amp;&amp;</code>.</p><hr/><h3 id="4.13-WITH-pipeline-—-treatment-landscape"><a class="docs-heading-anchor" href="#4.13-WITH-pipeline-—-treatment-landscape">4.13 WITH pipeline — treatment landscape</a><a id="4.13-WITH-pipeline-—-treatment-landscape-1"></a><a class="docs-heading-anchor-permalink" href="#4.13-WITH-pipeline-—-treatment-landscape" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (drug:Drug)-[t:TREATS]-&gt;(d:Disease)
 WITH d, count(drug) AS n_drugs, avg(t.efficacy) AS avg_eff
 MATCH (g:Gene)-[:ASSOCIATED_WITH]-&gt;(d)
 RETURN d.name AS disease, n_drugs, avg_eff, count(g) AS n_genes
-ORDER BY n_drugs DESC</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
+ORDER BY n_drugs DESC</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
     @match (drug:Drug)-[t:TREATS]-&gt;(d:Disease)
     @with d, count(drug) =&gt; :n_drugs, avg(t.efficacy) =&gt; :avg_eff
     @match (g:Gene)-[:ASSOCIATED_WITH]-&gt;(d)
     @return d.name =&gt; :disease, n_drugs, avg_eff,
             count(g) =&gt; :n_genes
     @orderby n_drugs :desc
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @graph conn begin
+    drug::Drug &gt;&gt; t::TREATS &gt;&gt; d::Disease
+    with(d, count(drug) =&gt; :n_drugs, avg(t.efficacy) =&gt; :avg_eff)
+    g::Gene &gt;&gt; ::ASSOCIATED_WITH &gt;&gt; d
+    ret(d.name =&gt; :disease, n_drugs, avg_eff, count(g) =&gt; :n_genes)
+    order(n_drugs, :desc)
 end</code></pre><hr/><h3 id="4.14-Publication-Disease-knowledge-network"><a class="docs-heading-anchor" href="#4.14-Publication-Disease-knowledge-network">4.14 Publication → Disease knowledge network</a><a id="4.14-Publication-Disease-knowledge-network-1"></a><a class="docs-heading-anchor-permalink" href="#4.14-Publication-Disease-knowledge-network" title="Permalink"></a></h3><p><strong>Raw Cypher:</strong></p><pre><code class="language-cypher hljs">MATCH (pub:Publication)-[:PUBLISHED_IN]-&gt;(d:Disease)
 MATCH (drug:Drug)-[:TREATS]-&gt;(d)
 WITH pub, d, collect(drug.name) AS drugs
 RETURN pub.title AS publication, pub.journal AS journal,
        d.name AS disease, drugs
-ORDER BY pub.year DESC</code></pre><p><strong>Julia DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
+ORDER BY pub.year DESC</code></pre><p><strong><code>@query</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @query conn begin
     @match (pub:Publication)-[:PUBLISHED_IN]-&gt;(d:Disease)
     @match (drug:Drug)-[:TREATS]-&gt;(d)
     @with pub, d, collect(drug.name) =&gt; :drugs
     @return pub.title =&gt; :publication, pub.journal =&gt; :journal,
             d.name =&gt; :disease, drugs
     @orderby pub.year :desc
-end</code></pre><hr/><h2 id="Key-takeaways"><a class="docs-heading-anchor" href="#Key-takeaways">Key takeaways</a><a id="Key-takeaways-1"></a><a class="docs-heading-anchor-permalink" href="#Key-takeaways" title="Permalink"></a></h2><table><tr><th style="text-align: left">Aspect</th><th style="text-align: left">Raw Cypher</th><th style="text-align: left">Julia DSL</th></tr><tr><td style="text-align: left"><strong>Injection safety</strong></td><td style="text-align: left">Manual parameterisation</td><td style="text-align: left">Automatic — <code>$var</code> captures safely</td></tr><tr><td style="text-align: left"><strong>Schema validation</strong></td><td style="text-align: left">None built-in</td><td style="text-align: left"><code>@node</code>/<code>@rel</code> with runtime checks</td></tr><tr><td style="text-align: left"><strong>Node references</strong></td><td style="text-align: left">Re-match by property</td><td style="text-align: left">Direct variable reuse via <code>elementId()</code></td></tr><tr><td style="text-align: left"><strong>Operator mapping</strong></td><td style="text-align: left">Cypher-specific (<code>&lt;&gt;</code>, <code>AND</code>, <code>STARTS WITH</code>)</td><td style="text-align: left">Julia-native (<code>!=</code>, <code>&amp;&amp;</code>, <code>startswith</code>)</td></tr><tr><td style="text-align: left"><strong>Return aliases</strong></td><td style="text-align: left"><code>expr AS alias</code></td><td style="text-align: left"><code>expr =&gt; :alias</code></td></tr><tr><td style="text-align: left"><strong>Compile-time</strong></td><td style="text-align: left">String at runtime</td><td style="text-align: left">Cypher assembled at macro expansion</td></tr><tr><td style="text-align: left"><strong>Composability</strong></td><td style="text-align: left">String concatenation</td><td style="text-align: left">Structured macro blocks</td></tr></table><p>The DSL compiles to <strong>identical Cypher</strong> at macro expansion time — there is zero runtime overhead for query construction. Only parameter values are captured at runtime.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../dsl/">« DSL</a><a class="docs-footer-nextpage" href="../../api/">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Monday 16 February 2026 09:16">Monday 16 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+end</code></pre><p><strong><code>@graph</code> DSL:</strong></p><pre><code class="language-julia hljs">result = @graph conn begin
+    pub::Publication &gt;&gt; ::PUBLISHED_IN &gt;&gt; d::Disease
+    drug::Drug &gt;&gt; ::TREATS &gt;&gt; d
+    with(pub, d, collect(drug.name) =&gt; :drugs)
+    ret(pub.title =&gt; :publication, pub.journal =&gt; :journal,
+        d.name =&gt; :disease, drugs)
+    order(pub.year, :desc)
+end</code></pre><hr/><h2 id="Key-takeaways"><a class="docs-heading-anchor" href="#Key-takeaways">Key takeaways</a><a id="Key-takeaways-1"></a><a class="docs-heading-anchor-permalink" href="#Key-takeaways" title="Permalink"></a></h2><table><tr><th style="text-align: left">Aspect</th><th style="text-align: left">Raw Cypher</th><th style="text-align: left"><code>@query</code> DSL</th><th style="text-align: left"><code>@graph</code> DSL</th></tr><tr><td style="text-align: left"><strong>Injection safety</strong></td><td style="text-align: left">Manual parameterisation</td><td style="text-align: left">Automatic — <code>$var</code> captures safely</td><td style="text-align: left">Same — <code>$var</code> captures safely</td></tr><tr><td style="text-align: left"><strong>Schema validation</strong></td><td style="text-align: left">None built-in</td><td style="text-align: left"><code>@node</code>/<code>@rel</code> with runtime checks</td><td style="text-align: left">Same shared schema registry</td></tr><tr><td style="text-align: left"><strong>Node references</strong></td><td style="text-align: left">Re-match by property</td><td style="text-align: left"><code>elementId()</code> via <code>@relate</code></td><td style="text-align: left"><code>match()</code> + <code>where()</code> + <code>create()</code></td></tr><tr><td style="text-align: left"><strong>Patterns</strong></td><td style="text-align: left"><code>(p:Person)-[r:KNOWS]-&gt;(q:Person)</code></td><td style="text-align: left">Same Cypher-like syntax</td><td style="text-align: left"><code>p::Person &gt;&gt; r::KNOWS &gt;&gt; q::Person</code></td></tr><tr><td style="text-align: left"><strong>Clauses</strong></td><td style="text-align: left">Cypher keywords</td><td style="text-align: left"><code>@match</code>, <code>@where</code>, <code>@return</code></td><td style="text-align: left"><code>where()</code>, <code>ret()</code>, <code>order()</code></td></tr><tr><td style="text-align: left"><strong>Operator mapping</strong></td><td style="text-align: left"><code>&lt;&gt;</code>, <code>AND</code>, <code>STARTS WITH</code></td><td style="text-align: left"><code>!=</code>, <code>&amp;&amp;</code>, <code>startswith</code></td><td style="text-align: left">Same Julia-native operators</td></tr><tr><td style="text-align: left"><strong>Return aliases</strong></td><td style="text-align: left"><code>expr AS alias</code></td><td style="text-align: left"><code>expr =&gt; :alias</code></td><td style="text-align: left"><code>expr =&gt; :alias</code></td></tr><tr><td style="text-align: left"><strong>Mutations</strong></td><td style="text-align: left"><code>CREATE</code>, <code>SET</code></td><td style="text-align: left"><code>@create</code>, <code>@set</code></td><td style="text-align: left"><code>create()</code> + auto-SET assignments</td></tr><tr><td style="text-align: left"><strong>OPTIONAL MATCH</strong></td><td style="text-align: left"><code>OPTIONAL MATCH</code></td><td style="text-align: left"><code>@optional_match</code></td><td style="text-align: left"><code>optional()</code></td></tr><tr><td style="text-align: left"><strong>Compile-time</strong></td><td style="text-align: left">String at runtime</td><td style="text-align: left">Cypher assembled at macro expansion</td><td style="text-align: left">Same — identical Cypher output</td></tr></table><h3 id="@query-vs-@graph-—-when-to-use-which?"><a class="docs-heading-anchor" href="#@query-vs-@graph-—-when-to-use-which?"><code>@query</code> vs <code>@graph</code> — when to use which?</a><a id="@query-vs-@graph-—-when-to-use-which?-1"></a><a class="docs-heading-anchor-permalink" href="#@query-vs-@graph-—-when-to-use-which?" title="Permalink"></a></h3><ul><li><strong><code>@query</code></strong> — closest to raw Cypher; familiar if you already know Cypher syntax. Best with <code>@create</code>/<code>@relate</code> for schema-validated mutations.</li><li><strong><code>@graph</code></strong> — Julia-native feel with <code>::</code> type annotation syntax and <code>&gt;&gt;</code> chain operators. Best for complex multi-hop traversals where the chain notation improves readability.</li></ul><p>Both compile to <strong>identical Cypher</strong> at macro expansion time — there is zero runtime overhead for query construction. Only parameter values are captured at runtime.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../dsl/">« DSL</a><a class="docs-footer-nextpage" href="../../api/">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Monday 16 February 2026 09:25">Monday 16 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
