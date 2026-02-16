@@ -36,8 +36,20 @@ function _node_to_cypher(expr)::String
         label = expr.args[3]
         return "($(var):$(label))"
     end
+    # Type annotation: p::Person → (p:Person), ::Person → (:Person)
+    # This enables Julia-native syntax in @graph patterns
+    if expr isa Expr && expr.head == :(::)
+        if length(expr.args) == 2
+            var = expr.args[1]
+            label = expr.args[2]
+            return "($(var):$(label))"
+        elseif length(expr.args) == 1
+            label = expr.args[1]
+            return "(:$(label))"
+        end
+    end
     error("Cannot parse node pattern: $(repr(expr)). " *
-          "Expected (var:Label), (:Label), or (var)")
+          "Expected (var:Label), (var::Label), (:Label), (::Label), or (var)")
 end
 
 # ── Relationship patterns ────────────────────────────────────────────────────
@@ -71,6 +83,17 @@ function _rel_bracket_to_cypher(bracket)::String
                 var = inner.args[2]
                 reltype = inner.args[3]
                 return "$(var):$(reltype)"
+            end
+            # [r::TYPE] — named typed relationship (Julia :: syntax)
+            if inner isa Expr && inner.head == :(::) && length(inner.args) == 2
+                var = inner.args[1]
+                reltype = inner.args[2]
+                return "$(var):$(reltype)"
+            end
+            # [::TYPE] — anonymous typed relationship (Julia :: syntax)
+            if inner isa Expr && inner.head == :(::) && length(inner.args) == 1
+                reltype = inner.args[1]
+                return ":$(reltype)"
             end
         end
 
@@ -116,6 +139,18 @@ function _rel_type_to_string(expr)::String
         var = expr.args[2]
         reltype = expr.args[3]
         return "$(var):$(reltype)"
+    end
+    # Julia :: syntax: r::TYPE → "r:TYPE", ::TYPE → ":TYPE"
+    if expr isa Expr && expr.head == :(::)
+        if length(expr.args) == 2
+            var = expr.args[1]
+            reltype = expr.args[2]
+            return "$(var):$(reltype)"
+        elseif length(expr.args) == 1
+            reltype = expr.args[1]
+            reltype == :* && return ""
+            return ":$(reltype)"
+        end
     end
     error("Cannot parse relationship type: $(repr(expr))")
 end
