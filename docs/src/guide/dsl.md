@@ -5,7 +5,13 @@ Neo4jQuery includes a compile-time DSL that translates Julia expressions into pa
 ```@setup dsl
 using Neo4jQuery
 conn = connect_from_env()
-# Clean database for reproducible examples
+# Clean database for reproducible examples — drop schema first, then data
+for row in query(conn, "SHOW CONSTRAINTS YIELD name")
+    query(conn, "DROP CONSTRAINT $(row.name) IF EXISTS")
+end
+for row in query(conn, "SHOW INDEXES YIELD name, owningConstraint WHERE owningConstraint IS NULL")
+    query(conn, "DROP INDEX $(row.name) IF EXISTS")
+end
 query(conn, "MATCH (n) DETACH DELETE n")
 ```
 
