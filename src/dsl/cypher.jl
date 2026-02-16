@@ -179,6 +179,7 @@ const _MUTATION_CLAUSES = Set{Symbol}([
     :create, :merge_clause, :set, :remove,
     :delete, :detach_delete, :on_create_set, :on_match_set,
     :create_index, :drop_index, :create_constraint, :drop_constraint,
+    :foreach,  # FOREACH body always contains mutations
 ])
 
 """

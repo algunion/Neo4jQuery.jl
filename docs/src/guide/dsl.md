@@ -566,24 +566,29 @@ end
 
 ### Step 21: LOAD CSV
 
-Import data from CSV files:
+Import data from CSV files. The `WITH HEADERS` variant is recommended as it maps columns by name:
 
 ```julia
-@cypher conn begin
-    load_csv("file:///data/people.csv" => :row)
-    create((p:Person))
-    p.name = row[0]
-    p.age = row[1]
-end
-
-# With headers
+# With headers (recommended)
 @cypher conn begin
     load_csv_headers("file:///data/people.csv" => :row)
-    create((p:Person))
+    create(p::Person)
     p.name = row.name
     p.age = row.age
 end
+
+# Without headers (row is a raw list)
+@cypher conn begin
+    load_csv("file:///data/people.csv" => :row)
+    create(p::Person)
+    p.name = row
+    ret(p)
+end
 ```
+
+!!! note
+    LOAD CSV requires the CSV file to be accessible from the Neo4j server.
+    For `file://` URLs, the server must be configured with `server.directories.import`.
 
 ### Step 22: FOREACH
 
@@ -594,13 +599,14 @@ names = ["Alice", "Bob", "Carol"]
 @cypher conn begin
     p::Person
     where(in(p.name, $names))
-    foreach(n, :in, collect(p), begin
-        set(n.verified = true)
+    with(collect(p) => :people)
+    foreach(people => :n, begin
+        n.verified = true
     end)
 end
 ```
 
-FOREACH body supports `set()`, `create()`, `merge()`, `delete()`, `detach_delete()`, `remove()`, and nested `foreach()`.
+FOREACH body supports property assignments (auto-SET), `create()`, `merge()`, `delete()`, `detach_delete()`, `remove()`, and nested `foreach()`.
 
 ### Step 23: Index and constraint management
 
