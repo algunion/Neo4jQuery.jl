@@ -947,6 +947,155 @@ end
     end
 
     # ═══════════════════════════════════════════════════════════════════════
+    # Extended @cypher_str coverage — edge cases & complex Cypher patterns
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "@cypher_str: duplicate parameter references" begin
+        val = 42
+        q = cypher"MATCH (a),(b) WHERE a.x = $val AND b.x = $val RETURN a, b"
+        @test q.parameters["val"] == 42
+        @test length(q.parameters) == 1  # deduplicated
+        @test q.statement == "MATCH (a),(b) WHERE a.x = \$val AND b.x = \$val RETURN a, b"
+    end
+
+    @testset "@cypher_str: underscore and camelCase param names" begin
+        min_age = 18
+        maxScore = 100
+        q = cypher"MATCH (p) WHERE p.age >= $min_age AND p.score <= $maxScore RETURN p"
+        @test q.parameters["min_age"] == 18
+        @test q.parameters["maxScore"] == 100
+        @test length(q.parameters) == 2
+    end
+
+    @testset "@cypher_str: CREATE pattern" begin
+        name = "Alice"
+        age = 30
+        q = cypher"CREATE (p:Person {name: $name, age: $age}) RETURN p"
+        @test q.parameters["name"] == "Alice"
+        @test q.parameters["age"] == 30
+        @test contains(q.statement, "CREATE")
+        @test contains(q.statement, "\$name")
+        @test contains(q.statement, "\$age")
+    end
+
+    @testset "@cypher_str: MERGE with ON CREATE SET / ON MATCH SET" begin
+        name = "Bob"
+        now_ts = "2026-02-16"
+        q = cypher"MERGE (p:Person {name: $name}) ON CREATE SET p.created = $now_ts ON MATCH SET p.seen = $now_ts RETURN p"
+        @test q.parameters["name"] == "Bob"
+        @test q.parameters["now_ts"] == "2026-02-16"
+        @test contains(q.statement, "MERGE")
+        @test contains(q.statement, "ON CREATE SET")
+        @test contains(q.statement, "ON MATCH SET")
+    end
+
+    @testset "@cypher_str: SET and DELETE patterns" begin
+        id_val = "abc123"
+        new_email = "test@example.com"
+        q = cypher"MATCH (p) WHERE elementId(p) = $id_val SET p.email = $new_email RETURN p"
+        @test q.parameters["id_val"] == "abc123"
+        @test q.parameters["new_email"] == "test@example.com"
+        @test contains(q.statement, "SET")
+    end
+
+    @testset "@cypher_str: DETACH DELETE pattern" begin
+        target = "OldNode"
+        q = cypher"MATCH (n:Temp {name: $target}) DETACH DELETE n"
+        @test q.parameters["target"] == "OldNode"
+        @test contains(q.statement, "DETACH DELETE")
+    end
+
+    @testset "@cypher_str: WITH and aggregation" begin
+        min_degree = 5
+        q = cypher"MATCH (p:Person)-[r:KNOWS]->() WITH p, count(r) AS degree WHERE degree > $min_degree RETURN p.name, degree ORDER BY degree DESC"
+        @test q.parameters["min_degree"] == 5
+        @test contains(q.statement, "WITH")
+        @test contains(q.statement, "ORDER BY")
+    end
+
+    @testset "@cypher_str: UNWIND batch pattern" begin
+        items = [Dict("name" => "A"), Dict("name" => "B")]
+        q = cypher"UNWIND $items AS item CREATE (n:Node {name: item.name}) RETURN n"
+        @test q.parameters["items"] == items
+        @test contains(q.statement, "UNWIND")
+    end
+
+    @testset "@cypher_str: complex multi-hop relationship" begin
+        city = "Berlin"
+        q = cypher"MATCH (p:Person)-[:LIVES_IN]->(c:City {name: $city})<-[:LIVES_IN]-(friend:Person)-[:WORKS_AT]->(co:Company) RETURN p.name, friend.name, co.name"
+        @test q.parameters["city"] == "Berlin"
+        @test contains(q.statement, "LIVES_IN")
+        @test contains(q.statement, "WORKS_AT")
+    end
+
+    @testset "@cypher_str: OPTIONAL MATCH" begin
+        name = "Alice"
+        q = cypher"MATCH (p:Person {name: $name}) OPTIONAL MATCH (p)-[r:KNOWS]->(friend) RETURN p.name, collect(friend.name) AS friends"
+        @test q.parameters["name"] == "Alice"
+        @test contains(q.statement, "OPTIONAL MATCH")
+        @test contains(q.statement, "collect")
+    end
+
+    @testset "@cypher_str: SKIP and LIMIT with params" begin
+        offset = 10
+        page_size = 25
+        q = cypher"MATCH (p:Person) RETURN p ORDER BY p.name SKIP $offset LIMIT $page_size"
+        @test q.parameters["offset"] == 10
+        @test q.parameters["page_size"] == 25
+    end
+
+    @testset "@cypher_str: statement with no dollar signs preserves verbatim" begin
+        q = cypher"MATCH (n:Node) WHERE n.active = true RETURN count(n) AS total"
+        @test isempty(q.parameters)
+        @test q.statement == "MATCH (n:Node) WHERE n.active = true RETURN count(n) AS total"
+    end
+
+    @testset "@cypher_str: statement with special characters" begin
+        pattern = "O'Reilly"
+        q = cypher"MATCH (b:Book) WHERE b.publisher = $pattern RETURN b"
+        @test q.parameters["pattern"] == "O'Reilly"
+        # The raw $ is in the statement, not the interpolated value
+        @test contains(q.statement, "\$pattern")
+        @test !contains(q.statement, "O'Reilly")
+    end
+
+    @testset "@cypher_str: CASE expression in raw Cypher" begin
+        threshold = 50
+        q = cypher"MATCH (p:Person) RETURN p.name, CASE WHEN p.age > $threshold THEN 'senior' ELSE 'junior' END AS category"
+        @test q.parameters["threshold"] == 50
+        @test contains(q.statement, "CASE")
+        @test contains(q.statement, "WHEN")
+        @test contains(q.statement, "END")
+    end
+
+    @testset "@cypher_str: EXISTS subquery" begin
+        q = cypher"MATCH (p:Person) WHERE EXISTS { (p)-[:KNOWS]->(:Person) } RETURN p.name"
+        @test isempty(q.parameters)
+        @test contains(q.statement, "EXISTS")
+    end
+
+    @testset "@cypher_str: list parameter with IN" begin
+        names = ["Alice", "Bob", "Charlie"]
+        q = cypher"MATCH (p:Person) WHERE p.name IN $names RETURN p"
+        @test q.parameters["names"] == ["Alice", "Bob", "Charlie"]
+        @test contains(q.statement, "IN \$names")
+    end
+
+    @testset "@cypher_str: boolean and null params" begin
+        active = true
+        q = cypher"MATCH (p:Person) WHERE p.active = $active RETURN p"
+        @test q.parameters["active"] === true
+    end
+
+    @testset "@cypher_str: deeply nested property access in raw Cypher" begin
+        min_pop = 1000000
+        q = cypher"MATCH (c:Country)-[:HAS_CITY]->(city:City) WHERE city.population > $min_pop RETURN c.name, collect(city.name) AS cities ORDER BY c.name"
+        @test q.parameters["min_pop"] == 1000000
+        @test contains(q.statement, "collect")
+        @test contains(q.statement, "ORDER BY")
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
     # Extended coverage: URI parsing
     # ═══════════════════════════════════════════════════════════════════════
 
