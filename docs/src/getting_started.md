@@ -16,6 +16,12 @@ You need a running Neo4j instance (5.x or later) with the **Query API v2** enabl
 - [Neo4j Aura](https://neo4j.com/cloud/aura/) (cloud)
 - Neo4j Community / Enterprise 5.x+ (self-hosted)
 
+```@setup gs
+using Neo4jQuery
+conn = connect_from_env()
+query(conn, "MATCH (n) DETACH DELETE n")
+```
+
 ## Connecting
 
 The simplest way to connect:
@@ -31,43 +37,39 @@ conn = connect("localhost", "neo4j";
 
 Or load credentials from environment variables / a `.env` file:
 
-```julia
-# .env file:
-# NEO4J_URI=neo4j+s://xxxx.databases.neo4j.io
-# NEO4J_USERNAME=neo4j
-# NEO4J_PASSWORD=secret
-# NEO4J_DATABASE=neo4j
-
-conn = connect_from_env(path=".env")
+```@example gs
+conn = connect_from_env()
+println(conn)
 ```
 
 See [Connections](@ref connections) for full details.
 
 ## Your First Query
 
-```julia
+```@example gs
 # Create a node
 result = query(conn,
     "CREATE (p:Person {name: \$name, age: \$age}) RETURN p",
     parameters=Dict{String,Any}("name" => "Alice", "age" => 30);
     include_counters=true)
 
-println(result[1].p)           # Node(:Person {name: "Alice", age: 30})
-println(result.counters)        # QueryCounters(nodes_created=1, properties_set=2, labels_added=1)
+println(result[1].p)
+println(result.counters)
+```
 
+```@example gs
 # Read it back with the @cypher_str macro
 name = "Alice"
 q = cypher"MATCH (p:Person {name: $name}) RETURN p.name AS name, p.age AS age"
 result = query(conn, q; access_mode=:read)
-println(result[1].name)         # "Alice"
+println(result[1].name)
 ```
 
 ## Quick DSL Example
 
 The DSL lets you write graph queries in Julia syntax:
 
-```julia
-# Define your data model
+```@example gs
 @node Person begin
     name::String
     age::Int
@@ -76,19 +78,24 @@ end
 @rel KNOWS begin
     since::Int
 end
+nothing # hide
+```
 
+```@example gs
 # Create nodes
-alice = @create conn Person(name="Alice", age=30)
-bob   = @create conn Person(name="Bob", age=25)
+alice = @create conn Person(name="Alice2", age=30)
+bob   = @create conn Person(name="Bob2", age=25)
 
 # Create a relationship between them
 rel = @relate conn alice => KNOWS(since=2024) => bob
+```
 
+```@example gs
 # Query the graph
 min_age = 20
 result = @cypher conn begin
     p::Person >> r::KNOWS >> friend::Person
-    where(p.name == "Alice", friend.age > $min_age)
+    where(p.name == "Alice2", friend.age > $min_age)
     ret(friend.name => :name, r.since => :since)
     order(r.since, :desc)
 end
@@ -96,14 +103,18 @@ end
 for row in result
     println(row.name, " — known since ", row.since)
 end
+```
 
+```@example gs
 # Or as a one-liner comprehension
 result = @cypher conn [p.name for p in Person if p.age > 20]
+```
 
+```@example gs
 # Mutations with auto-SET
-@cypher conn begin
+result = @cypher conn begin
     p::Person
-    where(p.name == "Alice")
+    where(p.name == "Alice2")
     p.age = 31
     ret(p)
 end

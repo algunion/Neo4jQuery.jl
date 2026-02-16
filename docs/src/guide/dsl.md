@@ -2,17 +2,26 @@
 
 Neo4jQuery includes a compile-time DSL that translates Julia expressions into parameterised Cypher. The unified `@cypher` macro gives you type-safe, injection-proof graph operations with Julia-native syntax.
 
+```@setup dsl
+using Neo4jQuery
+conn = connect_from_env()
+# Clean database for reproducible examples
+query(conn, "MATCH (n) DETACH DELETE n")
+```
+
 ## Schema declarations
 
 Register node and relationship schemas for validation:
 
-```julia
+```@example dsl
 @node Person begin
     name::String
     age::Int
     email::String = ""    # optional, with default
 end
+```
 
+```@example dsl
 @rel KNOWS begin
     since::Int
     weight::Float64 = 1.0
@@ -21,26 +30,38 @@ end
 
 Schemas are stored in a global registry and used by mutation macros to validate properties at runtime.
 
-```julia
-# Look up registered schemas
-schema = get_node_schema(:Person)
-schema = get_rel_schema(:KNOWS)
+```@example dsl
+get_node_schema(:Person)
+```
 
-# Label-only schemas (no properties)
+```@example dsl
+get_rel_schema(:KNOWS)
+```
+
+Label-only schemas (no properties):
+
+```@example dsl
 @node Marker
+```
+
+```@example dsl
 @rel LINKS
 ```
 
 ### Property validation
 
-```julia
-validate_node_properties(schema, Dict{String,Any}("name" => "Alice", "age" => 30))
-# Throws if required properties are missing
-# Warns on unknown properties
+Validation throws if required properties are missing and warns on unknown properties:
 
-# Works the same way for relationships
+```@example dsl
+schema = get_node_schema(:Person)
+validate_node_properties(schema, Dict{String,Any}("name" => "Alice", "age" => 30))
+println("Node validation passed")
+```
+
+```@example dsl
 rel_schema = get_rel_schema(:KNOWS)
 validate_rel_properties(rel_schema, Dict{String,Any}("since" => 2024))
+println("Relationship validation passed")
 ```
 
 ## `@cypher` — the unified query builder
@@ -246,26 +267,30 @@ end include_counters=true
 
 ### Step 1: Define your graph model
 
-```julia
-using Neo4jQuery
-
+```@example dsl
 @node Person begin
     name::String
     age::Int
     email::String = ""
 end
+```
 
+```@example dsl
 @node Company begin
     name::String
     founded::Int
     industry::String = "Technology"
 end
+```
 
+```@example dsl
 @rel KNOWS begin
     since::Int
     weight::Float64 = 1.0
 end
+```
 
+```@example dsl
 @rel WORKS_AT begin
     role::String
     since::Int
@@ -274,27 +299,47 @@ end
 
 ### Step 2: Create nodes using schemas
 
-```julia
+```@example dsl
 alice = @create conn Person(name="Alice", age=30, email="alice@example.com")
-bob   = @create conn Person(name="Bob", age=25)
+```
+
+```@example dsl
+bob = @create conn Person(name="Bob", age=25)
+```
+
+```@example dsl
 carol = @create conn Person(name="Carol", age=35)
-acme  = @create conn Company(name="Acme Corp", founded=2010)
+```
+
+```@example dsl
+acme = @create conn Company(name="Acme Corp", founded=2010)
 ```
 
 ### Step 3: Create relationships
 
-```julia
+```@example dsl
 rel1 = @relate conn alice => KNOWS(since=2020) => bob
-rel2 = @relate conn alice => KNOWS(since=2022, weight=0.8) => carol
-rel3 = @relate conn bob => KNOWS(since=2023) => carol
+```
 
+```@example dsl
+rel2 = @relate conn alice => KNOWS(since=2022, weight=0.8) => carol
+```
+
+```@example dsl
+rel3 = @relate conn bob => KNOWS(since=2023) => carol
+```
+
+```@example dsl
 @relate conn alice => WORKS_AT(role="Engineer", since=2021) => acme
+```
+
+```@example dsl
 @relate conn bob => WORKS_AT(role="Designer", since=2022) => acme
 ```
 
 ### Step 4: Query with @cypher
 
-```julia
+```@example dsl
 min_age = 20
 result = @cypher conn begin
     p::Person >> r::KNOWS >> friend::Person
@@ -310,7 +355,7 @@ end
 
 ### Step 5: Aggregation with WITH
 
-```julia
+```@example dsl
 min_connections = 1
 result = @cypher conn begin
     p::Person >> r::KNOWS >> q::Person
@@ -323,7 +368,7 @@ end
 
 ### Step 6: Friend-of-friend recommendations
 
-```julia
+```@example dsl
 my_name = "Bob"
 result = @cypher conn begin
     (me:Person)-[:KNOWS]->(friend:Person)-[:KNOWS]->(fof:Person)
@@ -335,32 +380,33 @@ end
 
 ### Step 7: Updating data
 
-```julia
+```@example dsl
 name = "Alice"
 new_age = 31
 new_email = "alice@latest.com"
 
-@cypher conn begin
+result = @cypher conn begin
     p::Person
     where(p.name == $name)
     p.age = $new_age           # auto-SET
     p.email = $new_email       # merged into same SET clause
     ret(p)
 end
-# → MATCH (p:Person) WHERE p.name = $name SET p.age = $new_age, p.email = $new_email RETURN p
 ```
+
+This generates: `MATCH (p:Person) WHERE p.name = $name SET p.age = $new_age, p.email = $new_email RETURN p`
 
 ### Step 8: MERGE with conditional SET
 
-```julia
+```@example dsl
 node = @merge conn Person(name="Alice") on_create(age=30) on_match(last_seen="2025-02-15")
 ```
 
 Or using `@cypher` for more complex patterns:
 
-```julia
+```@example dsl
 now = "2025-02-15"
-@cypher conn begin
+result = @cypher conn begin
     merge((p:Person))
     on_create(p.created_at = $now)
     on_match(p.last_seen = $now)
@@ -370,14 +416,14 @@ end
 
 ### Step 9: Batch operations with UNWIND
 
-```julia
+```@example dsl
 people = [
     Dict("name" => "Dave", "age" => 28),
     Dict("name" => "Eve", "age" => 22),
     Dict("name" => "Frank", "age" => 40),
 ]
 
-@cypher conn begin
+result = @cypher conn begin
     unwind($people => :person)
     create((p:Person))
     p.name = person.name
@@ -388,7 +434,7 @@ end
 
 ### Step 10: OPTIONAL MATCH
 
-```julia
+```@example dsl
 result = @cypher conn begin
     p::Person
     optional(p >> w::WORKS_AT >> c::Company)
@@ -399,7 +445,7 @@ end
 
 ### Step 11: Pagination
 
-```julia
+```@example dsl
 page = 2
 page_size = 10
 offset = (page - 1) * page_size
@@ -415,16 +461,18 @@ end
 
 ### Step 12: Deleting data
 
-```julia
+```@example dsl
 target = "Frank"
 @cypher conn begin
     (p:Person)
     where(p.name == $target)
     detach_delete(p)
 end
+```
 
+```@example dsl
 # Remove a property
-@cypher conn begin
+result = @cypher conn begin
     p::Person
     remove(p.email)
     ret(p)
@@ -433,13 +481,15 @@ end
 
 ### Step 13: Complex WHERE conditions
 
-```julia
+```@example dsl
 result = @cypher conn begin
     p::Person
     where(startswith(p.name, "A"), !(isnothing(p.email)), p.age >= 18)
     ret(p.name => :name, p.email => :email)
 end
+```
 
+```@example dsl
 # IN operator with a parameter
 allowed_names = ["Alice", "Bob", "Carol"]
 result = @cypher conn begin
@@ -451,7 +501,7 @@ end
 
 ### Step 14: Aggregation functions
 
-```julia
+```@example dsl
 result = @cypher conn begin
     p::Person
     ret(count(p) => :total, avg(p.age) => :avg_age, collect(p.name) => :names)
@@ -460,19 +510,23 @@ end
 
 ### Step 15: Pattern direction variants
 
-```julia
+```@example dsl
 # Left-directed chain
 result = @cypher conn begin
     a::Person << r::KNOWS << b::Person
     ret(a.name => :target, b.name => :source, r.since => :since)
 end
+```
 
+```@example dsl
 # Arrow syntax (left arrow)
 result = @cypher conn begin
     (a:Person)<-[r:KNOWS]-(b:Person)
     ret(a.name => :target, b.name => :source)
 end
+```
 
+```@example dsl
 # Variable-length — find paths of 1 to 3 hops
 result = @cypher conn begin
     (a:Person)-[r:KNOWS, 1, 3]->(b:Person)
@@ -482,7 +536,7 @@ end
 
 ### Step 16: Regex matching
 
-```julia
+```@example dsl
 result = @cypher conn begin
     p::Person
     where(matches(p.name, "^A.*e\$"))
@@ -494,7 +548,7 @@ end
 
 Use Julia's `if`/`elseif`/`else`/`end` syntax to generate Cypher CASE expressions:
 
-```julia
+```@example dsl
 result = @cypher conn begin
     p::Person
     ret(p.name => :name, if p.age > 65; "senior"; elseif p.age > 30; "adult"; else; "young"; end => :category)
@@ -508,13 +562,15 @@ RETURN p.name AS name, CASE WHEN p.age > 65 THEN 'senior' WHEN p.age > 30 THEN '
 
 ### Step 18: EXISTS subqueries
 
-```julia
+```@example dsl
 result = @cypher conn begin
     p::Person
     where(exists((p)-[:KNOWS]->(:Person)))
     ret(p.name => :name)
 end
+```
 
+```@example dsl
 # Negated EXISTS
 result = @cypher conn begin
     p::Person
@@ -527,7 +583,7 @@ end
 
 Combine multiple query parts:
 
-```julia
+```@example dsl
 result = @cypher conn begin
     p::Person
     where(p.age > 30)
@@ -537,7 +593,9 @@ result = @cypher conn begin
     where(startswith(p.name, "A"))
     ret(p.name => :name)
 end
+```
 
+```@example dsl
 result = @cypher conn begin
     p::Person
     ret(p.name => :name)
@@ -551,7 +609,7 @@ end
 
 Nest a full sub-query with `call()`:
 
-```julia
+```@example dsl
 result = @cypher conn begin
     p::Person
     call(begin
@@ -594,7 +652,7 @@ end
 
 Apply updates over a collection:
 
-```julia
+```@example dsl
 names = ["Alice", "Bob", "Carol"]
 @cypher conn begin
     p::Person
@@ -604,59 +662,78 @@ names = ["Alice", "Bob", "Carol"]
         n.verified = true
     end)
 end
+println("FOREACH applied")
 ```
 
 FOREACH body supports property assignments (auto-SET), `create()`, `merge()`, `delete()`, `detach_delete()`, `remove()`, and nested `foreach()`.
 
 ### Step 23: Index and constraint management
 
-```julia
+```@example dsl
 @cypher conn begin
     create_index(:Person, :name)
 end
+println("Index created")
+```
 
+```@example dsl
 # Named index
 @cypher conn begin
     create_index(:Person, :email, :person_email_idx)
 end
+println("Named index created")
+```
 
+```@example dsl
 # Drop an index
 @cypher conn begin
     drop_index(:person_email_idx)
 end
+println("Index dropped")
+```
 
+```@example dsl
 # Uniqueness constraint
 @cypher conn begin
     create_constraint(:Person, :email, :unique)
 end
+println("Constraint created")
+```
 
+```@example dsl
 # NOT NULL constraint (named)
 @cypher conn begin
     create_constraint(:Person, :name, :not_null, :person_name_required)
 end
+println("NOT NULL constraint created")
+```
 
+```@example dsl
 # Drop a constraint
 @cypher conn begin
     drop_constraint(:person_name_required)
 end
+println("Constraint dropped")
 ```
 
 ### Comprehension form
 
 For simple match-filter-return queries, use Julia's comprehension syntax:
 
-```julia
+```@example dsl
 result = @cypher conn [p.name for p in Person if p.age > 25]
-# → MATCH (p:Person) WHERE p.age > 25 RETURN p.name
+```
 
+```@example dsl
 result = @cypher conn [p for p in Person]
-# → MATCH (p:Person) RETURN p
+```
 
+```@example dsl
 result = @cypher conn [(p.name, p.age) for p in Person]
-# → MATCH (p:Person) RETURN p.name, p.age
+```
 
+```@example dsl
 result = @cypher conn [p.name => :n for p in Person]
-# → MATCH (p:Person) RETURN p.name AS n
 ```
 
 ## Known limitations
@@ -674,40 +751,36 @@ For common single-entity operations, use the dedicated macros:
 
 ### `@create` — create a node
 
-```julia
-node = @create conn Person(name="Alice", age=30)
-# Returns: Node
+```@example dsl
+node = @create conn Person(name="Diana", age=28)
 ```
 
 Validates against the registered `Person` schema (if present).
 
 ### `@merge` — upsert a node
 
-```julia
-node = @merge conn Person(name="Alice") on_create(age=30, email="a@b.com") on_match(age=31)
-# MERGE (n:Person {name: $p_name})
-# ON CREATE SET n.age = $p_age, n.email = $p_email
-# ON MATCH SET n.age = $p_age_match
-# RETURN n
+```@example dsl
+node = @merge conn Person(name="Diana") on_create(age=28, email="d@b.com") on_match(age=29)
 ```
 
 Simple merge without `on_create`/`on_match`:
 
-```julia
-node = @merge conn Person(name="Alice", age=30)
+```@example dsl
+node = @merge conn Person(name="Diana", age=29)
 ```
 
 ### `@relate` — create a relationship
 
-```julia
-alice = @create conn Person(name="Alice", age=30)
-bob   = @create conn Person(name="Bob", age=25)
+```@example dsl
+diana = @create conn Person(name="Diana2", age=28)
+edgar = @create conn Person(name="Edgar", age=32)
 
-rel = @relate conn alice => KNOWS(since=2024) => bob
-# Returns: Relationship
+rel = @relate conn diana => KNOWS(since=2024) => edgar
+```
 
-println(rel.type)      # "KNOWS"
-println(rel["since"])  # 2024
+```@example dsl
+println(rel.type)
+println(rel["since"])
 ```
 
 Matches nodes by `elementId()` and validates against the `KNOWS` schema (if registered).

@@ -1,6 +1,9 @@
 using Documenter
 using Neo4jQuery
 
+# Load environment variables from project root .env for live documentation examples
+Neo4jQuery.dotenv(joinpath(@__DIR__, "..", ".env"))
+
 DocMeta.setdocmeta!(Neo4jQuery, :DocTestSetup, :(using Neo4jQuery); recursive=true)
 
 makedocs(;

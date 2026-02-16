@@ -2,6 +2,10 @@
 
 Neo4jQuery connects to Neo4j over HTTP using the **Query API v2**.
 
+```@setup conn
+using Neo4jQuery
+```
+
 ## `connect`
 
 ```julia
@@ -27,8 +31,9 @@ On construction the client hits the discovery endpoint (`GET /`) to verify the s
 
 Loads connection details from environment variables, optionally reading them from a `.env` file first:
 
-```julia
-conn = connect_from_env(; path=".env", prefix="NEO4J_")
+```@example conn
+conn = connect_from_env()
+println(conn)
 ```
 
 Expected variables (with default prefix `NEO4J_`):
@@ -48,12 +53,16 @@ The URI scheme is parsed to determine HTTP vs HTTPS:
 
 Two strategies are available:
 
-```julia
+```@example conn
 # HTTP Basic Auth (RFC 7617)
 auth = BasicAuth("neo4j", "password")
+println(auth)
+```
 
+```@example conn
 # Bearer token auth
 auth = BearerAuth("eyJhbGciOi...")
+println(auth)
 ```
 
 Both produce an `Authorization` header used on every request. Implement `auth_header(::YourAuth)` for custom strategies.

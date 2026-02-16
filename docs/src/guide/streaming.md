@@ -2,9 +2,19 @@
 
 For large result sets, streaming avoids loading all rows into memory at once. Results arrive as JSONL (one JSON object per line) and are parsed lazily.
 
+```@setup stream
+using Neo4jQuery
+import Neo4jQuery: summary
+conn = connect_from_env()
+query(conn, "MATCH (n) DETACH DELETE n")
+query(conn, "CREATE (p:Person {name: 'Alice', age: 30})")
+query(conn, "CREATE (p:Person {name: 'Bob', age: 25})")
+query(conn, "CREATE (p:Person {name: 'Carol', age: 35})")
+```
+
 ## Basic usage
 
-```julia
+```@example stream
 sr = stream(conn, "MATCH (p:Person) RETURN p.name AS name, p.age AS age")
 
 for row in sr
@@ -16,15 +26,20 @@ Each `iterate` call reads and parses the next row from the HTTP response body.
 
 ## Streaming in transactions
 
-```julia
+```@example stream
 # Implicit transaction
 sr = stream(conn, "MATCH (p) RETURN p"; access_mode=:read)
+collect(sr)  # consume the stream
+println("Streamed ", length(collect(stream(conn, "MATCH (p) RETURN p"; access_mode=:read))), " rows")
+```
 
+```@example stream
 # Explicit transaction
 tx = begin_transaction(conn)
 sr = stream(tx, "MATCH (p) RETURN p")
-# ... consume rows ...
+rows = collect(sr)
 commit!(tx)
+println("Streamed ", length(rows), " rows in transaction")
 ```
 
 ## Options
@@ -43,14 +58,12 @@ commit!(tx)
 
 After fully consuming the stream, call `summary` to get metadata:
 
-```julia
-import Neo4jQuery: summary   # required — Base.summary shadows the export
-
+```@example stream
 sr = stream(conn, "MATCH (p:Person) RETURN p")
 rows = collect(sr)   # consume all rows
 
 s = summary(sr)
-# s.bookmarks, s.counters, s.notifications, etc.
+println("Bookmarks: ", length(s.bookmarks))
 ```
 
 !!! note
@@ -65,18 +78,20 @@ s = summary(sr)
 
 You can materialize the entire stream with `collect`:
 
-```julia
+```@example stream
 sr = stream(conn, "MATCH (p:Person) RETURN p.name AS name, p.age AS age")
 rows = collect(sr)
 
 # rows is a Vector; use normal Julia operations
 names = [r.name for r in rows]
 ages  = [r.age  for r in rows]
+println("Names: ", names)
+println("Ages: ", ages)
 ```
 
 ## Streaming with parameters
 
-```julia
+```@example stream
 sr = stream(conn, "MATCH (p:Person) WHERE p.age > \$min_age RETURN p.name AS name",
     parameters=Dict{String,Any}("min_age" => 25))
 
@@ -89,9 +104,9 @@ end
 
 Streaming works within explicit transactions for multi-step workflows:
 
-```julia
+```@example stream
 transaction(conn) do tx
-    # Step 1: create nodes
+    # Step 1: create a node
     query(tx, "CREATE (p:Person {name: 'Diana', age: 28})")
 
     # Step 2: stream results from the same transaction
@@ -104,7 +119,7 @@ end
 
 ## `CypherQuery` support
 
-```julia
+```@example stream
 name = "Alice"
 q = cypher"MATCH (p:Person {name: $name}) RETURN p"
 sr = stream(conn, q)
