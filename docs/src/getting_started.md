@@ -47,10 +47,10 @@ See [Connections](@ref connections) for full details.
 ## Your First Query
 
 ```@example gs
-# Create a node
-result = query(conn,
-    "CREATE (p:Person {name: \$name, age: \$age}) RETURN p",
-    parameters=Dict{String,Any}("name" => "Alice", "age" => 30);
+# Create a node using the cypher"" string macro (recommended)
+name = "Alice"
+age = 30
+result = query(conn, cypher"CREATE (p:Person {name: $name, age: $age}) RETURN p";
     include_counters=true)
 
 println(result[1].p)
@@ -58,11 +58,20 @@ println(result.counters)
 ```
 
 ```@example gs
-# Read it back with the @cypher_str macro
+# Read it back
 name = "Alice"
 q = cypher"MATCH (p:Person {name: $name}) RETURN p.name AS name, p.age AS age"
 result = query(conn, q; access_mode=:read)
 println(result[1].name)
+```
+
+You can also use `{{param}}` placeholders in raw query strings — no escaping required:
+
+```@example gs
+result = query(conn,
+    "MATCH (p:Person {name: {{name}}}) RETURN p.name AS name, p.age AS age",
+    parameters=Dict{String,Any}("name" => "Alice"); access_mode=:read)
+println(result[1].name, " is ", result[1].age)
 ```
 
 ## Quick DSL Example

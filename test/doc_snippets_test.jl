@@ -26,9 +26,9 @@ purge_db!(conn; verify=true)
 # ════════════════════════════════════════════════════════════════════════════
 
 @testset "getting_started.md — create & read back" begin
-    result = query(conn,
-        "CREATE (p:Person {name: \$name, age: \$age}) RETURN p",
-        parameters=Dict{String,Any}("name" => "Alice", "age" => 30);
+    name = "Alice"
+    age = 30
+    result = query(conn, cypher"CREATE (p:Person {name: $name, age: $age}) RETURN p";
         include_counters=true)
 
     @test result[1].p isa Node
@@ -229,8 +229,8 @@ end
 end
 
 @testset "streaming.md — streaming with parameters" begin
-    sr = stream(conn, "MATCH (p:Person) WHERE p.age > \$min_age RETURN p.name AS name",
-        parameters=Dict{String,Any}("min_age" => 25))
+    min_age = 25
+    sr = stream(conn, cypher"MATCH (p:Person) WHERE p.age > $min_age RETURN p.name AS name")
     rows = collect(sr)
     @test length(rows) >= 1
 end
@@ -267,10 +267,10 @@ end
 
 @testset "transactions.md — explicit transaction commit" begin
     tx = begin_transaction(conn)
-    query(tx, "CREATE (a:Account {name: \$name})",
-        parameters=Dict{String,Any}("name" => "Savings"))
-    query(tx, "CREATE (a:Account {name: \$name})",
-        parameters=Dict{String,Any}("name" => "Checking"))
+    name = "Savings"
+    query(tx, cypher"CREATE (a:Account {name: $name})")
+    name = "Checking"
+    query(tx, cypher"CREATE (a:Account {name: $name})")
     bookmarks = commit!(tx)
     @test bookmarks isa Vector{String}
 
@@ -324,6 +324,57 @@ end
     end
     check = query(conn, "MATCH (n:TempError) RETURN n"; access_mode=:read)
     @test length(check) == 0
+end
+
+@testset "transactions.md — begin_transaction with CypherQuery" begin
+    label = "InitCQ"
+    tx = begin_transaction(conn;
+        statement=cypher"CREATE (n:InitCQ {val: 1}) RETURN n")
+    bookmarks = commit!(tx)
+    @test bookmarks isa Vector{String}
+
+    check = query(conn, "MATCH (n:InitCQ) RETURN n.val AS val"; access_mode=:read)
+    @test length(check) == 1
+    @test check[1].val == 1
+end
+
+@testset "transactions.md — commit! with CypherQuery" begin
+    tx = begin_transaction(conn)
+    bookmarks = commit!(tx;
+        statement=cypher"CREATE (n:FinalCQ {val: 2}) RETURN n")
+    @test bookmarks isa Vector{String}
+
+    check = query(conn, "MATCH (n:FinalCQ) RETURN n.val AS val"; access_mode=:read)
+    @test length(check) == 1
+    @test check[1].val == 2
+end
+
+@testset "transactions.md — begin_transaction with CypherQuery + parameters" begin
+    name = "TxCQ"
+    tx = begin_transaction(conn;
+        statement=cypher"CREATE (n:TxCQTest {name: $name}) RETURN n")
+    bookmarks = commit!(tx)
+    @test bookmarks isa Vector{String}
+
+    check = query(conn, "MATCH (n:TxCQTest) RETURN n.name AS name"; access_mode=:read)
+    @test length(check) == 1
+    @test check[1].name == "TxCQ"
+end
+
+@testset "streaming.md — streaming with cypher macro" begin
+    min_age = 20
+    sr = stream(conn, cypher"MATCH (p:Person) WHERE p.age > $min_age RETURN p.name AS name")
+    rows = collect(sr)
+    @test length(rows) >= 1
+end
+
+@testset "query — Mustache-style {{param}} placeholders" begin
+    result = query(conn,
+        "MATCH (p:Person {name: {{name}}}) RETURN p.name AS name",
+        parameters=Dict{String,Any}("name" => "Alice");
+        access_mode=:read)
+    @test length(result) >= 1
+    @test result[1].name == "Alice"
 end
 
 # ════════════════════════════════════════════════════════════════════════════

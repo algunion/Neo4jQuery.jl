@@ -29,17 +29,28 @@ end
 
 Open a new explicit transaction, optionally executing an initial statement.
 
-# Example
+The `statement` keyword accepts a plain `String`, a [`CypherQuery`](@ref)
+(from `cypher"..."`), or `nothing`.
+
+# Examples
 ```julia
 tx = begin_transaction(conn)
-result = query(tx, "CREATE (n:Person {name: 'Alice'}) RETURN n")
+result = query(tx, cypher"CREATE (n:Person {name: \$name}) RETURN n")
+commit!(tx)
+
+# With an initial statement
+name = "Alice"
+tx = begin_transaction(conn; statement=cypher"CREATE (n:Person {name: \$name}) RETURN n")
 commit!(tx)
 ```
 """
 function begin_transaction(conn::Neo4jConnection;
-    statement::Union{AbstractString,Nothing}=nothing,
+    statement::Union{AbstractString,CypherQuery,Nothing}=nothing,
     parameters::Dict{String,<:Any}=Dict{String,Any}())
-    body = if statement !== nothing
+    body = if statement isa CypherQuery
+        merged = merge(statement.parameters, parameters)
+        _build_query_body(statement.statement, merged)
+    elseif statement !== nothing
         _build_query_body(statement, parameters)
     else
         Dict{String,Any}()
@@ -97,12 +108,24 @@ end
 
 Commit an open transaction, optionally executing a final statement.
 Returns the bookmarks from the committed transaction.
+
+The `statement` keyword accepts a plain `String`, a [`CypherQuery`](@ref)
+(from `cypher"..."`), or `nothing`.
+
+# Example
+```julia
+tx = begin_transaction(conn)
+bookmarks = commit!(tx; statement=cypher"CREATE (n:Final) RETURN n")
+```
 """
 function commit!(tx::Transaction;
-    statement::Union{AbstractString,Nothing}=nothing,
+    statement::Union{AbstractString,CypherQuery,Nothing}=nothing,
     parameters::Dict{String,<:Any}=Dict{String,Any}())
     _assert_open(tx)
-    body = if statement !== nothing
+    body = if statement isa CypherQuery
+        merged = merge(statement.parameters, parameters)
+        _build_query_body(statement.statement, merged)
+    elseif statement !== nothing
         _build_query_body(statement, parameters)
     else
         Dict{String,Any}()
