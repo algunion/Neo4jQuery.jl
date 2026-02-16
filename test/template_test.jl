@@ -89,7 +89,7 @@ using Neo4jQuery: _prepare_statement, _build_query_body
 
         # The best way to check: Union{AbstractString, CypherQuery, Nothing} should accept CypherQuery
         # We test the Union type directly rather than string representation
-        @test CypherQuery <: Union{AbstractString, CypherQuery, Nothing}
+        @test CypherQuery <: Union{AbstractString,CypherQuery,Nothing}
     end
 
     @testset "cypher\"\" captures string values correctly" begin
