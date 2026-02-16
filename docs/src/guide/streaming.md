@@ -92,6 +92,17 @@ println("Ages: ", ages)
 ## Streaming with parameters
 
 ```@example stream
+# Recommended: use cypher"" for parameterised streaming
+min_age = 25
+sr = stream(conn, cypher"MATCH (p:Person) WHERE p.age > $min_age RETURN p.name AS name")
+
+for row in sr
+    println(row.name)
+end
+```
+
+```@example stream
+# Also works: raw string with parameters dict
 sr = stream(conn, "MATCH (p:Person) WHERE p.age > \$min_age RETURN p.name AS name",
     parameters=Dict{String,Any}("min_age" => 25))
 

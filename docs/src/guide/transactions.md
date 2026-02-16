@@ -15,10 +15,10 @@ Open a transaction, run multiple queries, then commit or rollback:
 ```@example tx
 tx = begin_transaction(conn)
 
-query(tx, "CREATE (a:Account {name: \$name})",
-    parameters=Dict{String,Any}("name" => "Savings"))
-query(tx, "CREATE (a:Account {name: \$name})",
-    parameters=Dict{String,Any}("name" => "Checking"))
+name = "Savings"
+query(tx, cypher"CREATE (a:Account {name: $name})")
+name = "Checking"
+query(tx, cypher"CREATE (a:Account {name: $name})")
 
 bookmarks = commit!(tx)
 println("Committed with ", length(bookmarks), " bookmark(s)")
@@ -35,12 +35,12 @@ println("Rolled back — Temp node never persists")
 
 ### Initial statement
 
-`begin_transaction` accepts an optional initial statement:
+`begin_transaction` accepts an optional initial statement — either a `String` or
+a `CypherQuery`:
 
 ```@example tx
 tx = begin_transaction(conn;
-    statement="CREATE (n:Init) RETURN n",
-    parameters=Dict{String,Any}())
+    statement=cypher"CREATE (n:Init) RETURN n")
 commit!(tx)
 println("Transaction with initial statement committed")
 ```
@@ -52,14 +52,13 @@ println("Transaction with initial statement committed")
 ```@example tx
 tx = begin_transaction(conn)
 bookmarks = commit!(tx;
-    statement="CREATE (n:Final) RETURN n",
-    parameters=Dict{String,Any}())
+    statement=cypher"CREATE (n:Final) RETURN n")
 println("Committed with final statement, ", length(bookmarks), " bookmark(s)")
 ```
 
 ### Using `@cypher_str` in transactions
 
-The `@cypher_str` macro works seamlessly within transactions:
+The `cypher""` macro is the recommended way to pass parameterised queries everywhere:
 
 ```@example tx
 tx = begin_transaction(conn)
@@ -119,12 +118,11 @@ end
 # Build a small graph atomically
 transaction(conn) do tx
     # Create people
-    query(tx, "CREATE (a:Person {name: \$name, age: \$age})",
-        parameters=Dict{String,Any}("name" => "Fay", "age" => 30))
-    query(tx, "CREATE (b:Person {name: \$name, age: \$age})",
-        parameters=Dict{String,Any}("name" => "George", "age" => 25))
-    query(tx, "CREATE (c:Person {name: \$name, age: \$age})",
-        parameters=Dict{String,Any}("name" => "Helen", "age" => 35))
+    for (n, a) in [("Fay", 30), ("George", 25), ("Helen", 35)]
+        name = n
+        age = a
+        query(tx, cypher"CREATE (p:Person {name: $name, age: $age})")
+    end
 
     # Create relationships
     query(tx, """
@@ -136,7 +134,7 @@ transaction(conn) do tx
         CREATE (a)-[:KNOWS {since: 2022}]->(c)
     """)
 end
-println("All five operations committed together")
+println("All operations committed together")
 ```
 
 ## Transaction state

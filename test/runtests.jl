@@ -1,8 +1,8 @@
 using Neo4jQuery
 using Neo4jQuery: materialize_typed, to_typed_json, _build_result, _build_query_body,
-    auth_header, query_url, tx_url, _parse_neo4j_uri, _parse_wkt, _to_wkt,
-    _parse_offset, _float_str, _materialize_properties, _try_parse, _extract_errors,
-    _props_str
+    _prepare_statement, auth_header, query_url, tx_url, _parse_neo4j_uri, _parse_wkt,
+    _to_wkt, _parse_offset, _float_str, _materialize_properties, _try_parse,
+    _extract_errors, _props_str
 using JSON
 using Dates
 using TimeZones
@@ -285,6 +285,54 @@ end
         @test d.value == "P1Y2M3DT4H"
     end
 
+    # ── Statement preparation (template resolution) ───────────────────────
+    @testset "_prepare_statement" begin
+        # {{param}} → $param conversion
+        @test _prepare_statement("WHERE p.age > {{min_age}}", Dict{String,Any}("min_age" => 20)) ==
+              "WHERE p.age > \$min_age"
+
+        # Multiple templates
+        @test _prepare_statement(
+            "WHERE p.age > {{min_age}} AND p.age < {{max_age}}",
+            Dict{String,Any}("min_age" => 20, "max_age" => 40)
+        ) == "WHERE p.age > \$min_age AND p.age < \$max_age"
+
+        # No templates — passthrough
+        @test _prepare_statement("MATCH (n) RETURN n", Dict{String,Any}()) ==
+              "MATCH (n) RETURN n"
+
+        # Existing $param not affected
+        @test _prepare_statement(
+            "WHERE p.name = \$name AND p.age > {{min_age}}",
+            Dict{String,Any}("name" => "Alice", "min_age" => 20)
+        ) == "WHERE p.name = \$name AND p.age > \$min_age"
+
+        # Template inside map literal braces
+        @test _prepare_statement(
+            "CREATE (n {name: {{name}}})",
+            Dict{String,Any}("name" => "Alice")
+        ) == "CREATE (n {name: \$name})"
+
+        # Underscore and digits in identifiers
+        @test _prepare_statement(
+            "RETURN {{my_var_2}}",
+            Dict{String,Any}("my_var_2" => 99)
+        ) == "RETURN \$my_var_2"
+
+        # Warning when params provided but no placeholders found
+        # (e.g. user accidentally used Julia $interpolation)
+        @test_logs (:warn, r"None of the parameter keys.*found as.*placeholders") begin
+            _prepare_statement("WHERE p.name = Alice", Dict{String,Any}("name" => "Alice"))
+        end
+
+        # No warning when params match placeholders
+        @test_logs _prepare_statement(
+            "WHERE p.name = {{name}}", Dict{String,Any}("name" => "Alice"))
+
+        # No warning with empty parameters
+        @test_logs _prepare_statement("RETURN 1", Dict{String,Any}())
+    end
+
     # ── Query body building ─────────────────────────────────────────────────
     @testset "_build_query_body" begin
         body = _build_query_body("RETURN 1", Dict{String,Any}())
@@ -292,13 +340,20 @@ end
         @test !haskey(body, "parameters")
         @test !haskey(body, "accessMode")
 
-        body2 = _build_query_body("RETURN \$x", Dict{String,Any}("x" => 42);
+        # Using {{param}} template syntax
+        body2 = _build_query_body("RETURN {{x}}", Dict{String,Any}("x" => 42);
             access_mode=:read, include_counters=true,
             bookmarks=["bk:1"])
+        @test body2["statement"] == "RETURN \$x"
         @test body2["accessMode"] == "Read"
         @test body2["includeCounters"] == true
         @test body2["bookmarks"] == ["bk:1"]
         @test haskey(body2, "parameters")
+
+        # Legacy $param syntax still works
+        body2b = _build_query_body("RETURN \$x", Dict{String,Any}("x" => 42))
+        @test body2b["statement"] == "RETURN \$x"
+        @test haskey(body2b, "parameters")
 
         # impersonated_user
         body3 = _build_query_body("RETURN 1", Dict{String,Any}();
@@ -1339,8 +1394,9 @@ TEST_KEY4=no_quotes
 
             # ── Implicit transaction: create & read nodes ───────────────────
             @testset "Create nodes (implicit tx)" begin
+                # {{param}} template syntax — no escaping needed
                 r1 = query(conn,
-                    "CREATE (a:Person {name: \$name, age: \$age}) RETURN a",
+                    "CREATE (a:Person {name: {{name}}, age: {{age}}}) RETURN a",
                     parameters=Dict{String,Any}("name" => "Alice", "age" => 30);
                     include_counters=true)
                 @test length(r1) == 1
@@ -1350,6 +1406,7 @@ TEST_KEY4=no_quotes
                 @test r1.counters !== nothing
                 @test r1.counters.nodes_created == 1
 
+                # Legacy \$param syntax — still supported
                 r2 = query(conn,
                     "CREATE (b:Person {name: \$name, age: \$age}) RETURN b",
                     parameters=Dict{String,Any}("name" => "Bob", "age" => 25);
@@ -1385,9 +1442,10 @@ TEST_KEY4=no_quotes
 
             # ── Create relationship ─────────────────────────────────────────
             @testset "Create relationship" begin
+                # {{param}} template in multi-line string
                 result = query(conn, """
                     MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
-                    CREATE (a)-[r:KNOWS {since: \$since}]->(b)
+                    CREATE (a)-[r:KNOWS {since: {{since}}}]->(b)
                     RETURN r
                 """, parameters=Dict{String,Any}("since" => 2024);
                     include_counters=true)
@@ -1415,8 +1473,9 @@ TEST_KEY4=no_quotes
                 tx = begin_transaction(conn)
                 @test tx isa Transaction
 
+                # {{param}} works inside transactions too
                 r1 = query(tx,
-                    "CREATE (c:Person {name: \$name, age: \$age}) RETURN c",
+                    "CREATE (c:Person {name: {{name}}, age: {{age}}}) RETURN c",
                     parameters=Dict{String,Any}("name" => "Charlie", "age" => 35))
                 @test length(r1) == 1
                 @test r1[1].c["name"] == "Charlie"
@@ -1451,11 +1510,12 @@ TEST_KEY4=no_quotes
             # ── Do-block transaction ────────────────────────────────────────
             @testset "Transaction do-block" begin
                 transaction(conn) do tx
+                    # {{param}} in do-block transactions
                     query(tx,
-                        "CREATE (e:Person {name: \$name, age: \$age})",
+                        "CREATE (e:Person {name: {{name}}, age: {{age}}})",
                         parameters=Dict{String,Any}("name" => "Eve", "age" => 22))
                     query(tx,
-                        "CREATE (f:Person {name: \$name, age: \$age})",
+                        "CREATE (f:Person {name: {{name}}, age: {{age}}})",
                         parameters=Dict{String,Any}("name" => "Frank", "age" => 40))
                 end
 
@@ -1485,14 +1545,15 @@ TEST_KEY4=no_quotes
 
             # ── Multiple data types round-trip ──────────────────────────────
             @testset "Data type round-trip" begin
+                # {{param}} template syntax with many parameter types
                 result = query(conn, """
                     CREATE (n:TypeTest {
-                        int_val: \$int_val,
-                        float_val: \$float_val,
-                        str_val: \$str_val,
-                        bool_val: \$bool_val,
-                        date_val: date(\$date_str),
-                        list_val: \$list_val
+                        int_val: {{int_val}},
+                        float_val: {{float_val}},
+                        str_val: {{str_val}},
+                        bool_val: {{bool_val}},
+                        date_val: date({{date_str}}),
+                        list_val: {{list_val}}
                     }) RETURN n
                 """, parameters=Dict{String,Any}(
                         "int_val" => 42,

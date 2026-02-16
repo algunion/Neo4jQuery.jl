@@ -656,7 +656,7 @@ end
             ret(c)
         end
 
-        check = query(conn, "MATCH (c:Company) WHERE c.name = \$name RETURN c",
+        check = query(conn, "MATCH (c:Company) WHERE c.name = {{name}} RETURN c",
             parameters=Dict{String,Any}("name" => special_name); access_mode=:read)
         @test length(check) == 1
         @test check[1].c["name"] == "O'Reilly & Co."

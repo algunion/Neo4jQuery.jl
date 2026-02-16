@@ -24,28 +24,9 @@ result = query(conn, "MATCH (p:Person) RETURN p.name AS name")
 
 Every call creates an implicit (auto-commit) transaction that opens and closes with a single request.
 
-### Parameters
+### Parameters with `@cypher_str` (recommended)
 
-Always use parameters for user-supplied values — never interpolate into Cypher strings:
-
-```@example queries
-result = query(conn,
-    "MATCH (p:Person {name: \$name}) RETURN p",
-    parameters=Dict{String,Any}("name" => "Alice"))
-```
-
-Multiple parameters:
-
-```@example queries
-result = query(conn,
-    "MATCH (p:Person) WHERE p.age > \$min_age AND p.age < \$max_age RETURN p.name AS name, p.age AS age",
-    parameters=Dict{String,Any}("min_age" => 20, "max_age" => 40);
-    access_mode=:read)
-```
-
-### The `@cypher_str` macro
-
-A safer, more ergonomic approach — local variables prefixed with `$` are automatically captured:
+The `cypher""` string macro automatically captures local variables as parameterised Cypher — no escaping, no boilerplate:
 
 ```@example queries
 name = "Alice"
@@ -63,6 +44,27 @@ min_age = 25
 city = "Berlin"
 q = cypher"MATCH (p:Person) WHERE p.age > $min_age AND p.city = $city RETURN p"
 result = query(conn, q; access_mode=:read)
+```
+
+### Parameters with raw strings
+
+If you prefer raw strings, pass a `parameters` dict.  Use `\$` to denote Neo4j
+parameter placeholders, or `{{param}}` Mustache-style placeholders to avoid
+escaping entirely:
+
+```@example queries
+# Mustache-style (no escaping needed)
+result = query(conn,
+    "MATCH (p:Person {name: {{name}}}) RETURN p",
+    parameters=Dict{String,Any}("name" => "Alice"))
+```
+
+```@example queries
+# Traditional \$-style
+result = query(conn,
+    "MATCH (p:Person) WHERE p.age > \$min_age AND p.age < \$max_age RETURN p.name AS name, p.age AS age",
+    parameters=Dict{String,Any}("min_age" => 20, "max_age" => 40);
+    access_mode=:read)
 ```
 
 ### Options

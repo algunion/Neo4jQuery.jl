@@ -128,6 +128,16 @@ result = query(conn, "MATCH (p:Person) RETURN p.name AS name, p.age AS age")
 
 ### With parameters (always use for user input)
 
+Use `{{param}}` Mustache-style placeholders to avoid `\$` escaping:
+
+```julia
+result = query(conn,
+    "MATCH (p:Person {name: {{name}}}) RETURN p",
+    parameters=Dict{String,Any}("name" => "Alice"))
+```
+
+The legacy `\$param` form still works but requires escaping in Julia strings:
+
 ```julia
 result = query(conn,
     "MATCH (p:Person {name: \$name}) RETURN p",
