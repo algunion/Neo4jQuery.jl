@@ -1,8 +1,10 @@
 using Documenter
 using Neo4jQuery
 
-# Load environment variables from project root .env for live documentation examples
-Neo4jQuery.dotenv(joinpath(@__DIR__, "..", ".env"))
+# Load .env only when it exists (local dev); in CI the env vars are already set
+let envfile = joinpath(@__DIR__, "..", ".env")
+    isfile(envfile) && Neo4jQuery.dotenv(envfile)
+end
 
 DocMeta.setdocmeta!(Neo4jQuery, :DocTestSetup, :(using Neo4jQuery); recursive=true)
 
