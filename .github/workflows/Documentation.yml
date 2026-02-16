@@ -12,6 +12,9 @@ jobs:
   docs:
     name: Build & Deploy
     runs-on: ubuntu-latest
+    concurrency:
+      group: neo4j-aura-live
+      cancel-in-progress: false
     permissions:
       contents: write
       statuses: write
