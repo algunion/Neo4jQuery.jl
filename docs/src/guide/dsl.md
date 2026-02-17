@@ -137,6 +137,82 @@ a::A >> ::R1 >> b::B << ::R2 << c::C >> ::R3 >> d::D
 # → (a:A)-[:R1]->(b:B)<-[:R2]-(c:C)-[:R3]->(d:D)
 ```
 
+#### Quantified relationships (variable-length, Neo4j 5+)
+
+Use Julia's curly-brace syntax on relationship types for quantified (variable-length) patterns.
+This generates the modern GQL-conformant Cypher syntax.
+
+```julia
+# Range quantifier: 2 to 5 hops
+a::Person >> KNOWS{2,5} >> b::Person
+# → (a:Person)-[:KNOWS]->{2,5}(b:Person)
+
+# Exact hop count
+a::Person >> KNOWS{3} >> b::Person
+# → (a:Person)-[:KNOWS]->{3}(b:Person)
+
+# One-or-more (+)
+a::Person >> KNOWS{1,nothing} >> b::Person
+# → (a:Person)-[:KNOWS]->+(b:Person)
+
+# Zero-or-more (*)
+a::Person >> KNOWS{0,nothing} >> b::Person
+# → (a:Person)-[:KNOWS]->*(b:Person)
+
+# Named relationship with quantifier
+a::Person >> r::KNOWS{1,5} >> b::Person
+# → (a:Person)-[r:KNOWS]->{1,5}(b:Person)
+
+# Left-directed with quantifier
+b::Person << KNOWS{2,4} << a::Person
+# → (b:Person)<-[:KNOWS]-{2,4}(a:Person)
+```
+
+The `nothing` sentinel maps to an unbounded upper limit.
+
+#### Path variables
+
+Assign a path to a variable using `=`:
+
+```julia
+# Path variable assignment
+p = a::Person >> KNOWS >> b::Person
+# → MATCH p = (a:Person)-[:KNOWS]->(b:Person)
+
+# Path variable with quantifier
+p = a::Person >> KNOWS{1,nothing} >> b::Person
+# → MATCH p = (a:Person)-[:KNOWS]->+(b:Person)
+```
+
+Use `length(p)`, `nodes(p)`, `relationships(p)` on the path variable.
+
+#### Shortest path selectors (Neo4j 5+)
+
+```julia
+# SHORTEST 1 — single shortest path
+shortest(1, a::Person >> KNOWS{1,nothing} >> b::Person)
+# → MATCH SHORTEST 1 (a:Person)-[:KNOWS]->+(b:Person)
+
+# ALL SHORTEST — all paths with minimum length
+all_shortest(a::Person >> KNOWS{1,nothing} >> b::Person)
+# → MATCH ALL SHORTEST (a:Person)-[:KNOWS]->+(b:Person)
+
+# SHORTEST k GROUPS — k groups by length
+shortest_groups(2, a::Person >> KNOWS{1,nothing} >> b::Person)
+# → MATCH SHORTEST 2 GROUPS (a:Person)-[:KNOWS]->+(b:Person)
+
+# ANY — any single path (non-deterministic)
+any_paths(a::Person >> KNOWS{1,nothing} >> b::Person)
+# → MATCH ANY (a:Person)-[:KNOWS]->+(b:Person)
+
+# With path variable
+p = shortest(1, a::Person >> KNOWS{1,nothing} >> b::Person)
+# → MATCH p = SHORTEST 1 (a:Person)-[:KNOWS]->+(b:Person)
+
+p = all_shortest(a::Person >> KNOWS{1,nothing} >> b::Person)
+# → MATCH p = ALL SHORTEST (a:Person)-[:KNOWS]->+(b:Person)
+```
+
 #### Arrow syntax
 
 The classic Cypher-like arrow syntax also works:
@@ -733,6 +809,79 @@ end
 println("Constraint dropped")
 ```
 
+### Step 24: Quantified relationships
+
+```@example dsl
+# Find all Person nodes reachable in exactly 2 hops via KNOWS from Alice
+result = @cypher conn begin
+    a::Person >> KNOWS{2} >> b::Person
+    where(a.name == "Alice")
+    ret(distinct, b.name => :name)
+    order(b.name)
+end
+```
+
+```@example dsl
+# One-or-more hops: find everyone reachable from Alice
+result = @cypher conn begin
+    a::Person >> KNOWS{1,nothing} >> b::Person
+    where(a.name == "Alice")
+    ret(distinct, b.name => :name)
+    order(b.name)
+end
+```
+
+### Step 25: Path variables
+
+```@example dsl
+# Assign the path to a variable, then inspect its length
+result = @cypher conn begin
+    p = a::Person >> KNOWS >> b::Person
+    where(a.name == "Alice", b.name == "Bob")
+    ret(length(p) => :hops, a.name => :src, b.name => :dst)
+end
+```
+
+```@example dsl
+# Path variable with quantified relationship — get all nodes along the path
+result = @cypher conn begin
+    p = a::Person >> KNOWS{3} >> b::Person
+    where(a.name == "Alice", b.name == "Eve")
+    ret(nodes(p) => :path_nodes, length(p) => :hops)
+end
+```
+
+### Step 26: Shortest path selectors
+
+```@example dsl
+# Find the single shortest path from Alice to Eve
+result = @cypher conn begin
+    p = shortest(1, a::Person >> KNOWS{1,nothing} >> b::Person)
+    where(a.name == "Alice", b.name == "Eve")
+    ret(a.name => :src, b.name => :dst, length(p) => :hops)
+end
+```
+
+```@example dsl
+# All shortest paths (all paths with minimum length)
+result = @cypher conn begin
+    p = all_shortest(a::Person >> KNOWS{1,nothing} >> b::Person)
+    where(a.name == "Alice", b.name == "Eve")
+    ret(length(p) => :hops)
+end
+```
+
+```@example dsl
+# Shortest with parameterized endpoints
+src_name = "Alice"
+dst_name = "Eve"
+result = @cypher conn begin
+    p = shortest(1, a::Person >> KNOWS{1,nothing} >> b::Person)
+    where(a.name == $src_name, b.name == $dst_name)
+    ret(length(p) => :hops)
+end
+```
+
 ### Comprehension form
 
 For simple match-filter-return queries, use Julia's comprehension syntax:
@@ -758,7 +907,9 @@ result = @cypher conn [p.name => :n for p in Person]
 These Cypher features are **not supported** by the DSL:
 
 - Inline property patterns in MATCH (`{name: $v}`) — Julia's parser cannot parse `{…}` as an expression; use `where()` instead
-- Shortest path functions (`shortestPath`, `allShortestPaths`)
+- Legacy `shortestPath`/`allShortestPaths` functions — use the modern `shortest()`, `all_shortest()` DSL functions instead
+- Quantified path patterns (`((a)-[r]->(b)){2,4}`) — only quantified relationships (`KNOWS{2,5}`) are supported
+- Match modes (`REPEATABLE ELEMENTS`, `DIFFERENT RELATIONSHIPS`) are not yet supported
 - Procedure calls via `CALL db.xxx()` (distinct from CALL subqueries)
 - Map projections and list comprehensions in the Cypher sense
 

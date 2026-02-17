@@ -149,6 +149,86 @@ function _chain_rel_element_to_cypher(expr)::String
           "Expected r::TYPE, ::TYPE, :TYPE, or TYPE")
 end
 
+# ── Quantified relationship support ──────────────────────────────────────────
+
+"""
+    _compile_quantifier(args) -> String
+
+Compile quantifier arguments from curly brace syntax `{m,n}` to Cypher.
+
+- `(3,)` → `{3}` (exactly 3)
+- `(2, 5)` → `{2,5}` (range)
+- `(1, nothing)` → `+` (shorthand for 1 or more)
+- `(0, nothing)` → `*` (shorthand for 0 or more)
+- `(m, nothing)` → `{m,}` (m or more, general)
+"""
+function _compile_quantifier(args)::String
+    if length(args) == 1
+        n = args[1]
+        return "{$n}"
+    elseif length(args) == 2
+        lo = args[1]
+        hi = args[2]
+        if hi === :nothing || hi === nothing
+            # Unbounded upper bound — use shorthands where possible
+            lo == 1 && return "+"
+            lo == 0 && return "*"
+            return "{$lo,}"
+        else
+            return "{$lo,$hi}"
+        end
+    end
+    error("Invalid quantifier arguments: expected {n}, {m,n}, or {m,nothing}, " *
+          "got $(length(args)) arguments")
+end
+
+"""
+    _parse_chain_rel(expr) -> (inner::String, quantifier::String)
+
+Parse a relationship element in a `>>` / `<<` chain, returning both the
+bracket content and any quantifier suffix.
+
+Handles all standard forms plus quantified variants:
+- `KNOWS`              → `(":KNOWS", "")`
+- `r::KNOWS`           → `("r:KNOWS", "")`
+- `KNOWS{2,5}`         → `(":KNOWS", "{2,5}")`
+- `r::KNOWS{2,5}`      → `("r:KNOWS", "{2,5}")`
+- `::KNOWS{1,nothing}` → `(":KNOWS", "+")`
+- `KNOWS{3}`           → `(":KNOWS", "{3}")`
+"""
+function _parse_chain_rel(expr)::Tuple{String,String}
+    # Bare curly: KNOWS{2,5} → Expr(:curly, :KNOWS, 2, 5)
+    if expr isa Expr && expr.head == :curly
+        type_sym = expr.args[1]
+        quantifier = _compile_quantifier(expr.args[2:end])
+        return (":$(type_sym)", quantifier)
+    end
+
+    # Named quantified: r::KNOWS{2,5} → Expr(:(::), :r, Expr(:curly, :KNOWS, 2, 5))
+    if expr isa Expr && expr.head == :(::) && length(expr.args) == 2
+        type_part = expr.args[2]
+        if type_part isa Expr && type_part.head == :curly
+            var = expr.args[1]
+            reltype = type_part.args[1]
+            quantifier = _compile_quantifier(type_part.args[2:end])
+            return ("$(var):$(reltype)", quantifier)
+        end
+    end
+
+    # Anonymous quantified: ::KNOWS{2,5} → Expr(:(::), Expr(:curly, :KNOWS, 2, 5))
+    if expr isa Expr && expr.head == :(::) && length(expr.args) == 1
+        type_part = expr.args[1]
+        if type_part isa Expr && type_part.head == :curly
+            reltype = type_part.args[1]
+            quantifier = _compile_quantifier(type_part.args[2:end])
+            return (":$(reltype)", quantifier)
+        end
+    end
+
+    # No quantifier — delegate to standard parsing
+    return (_chain_rel_element_to_cypher(expr), "")
+end
+
 """
     _flatten_mixed_chain(expr) -> (Vector{Any}, Vector{Symbol})
 
@@ -222,11 +302,11 @@ function _mixed_chain_to_cypher(expr)::String
                 error("Inconsistent direction around relationship at position $i: " *
                       "$(dir_before) vs $(dir_after). " *
                       "Use `>> rel >>` for forward or `<< rel <<` for backward.")
-            rel = _chain_rel_element_to_cypher(elements[i])
+            rel_inner, quantifier = _parse_chain_rel(elements[i])
             if dir_before == :right
-                push!(parts, "-[$rel]->")
+                push!(parts, "-[$rel_inner]->$quantifier")
             else
-                push!(parts, "<-[$rel]-")
+                push!(parts, "<-[$rel_inner]-$quantifier")
             end
         end
     end
@@ -256,11 +336,11 @@ function _graph_chain_to_cypher(expr, direction::Symbol=:right)::String
         if isodd(i)
             push!(parts, _node_to_cypher(elements[i]))
         else
-            rel = _chain_rel_element_to_cypher(elements[i])
+            rel_inner, quantifier = _parse_chain_rel(elements[i])
             if direction == :right
-                push!(parts, "-[$rel]->")
+                push!(parts, "-[$rel_inner]->$quantifier")
             else
-                push!(parts, "<-[$rel]-")
+                push!(parts, "<-[$rel_inner]-$quantifier")
             end
         end
     end
@@ -352,6 +432,50 @@ const _CYPHER_CLAUSE_FUNCTIONS = Dict{Symbol,Symbol}(
     :drop_constraint => :drop_constraint,
 )
 
+# ── Path selector functions (SHORTEST, ALL SHORTEST, ANY, etc.) ──────────────
+
+"""Set of path selector function names recognized in `@cypher` blocks."""
+const _SELECTOR_FUNCTIONS = Set{Symbol}([:shortest, :all_shortest, :shortest_groups, :any_paths])
+
+"""
+    _parse_selector_clause(fn, call_args, pathvar) -> (clause_kind, clause_args)
+
+Parse a path selector function call into a `(:selector_match, args)` clause tuple.
+
+Selector functions:
+- `shortest(k, pattern)` → `MATCH SHORTEST k pattern`
+- `all_shortest(pattern)` → `MATCH ALL SHORTEST pattern`
+- `shortest_groups(k, pattern)` → `MATCH SHORTEST k GROUPS pattern`
+- `any_paths(pattern)` / `any_paths(k, pattern)` → `MATCH ANY [k] pattern`
+
+With path variable: `p = shortest(k, pattern)` → `MATCH p = SHORTEST k pattern`
+"""
+function _parse_selector_clause(fn::Symbol, call_args::Vector{Any},
+    pathvar::Union{Symbol,Nothing})
+    if fn == :shortest
+        length(call_args) == 2 ||
+            error("shortest() expects (k, pattern), got $(length(call_args)) args")
+        return (:selector_match, Any[pathvar, :shortest, call_args[1], call_args[2]])
+    elseif fn == :all_shortest
+        length(call_args) == 1 ||
+            error("all_shortest() expects (pattern), got $(length(call_args)) args")
+        return (:selector_match, Any[pathvar, :all_shortest, nothing, call_args[1]])
+    elseif fn == :shortest_groups
+        length(call_args) == 2 ||
+            error("shortest_groups() expects (k, pattern), got $(length(call_args)) args")
+        return (:selector_match, Any[pathvar, :shortest_groups, call_args[1], call_args[2]])
+    elseif fn == :any_paths
+        if length(call_args) == 1
+            return (:selector_match, Any[pathvar, :any_paths, nothing, call_args[1]])
+        elseif length(call_args) == 2
+            return (:selector_match, Any[pathvar, :any_paths, call_args[1], call_args[2]])
+        else
+            error("any_paths() expects (pattern) or (k, pattern)")
+        end
+    end
+    error("Unknown selector function: $fn")
+end
+
 # ── Block parser ─────────────────────────────────────────────────────────────
 
 """
@@ -381,11 +505,36 @@ function _parse_cypher_block(block::Expr)
                 push!(clauses, (kind, clause_args))
                 continue
             end
+            # ── 1b. Selector functions: shortest(), all_shortest(), etc. ──
+            if fn isa Symbol && fn in _SELECTOR_FUNCTIONS
+                push!(clauses, _parse_selector_clause(fn,
+                    Any[a for a in arg.args[2:end]], nothing))
+                continue
+            end
         end
 
-        # ── 2. Property assignment: p.age = $val → SET ──────────────────
+        # ── 2. Assignment expressions ────────────────────────────────────
         if arg isa Expr && arg.head == :(=)
             lhs = arg.args[1]
+            rhs = arg.args[2]
+
+            # ── 2a. Path variable with selector: p = shortest(k, pattern)
+            if lhs isa Symbol && rhs isa Expr && rhs.head == :call
+                fn = rhs.args[1]
+                if fn isa Symbol && fn in _SELECTOR_FUNCTIONS
+                    push!(clauses, _parse_selector_clause(fn,
+                        Any[a for a in rhs.args[2:end]], lhs))
+                    continue
+                end
+            end
+
+            # ── 2b. Path variable: p = pattern → MATCH p = pattern ───────
+            if lhs isa Symbol && _is_graph_pattern(rhs)
+                push!(clauses, (:match_path, Any[lhs, rhs]))
+                continue
+            end
+
+            # ── 2c. Property assignment: p.age = $val → SET ──────────────
             if lhs isa Expr && lhs.head == :.
                 push!(clauses, (:set, Any[arg]))
                 continue
@@ -400,7 +549,9 @@ function _parse_cypher_block(block::Expr)
 
         error("Unrecognized expression in @cypher block: $(repr(arg)). " *
               "Expected a graph pattern, clause function " *
-              "(where/ret/order/take/create/merge/optional/call/foreach/...), " *
+              "(where/ret/order/take/create/merge/optional/call/foreach/" *
+              "shortest/all_shortest/shortest_groups/any_paths/...), " *
+              "path variable assignment (p = pattern), " *
               "or property assignment.")
     end
 
@@ -603,6 +754,37 @@ function _compile_cypher_subquery(block::Expr, params::Vector{Symbol},
                 push!(cypher_parts, "OPTIONAL MATCH " * join(patterns, ", "))
             end
 
+        elseif kind == :match_path
+            pathvar = args[1]::Symbol
+            pattern = _pattern_to_cypher(args[2])
+            push!(cypher_parts, "MATCH $pathvar = $pattern")
+
+        elseif kind == :selector_match
+            pathvar = args[1]      # Symbol or nothing
+            selector = args[2]::Symbol
+            k = args[3]            # Integer/Expr or nothing
+            pattern_expr = args[4]
+
+            cypher_pattern = _pattern_to_cypher(pattern_expr)
+
+            selector_str = if selector == :shortest
+                "SHORTEST $k"
+            elseif selector == :all_shortest
+                "ALL SHORTEST"
+            elseif selector == :shortest_groups
+                "SHORTEST $k GROUPS"
+            elseif selector == :any_paths
+                k === nothing ? "ANY" : "ANY $k"
+            else
+                error("Unknown path selector: $selector")
+            end
+
+            if pathvar !== nothing
+                push!(cypher_parts, "MATCH $pathvar = $selector_str $cypher_pattern")
+            else
+                push!(cypher_parts, "MATCH $selector_str $cypher_pattern")
+            end
+
         elseif kind == :where
             conds = [_condition_to_cypher(a, params, seen) for a in args]
             push!(cypher_parts, "WHERE " * join(conds, " AND "))
@@ -716,6 +898,37 @@ function _compile_cypher_block(clauses::Vector{Tuple{Symbol,Vector{Any}}})
             else
                 patterns = [_pattern_to_cypher(a) for a in args]
                 push!(cypher_parts, "OPTIONAL MATCH " * join(patterns, ", "))
+            end
+
+        elseif kind == :match_path
+            pathvar = args[1]::Symbol
+            pattern = _pattern_to_cypher(args[2])
+            push!(cypher_parts, "MATCH $pathvar = $pattern")
+
+        elseif kind == :selector_match
+            pathvar = args[1]      # Symbol or nothing
+            selector = args[2]::Symbol
+            k = args[3]            # Integer/Expr or nothing
+            pattern_expr = args[4]
+
+            cypher_pattern = _pattern_to_cypher(pattern_expr)
+
+            selector_str = if selector == :shortest
+                "SHORTEST $k"
+            elseif selector == :all_shortest
+                "ALL SHORTEST"
+            elseif selector == :shortest_groups
+                "SHORTEST $k GROUPS"
+            elseif selector == :any_paths
+                k === nothing ? "ANY" : "ANY $k"
+            else
+                error("Unknown path selector: $selector")
+            end
+
+            if pathvar !== nothing
+                push!(cypher_parts, "MATCH $pathvar = $selector_str $cypher_pattern")
+            else
+                push!(cypher_parts, "MATCH $selector_str $cypher_pattern")
             end
 
         elseif kind == :where
@@ -928,6 +1141,28 @@ The `>>` chain is the primary pattern language. Arrow syntax also works.
 | `p::Person << r::KNOWS << q::Person`           | `(p:Person)<-[r:KNOWS]-(q:Person)`  |
 | `a::A >> R1 >> b::B >> R2 >> c::C`             | `(a:A)-[:R1]->(b:B)-[:R2]->(c:C)`  |
 | `(p:Person)-[r:KNOWS]->(q:Person)`             | `(p:Person)-[r:KNOWS]->(q:Person)`  |
+| `a::A >> KNOWS{2,5} >> b::B`                   | `(a:A)-[:KNOWS]->{2,5}(b:B)`       |
+| `a::A >> r::KNOWS{1,nothing} >> b::B`          | `(a:A)-[r:KNOWS]->+(b:B)`          |
+| `a::A >> KNOWS{0,nothing} >> b::B`             | `(a:A)-[:KNOWS]->*(b:B)`           |
+| `a::A >> KNOWS{3} >> b::B`                     | `(a:A)-[:KNOWS]->{3}(b:B)`         |
+
+# Path Variables
+
+Assign a pattern to a path variable with `=`:
+
+| Julia                                          | Cypher                              |
+|:-----------------------------------------------|:------------------------------------|
+| `p = a::A >> R >> b::B`                        | `MATCH p = (a:A)-[:R]->(b:B)`      |
+
+# Shortest Path Selectors
+
+| Julia                                          | Cypher                              |
+|:-----------------------------------------------|:------------------------------------|
+| `shortest(k, pattern)`                         | `MATCH SHORTEST k pattern`          |
+| `all_shortest(pattern)`                        | `MATCH ALL SHORTEST pattern`        |
+| `shortest_groups(k, pattern)`                  | `MATCH SHORTEST k GROUPS pattern`   |
+| `any_paths(pattern)` / `any_paths(k, pattern)` | `MATCH ANY [k] pattern`            |
+| `p = shortest(1, pattern)`                     | `MATCH p = SHORTEST 1 pattern`      |
 
 # Clause Functions
 
@@ -1022,6 +1257,33 @@ end
 
 # Comprehension form
 result = @cypher conn [p.name for p in Person if p.age > 25]
+
+# Quantified relationship (variable-length)
+result = @cypher conn begin
+    a::Person >> KNOWS{1,5} >> b::Person
+    where(a.name == \$start)
+    ret(a, b)
+end
+
+# Path variable assignment
+result = @cypher conn begin
+    p = a::Person >> KNOWS >> b::Person
+    ret(p, length(p))
+end
+
+# Shortest path
+result = @cypher conn begin
+    shortest(1, a::Station >> LINK{1,nothing} >> b::Station)
+    where(a.name == \$src, b.name == \$dst)
+    ret(a, b)
+end
+
+# All shortest with path variable
+result = @cypher conn begin
+    p = all_shortest(a::Station >> LINK{1,nothing} >> b::Station)
+    where(a.name == \$src, b.name == \$dst)
+    ret(p, length(p) => :hops)
+end
 ```
 """
 macro cypher(conn, block, kwargs...)
