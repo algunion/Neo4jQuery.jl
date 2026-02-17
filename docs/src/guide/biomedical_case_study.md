@@ -738,7 +738,46 @@ A **five-hop traversal** across the entire knowledge base — expressed as reada
 
 ---
 
-### 4.11 Batch insert with UNWIND
+### 4.11 Mixed-direction chains: Drug → Disease ← Gene
+
+In real knowledge graphs, not every hop goes in the same direction. The `@cypher` DSL handles this naturally — mix `>>` (forward) and `<<` (backward) in a single chain to express convergent patterns where different entity types meet at a shared node.
+
+**Raw Cypher:**
+```cypher
+MATCH (dr:Drug)-[:TREATS]->(d:Disease)<-[:ASSOCIATED_WITH]-(g:Gene)
+RETURN dr.name AS drug, d.name AS disease, g.symbol AS gene
+ORDER BY d.name, dr.name, g.symbol
+```
+
+**`@cypher` DSL:**
+```@example bio
+result = @cypher conn begin
+    dr::Drug >> ::TREATS >> d::Disease << ::ASSOCIATED_WITH << g::Gene
+    ret(dr.name => :drug, d.name => :disease, g.symbol => :gene)
+    order(d.name, dr.name, g.symbol)
+end
+```
+
+The `>>` and `<<` operators can be freely combined in a single path — each relationship is bracketed by the same operator (`>> rel >>` for forward, `<< rel <<` for backward), and you can have any number of direction changes:
+
+```@example bio
+# Four-segment chain: Drug → Disease ← Gene → Protein → Pathway
+result = @cypher conn begin
+    dr::Drug >> ::TREATS >> d::Disease << ::ASSOCIATED_WITH << g::Gene >> ::ENCODES >> p::Protein >> ::PARTICIPATES_IN >> pw::Pathway
+    ret(dr.name => :drug, d.name => :disease,
+        g.symbol => :gene, p.name => :protein, pw.name => :pathway)
+    order(d.name, g.symbol)
+end
+```
+
+!!! tip "Reading mixed chains"
+    Read `>>` as "points to" and `<<` as "is pointed to by". The chain
+    `Drug >> TREATS >> Disease << ASSOCIATED_WITH << Gene`
+    reads as: "Drug treats Disease, which Gene is associated with."
+
+---
+
+### 4.12 Batch insert with UNWIND
 
 **Raw Cypher:**
 ```cypher
@@ -772,7 +811,7 @@ end
 
 ---
 
-### 4.12 Complex WHERE with string functions
+### 4.13 Complex WHERE with string functions
 
 **Raw Cypher:**
 ```cypher
@@ -796,7 +835,7 @@ Multi-condition `where()` auto-ANDs conditions — no need for `&&`.
 
 ---
 
-### 4.13 WITH pipeline — treatment landscape
+### 4.14 WITH pipeline — treatment landscape
 
 **Raw Cypher:**
 ```cypher
@@ -820,7 +859,7 @@ end
 
 ---
 
-### 4.14 Publication → Disease knowledge network
+### 4.15 Publication → Disease knowledge network
 
 **Raw Cypher:**
 ```cypher

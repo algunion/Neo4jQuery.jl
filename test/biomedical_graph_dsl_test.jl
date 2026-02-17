@@ -2185,6 +2185,171 @@ end
 end
 
 # ════════════════════════════════════════════════════════════════════════════
+# PART 4b — Mixed >> / << Chain Traversals (Live)
+#
+# Exercises mixed-direction chains against the populated biomedical graph.
+# These patterns combine forward (>>) and backward (<<) hops in a single
+# MATCH clause, which is the natural way to express convergent or divergent
+# graph patterns.
+# ════════════════════════════════════════════════════════════════════════════
+
+@testset "Biomedical @cypher — Mixed Chain Traversals" begin
+
+    # ── 4b.1 Drug → Disease ← Gene (the motivating example) ────────────
+    @testset "Drug >> TREATS >> Disease << ASSOCIATED_WITH << Gene" begin
+        result = @cypher conn begin
+            dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene
+            ret(dr.name => :drug, di.name => :disease, g.symbol => :gene)
+            order(di.name, dr.name, g.symbol)
+        end
+        @test length(result) > 0
+        # Every row should have non-empty fields
+        for row in result
+            @test row.drug isa AbstractString && !isempty(row.drug)
+            @test row.disease isa AbstractString && !isempty(row.disease)
+            @test row.gene isa AbstractString && !isempty(row.gene)
+        end
+        # TP53 is associated with multiple diseases that drugs treat
+        tp53_rows = [r for r in result if r.gene == "TP53"]
+        @test length(tp53_rows) > 0
+    end
+
+    # ── 4b.2 Named relationships in mixed chain ────────────────────────
+    @testset "Drug >> t::TREATS >> Disease << a::ASSOCIATED_WITH << Gene (named rels)" begin
+        result = @cypher conn begin
+            dr::Drug >> t::TREATS >> di::Disease << a::ASSOCIATED_WITH << g::Gene
+            ret(dr.name => :drug, di.name => :disease, g.symbol => :gene,
+                t.efficacy => :efficacy, a.source => :source)
+            order(di.name, dr.name)
+        end
+        @test length(result) > 0
+        for row in result
+            @test row.efficacy isa Number
+        end
+    end
+
+    # ── 4b.3 Three-segment mixed chain: Drug→Disease←Gene→Protein ──────
+    @testset "Drug >> Disease << Gene >> Protein (3-segment mixed)" begin
+        result = @cypher conn begin
+            dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene >> ::ENCODES >> p::Protein
+            ret(dr.name => :drug, di.name => :disease,
+                g.symbol => :gene, p.name => :protein)
+            order(di.name, g.symbol)
+        end
+        @test length(result) > 0
+        for row in result
+            @test row.protein isa AbstractString && !isempty(row.protein)
+        end
+    end
+
+    # ── 4b.4 Four-segment: Drug→Disease←Gene→Protein→Pathway ───────────
+    @testset "Drug >> Disease << Gene >> Protein >> Pathway (4-segment)" begin
+        result = @cypher conn begin
+            dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene >> ::ENCODES >> p::Protein >> ::PARTICIPATES_IN >> pw::Pathway
+            ret(dr.name => :drug, di.name => :disease,
+                g.symbol => :gene, p.name => :protein, pw.name => :pathway)
+            order(di.name, g.symbol)
+        end
+        @test length(result) > 0
+        # Verify the full chain is traversed — pathway should be meaningful
+        for row in result
+            @test row.pathway isa AbstractString && !isempty(row.pathway)
+        end
+    end
+
+    # ── 4b.5 Mixed chain with WHERE clause ──────────────────────────────
+    @testset "Mixed chain with WHERE filter" begin
+        result = @cypher conn begin
+            dr::Drug >> t::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene
+            where(t.efficacy > 0.5, di.category == "Oncology")
+            ret(dr.name => :drug, di.name => :disease,
+                g.symbol => :gene, t.efficacy => :efficacy)
+            order(t.efficacy, :desc)
+        end
+        @test length(result) > 0
+        for row in result
+            @test row.efficacy > 0.5
+        end
+    end
+
+    # ── 4b.6 Mixed chain with aggregation ───────────────────────────────
+    @testset "Mixed chain with COUNT aggregation" begin
+        result = @cypher conn begin
+            dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene
+            ret(di.name => :disease, count(dr) => :drug_count, count(g) => :gene_count)
+            order(disease)
+        end
+        @test length(result) > 0
+        for row in result
+            @test row.drug_count >= 1
+            @test row.gene_count >= 1
+        end
+    end
+
+    # ── 4b.7 Mixed chain combined with separate MATCH (two patterns) ───
+    @testset "Mixed chain + separate pattern on same node" begin
+        result = @cypher conn begin
+            dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene
+            g >> ::ENCODES >> p::Protein
+            ret(dr.name => :drug, di.name => :disease,
+                g.symbol => :gene, p.name => :protein)
+            order(di.name, g.symbol)
+        end
+        @test length(result) > 0
+    end
+
+    # ── 4b.8 Mixed chain with OPTIONAL MATCH ───────────────────────────
+    @testset "Mixed chain with OPTIONAL side effects" begin
+        result = @cypher conn begin
+            dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene
+            optional(dr >> ::HAS_SIDE_EFFECT >> se::Symptom)
+            ret(dr.name => :drug, di.name => :disease,
+                g.symbol => :gene, collect(se.name) => :side_effects)
+            order(di.name, dr.name)
+        end
+        @test length(result) > 0
+    end
+
+    # ── 4b.9 Equivalence: mixed chain vs separate MATCH patterns ───────
+    @testset "Mixed chain produces same results as separate patterns" begin
+        # Query using mixed chain
+        result_mixed = @cypher conn begin
+            dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene
+            ret(dr.name => :drug, di.name => :disease, g.symbol => :gene)
+            order(di.name, dr.name, g.symbol)
+        end
+
+        # Equivalent query using two separate forward patterns on same Disease node
+        result_separate = @cypher conn begin
+            dr::Drug >> ::TREATS >> di::Disease
+            g::Gene >> ::ASSOCIATED_WITH >> di
+            ret(dr.name => :drug, di.name => :disease, g.symbol => :gene)
+            order(di.name, dr.name, g.symbol)
+        end
+
+        # Both forms must produce identical result sets
+        @test length(result_mixed) == length(result_separate)
+        for (rm, rs) in zip(result_mixed, result_separate)
+            @test rm.drug == rs.drug
+            @test rm.disease == rs.disease
+            @test rm.gene == rs.gene
+        end
+    end
+
+    # ── 4b.10 Biomarker → Disease ← Drug (reversed perspective) ────────
+    @testset "Biomarker >> INDICATES >> Disease << TREATS << Drug" begin
+        result = @cypher conn begin
+            bm::Biomarker >> ::INDICATES >> di::Disease << ::TREATS << dr::Drug
+            ret(bm.name => :biomarker, di.name => :disease, dr.name => :drug)
+            order(bm.name, dr.name)
+        end
+        @test length(result) > 0
+        her2_rows = [r for r in result if r.biomarker == "HER2 IHC"]
+        @test length(her2_rows) > 0
+    end
+end
+
+# ════════════════════════════════════════════════════════════════════════════
 # PART 5 — Graph Integrity Verification
 # ════════════════════════════════════════════════════════════════════════════
 

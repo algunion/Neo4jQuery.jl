@@ -124,6 +124,17 @@ p::Person << r::KNOWS << q::Person
 # Multi-hop chain
 a::Person >> r::KNOWS >> b::Person >> s::WORKS_AT >> c::Company
 # → (a:Person)-[r:KNOWS]->(b:Person)-[s:WORKS_AT]->(c:Company)
+
+# Mixed-direction chain (>> and << in the same path)
+# Use >> for forward hops and << for backward hops.
+# Each relationship must be bracketed by the same operator:
+#   >> rel >>  for forward,  << rel <<  for backward.
+dr::Drug >> ::TREATS >> d::Disease << ::ASSOCIATED_WITH << g::Gene
+# → (dr:Drug)-[:TREATS]->(d:Disease)<-[:ASSOCIATED_WITH]-(g:Gene)
+
+# Longer mixed chains work with any number of direction changes
+a::A >> ::R1 >> b::B << ::R2 << c::C >> ::R3 >> d::D
+# → (a:A)-[:R1]->(b:B)<-[:R2]-(c:C)-[:R3]->(d:D)
 ```
 
 #### Arrow syntax
