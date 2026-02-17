@@ -65,6 +65,37 @@ function _is_graph_pattern(expr)::Bool
     return false
 end
 
+# ── Mixed chain detection ────────────────────────────────────────────────────
+
+"""
+    _is_mixed_chain(expr) -> Bool
+
+Detect if an expression is a chain that mixes `>>` and `<<` operators.
+E.g. `a::A >> ::R >> b::B << ::S << c::C`
+"""
+function _is_mixed_chain(expr)::Bool
+    expr isa Expr && expr.head == :call && length(expr.args) == 3 || return false
+    op = expr.args[1]
+    (op == :(>>) || op == :(<<)) || return false
+    # Walk the left spine and check if both >> and << appear
+    has_right = op == :(>>)
+    has_left = op == :(<<)
+    node = expr.args[2]
+    while node isa Expr && node.head == :call && length(node.args) == 3
+        inner_op = node.args[1]
+        if inner_op == :(>>)
+            has_right = true
+        elseif inner_op == :(<<)
+            has_left = true
+        else
+            break
+        end
+        (has_right && has_left) && return true
+        node = node.args[2]
+    end
+    return false
+end
+
 # ── >> / << chain compilation ────────────────────────────────────────────────
 
 """
@@ -72,12 +103,21 @@ end
 
 Flatten a left-associative binary operator chain into a flat list.
 E.g. `((a >> b) >> c) >> d` → `[a, b, c, d]`
+
+Iterative to support chains of any depth.
 """
 function _flatten_chain(expr, op::Symbol)::Vector{Any}
-    if expr isa Expr && expr.head == :call && length(expr.args) == 3 && expr.args[1] == op
-        return vcat(_flatten_chain(expr.args[2], op), Any[expr.args[3]])
+    rhs = Any[]
+    node = expr
+    while node isa Expr && node.head == :call && length(node.args) == 3 && node.args[1] == op
+        push!(rhs, node.args[3])
+        node = node.args[2]
     end
-    return Any[expr]
+    result = Any[node]
+    for i in length(rhs):-1:1
+        push!(result, rhs[i])
+    end
+    return result
 end
 
 """
@@ -107,6 +147,90 @@ function _chain_rel_element_to_cypher(expr)::String
     end
     error("Cannot parse relationship in >> chain: $(repr(expr)). " *
           "Expected r::TYPE, ::TYPE, :TYPE, or TYPE")
+end
+
+"""
+    _flatten_mixed_chain(expr) -> (Vector{Any}, Vector{Symbol})
+
+Flatten a chain that may mix `>>` and `<<` operators.
+Returns `(elements, dirs)` where:
+- `elements` has `n` items (nodes at odd indices, relationships at even indices)
+- `dirs` has `n-1` items — `:right` for `>>`, `:left` for `<<` — one per step.
+
+For a well-formed pattern each relationship's two flanking dirs must agree.
+E.g. `a >> R >> b << S << c` → elements=[a,R,b,S,c], dirs=[:right,:right,:left,:left]
+
+The implementation is iterative (not recursive) to support chains of any depth
+without risking stack overflow.
+"""
+function _flatten_mixed_chain(expr)::Tuple{Vector{Any},Vector{Symbol}}
+    # Walk down the left spine, collecting right-hand operands and operators
+    rhs_stack = Any[]
+    dir_stack = Symbol[]
+    node = expr
+    while node isa Expr && node.head == :call && length(node.args) == 3
+        op = node.args[1]
+        if op == :(>>) || op == :(<<)
+            push!(rhs_stack, node.args[3])
+            push!(dir_stack, op == :(>>) ? :right : :left)
+            node = node.args[2]
+        else
+            break
+        end
+    end
+    # `node` is now the leftmost leaf element
+    # rhs_stack/dir_stack are in reverse order, so reverse them
+    elements = Any[node]
+    dirs = Symbol[]
+    for i in length(rhs_stack):-1:1
+        push!(elements, rhs_stack[i])
+        push!(dirs, dir_stack[i])
+    end
+    return (elements, dirs)
+end
+
+"""
+    _mixed_chain_to_cypher(expr) -> String
+
+Compile a mixed `>>` / `<<` chain into a Cypher path pattern.
+
+Each relationship (even position) must have the **same** direction on both
+sides; otherwise the pattern is ambiguous and an error is thrown.
+
+Example:
+```
+dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene
+→ (dr:Drug)-[:TREATS]->(di:Disease)<-[:ASSOCIATED_WITH]-(g:Gene)
+```
+"""
+function _mixed_chain_to_cypher(expr)::String
+    elements, dirs = _flatten_mixed_chain(expr)
+
+    length(elements) >= 3 && isodd(length(elements)) ||
+        error("Mixed chain pattern must have odd number of elements " *
+              "(node op rel op node ...), got $(length(elements))")
+
+    parts = String[]
+    for i in eachindex(elements)
+        if isodd(i)
+            push!(parts, _node_to_cypher(elements[i]))
+        else
+            # Relationship at position i: dirs[i-1] and dirs[i] must agree
+            dir_before = dirs[i-1]
+            dir_after = dirs[i]
+            dir_before == dir_after ||
+                error("Inconsistent direction around relationship at position $i: " *
+                      "$(dir_before) vs $(dir_after). " *
+                      "Use `>> rel >>` for forward or `<< rel <<` for backward.")
+            rel = _chain_rel_element_to_cypher(elements[i])
+            if dir_before == :right
+                push!(parts, "-[$rel]->")
+            else
+                push!(parts, "<-[$rel]-")
+            end
+        end
+    end
+    return join(parts, "")
 end
 
 """
@@ -155,6 +279,10 @@ Convert any graph pattern expression to Cypher. Dispatches between:
 - Single node patterns: `p::Person`, `(p:Person)`
 """
 function _pattern_to_cypher(expr)::String
+    # Mixed >> / << chain → per-relationship direction
+    if _is_mixed_chain(expr)
+        return _mixed_chain_to_cypher(expr)
+    end
     # >> chain → right-directed path
     if expr isa Expr && expr.head == :call && length(expr.args) >= 3 && expr.args[1] == :(>>)
         return _graph_chain_to_cypher(expr, :right)

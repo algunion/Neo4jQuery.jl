@@ -7,6 +7,8 @@ using Neo4jQuery: _node_to_cypher, _rel_bracket_to_cypher, _match_to_cypher,
     # Unified @cypher helpers
     _is_graph_pattern, _flatten_chain, _chain_rel_element_to_cypher,
     _graph_chain_to_cypher, _pattern_to_cypher,
+    # Mixed chain helpers
+    _is_mixed_chain, _flatten_mixed_chain, _mixed_chain_to_cypher,
     _parse_cypher_block, _compile_cypher_block,
     _compile_cypher_comprehension,
     _compile_cypher_subquery, _compile_cypher_foreach,
@@ -176,6 +178,113 @@ end
         elements = _flatten_chain(Meta.parse("a >> b >> c >> d"), :>>)
         @test length(elements) == 4
         @test _flatten_chain(:a, :>>) == Any[:a]
+    end
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # SECTION 2b: Mixed >> / << chain compilation
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    @testset "Mixed chain detection (_is_mixed_chain)" begin
+        # Pure >> is NOT mixed
+        @test _is_mixed_chain(Meta.parse("a::A >> ::R >> b::B")) == false
+        # Pure << is NOT mixed
+        @test _is_mixed_chain(Meta.parse("a::A << ::R << b::B")) == false
+        # >> then << IS mixed
+        @test _is_mixed_chain(Meta.parse(
+            "dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene")) == true
+        # << then >> IS mixed
+        @test _is_mixed_chain(Meta.parse(
+            "a::A << ::R1 << b::B >> ::R2 >> c::C")) == true
+        # Non-chain expressions
+        @test _is_mixed_chain(Meta.parse("p::Person")) == false
+        @test _is_mixed_chain(Meta.parse("42")) == false
+    end
+
+    @testset "Mixed chain flattening (_flatten_mixed_chain)" begin
+        elements, dirs = _flatten_mixed_chain(Meta.parse(
+            "dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene"))
+        @test length(elements) == 5
+        @test length(dirs) == 4
+        @test dirs == [:right, :right, :left, :left]
+    end
+
+    @testset "Mixed chain to Cypher — biomedical pattern" begin
+        # The exact pattern from the biomedical case study
+        @test _mixed_chain_to_cypher(Meta.parse(
+            "dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene")) ==
+              "(dr:Drug)-[:TREATS]->(di:Disease)<-[:ASSOCIATED_WITH]-(g:Gene)"
+    end
+
+    @testset "Mixed chain to Cypher — named relationships" begin
+        @test _mixed_chain_to_cypher(Meta.parse(
+            "dr::Drug >> t::TREATS >> di::Disease << a::ASSOCIATED_WITH << g::Gene")) ==
+              "(dr:Drug)-[t:TREATS]->(di:Disease)<-[a:ASSOCIATED_WITH]-(g:Gene)"
+    end
+
+    @testset "Mixed chain to Cypher — three direction segments" begin
+        @test _mixed_chain_to_cypher(Meta.parse(
+            "a::A >> ::R1 >> b::B << ::R2 << c::C >> ::R3 >> d::D")) ==
+              "(a:A)-[:R1]->(b:B)<-[:R2]-(c:C)-[:R3]->(d:D)"
+    end
+
+    @testset "Mixed chain to Cypher — bare symbols" begin
+        @test _mixed_chain_to_cypher(Meta.parse(
+            "a >> R1 >> b << R2 << c")) ==
+              "(a)-[:R1]->(b)<-[:R2]-(c)"
+    end
+
+    @testset "Mixed chain — inconsistent direction errors" begin
+        # >> rel << is ambiguous — relationship bracketed by different directions
+        @test_throws ErrorException _mixed_chain_to_cypher(
+            Meta.parse("a::A >> ::R << b::B"))
+    end
+
+    @testset "Mixed chain via _pattern_to_cypher dispatcher" begin
+        # Mixed chains should be dispatched correctly through the unified entry point
+        @test _pattern_to_cypher(Meta.parse(
+            "dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene")) ==
+              "(dr:Drug)-[:TREATS]->(di:Disease)<-[:ASSOCIATED_WITH]-(g:Gene)"
+        # Pure chains still work through the same dispatcher
+        @test _pattern_to_cypher(Meta.parse("p::Person >> ::KNOWS >> q::Person")) ==
+              "(p:Person)-[:KNOWS]->(q:Person)"
+        @test _pattern_to_cypher(Meta.parse("p::Person << ::KNOWS << q::Person")) ==
+              "(p:Person)<-[:KNOWS]-(q:Person)"
+    end
+
+    @testset "Mixed chain pattern detection via _is_graph_pattern" begin
+        @test _is_graph_pattern(Meta.parse(
+            "dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene")) == true
+    end
+
+    @testset "Mixed chain — N-hop generalization" begin
+        # 4 hops alternating direction
+        @test _pattern_to_cypher(Meta.parse(
+            "a::A >> ::R1 >> b::B << ::R2 << c::C >> ::R3 >> d::D << ::R4 << e::E")) ==
+              "(a:A)-[:R1]->(b:B)<-[:R2]-(c:C)-[:R3]->(d:D)<-[:R4]-(e:E)"
+
+        # 5 forward >> then 1 backward << (late direction switch)
+        @test _pattern_to_cypher(Meta.parse(
+            "a >> R1 >> b >> R2 >> c >> R3 >> d >> R4 >> e >> R5 >> f << R6 << g")) ==
+              "(a)-[:R1]->(b)-[:R2]->(c)-[:R3]->(d)-[:R4]->(e)-[:R5]->(f)<-[:R6]-(g)"
+
+        # 10-hop pure >> still works through non-mixed path
+        @test _pattern_to_cypher(Meta.parse(
+            "a >> R1 >> b >> R2 >> c >> R3 >> d >> R4 >> e >> R5 >> f >> R6 >> g >> R7 >> h >> R8 >> i >> R9 >> j >> R10 >> k")) ==
+              "(a)-[:R1]->(b)-[:R2]->(c)-[:R3]->(d)-[:R4]->(e)-[:R5]->(f)-[:R6]->(g)-[:R7]->(h)-[:R8]->(i)-[:R9]->(j)-[:R10]->(k)"
+
+        # Programmatic: 20-hop mixed chain
+        parts = String["n0::N0"]
+        expected_parts = String["(n0:N0)"]
+        for i in 1:20
+            if isodd(i)
+                push!(parts, ">> ::R$i >> n$i::N$i")
+                push!(expected_parts, "-[:R$i]->(n$i:N$i)")
+            else
+                push!(parts, "<< ::R$i << n$i::N$i")
+                push!(expected_parts, "<-[:R$i]-(n$i:N$i)")
+            end
+        end
+        @test _pattern_to_cypher(Meta.parse(join(parts, " "))) == join(expected_parts, "")
     end
 
     # ════════════════════════════════════════════════════════════════════
