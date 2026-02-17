@@ -528,16 +528,18 @@ end
 @testset "@cypher Live — Complex Patterns" begin
 
     @testset "3-hop path" begin
-        # Alice->Bob->Carol->Dave
+        # Alice->Bob->Carol->Dave (and Alice->Carol->Dave->Eve)
         result = @cypher conn begin
             a::Person >> r1::KNOWS >> b::Person >> r2::KNOWS >> c::Person >> r3::KNOWS >> d::Person
             where(a.name == "Alice")
             ret(a.name => :start, d.name => :end_node)
         end
-        # Alice -> Bob -> Carol -> Dave should be reachable
+        # At least one 3-hop path from Alice exists
         @test length(result) >= 1
-        @test result[1].start == "Alice"
-        @test result[1].end_node == "Dave"
+        @test all(r -> r.start == "Alice", result)
+        # Alice -> Bob -> Carol -> Dave should be among the results
+        end_nodes = Set(r.end_node for r in result)
+        @test "Dave" in end_nodes
     end
 
     @testset "Mixed chain + optional" begin
