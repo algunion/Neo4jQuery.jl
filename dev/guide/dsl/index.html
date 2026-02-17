@@ -51,7 +51,56 @@ dr::Drug &gt;&gt; ::TREATS &gt;&gt; d::Disease &lt;&lt; ::ASSOCIATED_WITH &lt;&l
 
 # Longer mixed chains work with any number of direction changes
 a::A &gt;&gt; ::R1 &gt;&gt; b::B &lt;&lt; ::R2 &lt;&lt; c::C &gt;&gt; ::R3 &gt;&gt; d::D
-# → (a:A)-[:R1]-&gt;(b:B)&lt;-[:R2]-(c:C)-[:R3]-&gt;(d:D)</code></pre><h4 id="Arrow-syntax"><a class="docs-heading-anchor" href="#Arrow-syntax">Arrow syntax</a><a id="Arrow-syntax-1"></a><a class="docs-heading-anchor-permalink" href="#Arrow-syntax" title="Permalink"></a></h4><p>The classic Cypher-like arrow syntax also works:</p><pre><code class="language-julia hljs"># Right arrow (typed)
+# → (a:A)-[:R1]-&gt;(b:B)&lt;-[:R2]-(c:C)-[:R3]-&gt;(d:D)</code></pre><h4 id="Quantified-relationships-(variable-length,-Neo4j-5)"><a class="docs-heading-anchor" href="#Quantified-relationships-(variable-length,-Neo4j-5)">Quantified relationships (variable-length, Neo4j 5+)</a><a id="Quantified-relationships-(variable-length,-Neo4j-5)-1"></a><a class="docs-heading-anchor-permalink" href="#Quantified-relationships-(variable-length,-Neo4j-5)" title="Permalink"></a></h4><p>Use Julia&#39;s curly-brace syntax on relationship types for quantified (variable-length) patterns. This generates the modern GQL-conformant Cypher syntax.</p><pre><code class="language-julia hljs"># Range quantifier: 2 to 5 hops
+a::Person &gt;&gt; KNOWS{2,5} &gt;&gt; b::Person
+# → (a:Person)-[:KNOWS]-&gt;{2,5}(b:Person)
+
+# Exact hop count
+a::Person &gt;&gt; KNOWS{3} &gt;&gt; b::Person
+# → (a:Person)-[:KNOWS]-&gt;{3}(b:Person)
+
+# One-or-more (+)
+a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person
+# → (a:Person)-[:KNOWS]-&gt;+(b:Person)
+
+# Zero-or-more (*)
+a::Person &gt;&gt; KNOWS{0,nothing} &gt;&gt; b::Person
+# → (a:Person)-[:KNOWS]-&gt;*(b:Person)
+
+# Named relationship with quantifier
+a::Person &gt;&gt; r::KNOWS{1,5} &gt;&gt; b::Person
+# → (a:Person)-[r:KNOWS]-&gt;{1,5}(b:Person)
+
+# Left-directed with quantifier
+b::Person &lt;&lt; KNOWS{2,4} &lt;&lt; a::Person
+# → (b:Person)&lt;-[:KNOWS]-{2,4}(a:Person)</code></pre><p>The <code>nothing</code> sentinel maps to an unbounded upper limit.</p><h4 id="Path-variables"><a class="docs-heading-anchor" href="#Path-variables">Path variables</a><a id="Path-variables-1"></a><a class="docs-heading-anchor-permalink" href="#Path-variables" title="Permalink"></a></h4><p>Assign a path to a variable using <code>=</code>:</p><pre><code class="language-julia hljs"># Path variable assignment
+p = a::Person &gt;&gt; KNOWS &gt;&gt; b::Person
+# → MATCH p = (a:Person)-[:KNOWS]-&gt;(b:Person)
+
+# Path variable with quantifier
+p = a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person
+# → MATCH p = (a:Person)-[:KNOWS]-&gt;+(b:Person)</code></pre><p>Use <code>length(p)</code>, <code>nodes(p)</code>, <code>relationships(p)</code> on the path variable.</p><h4 id="Shortest-path-selectors-(Neo4j-5)"><a class="docs-heading-anchor" href="#Shortest-path-selectors-(Neo4j-5)">Shortest path selectors (Neo4j 5+)</a><a id="Shortest-path-selectors-(Neo4j-5)-1"></a><a class="docs-heading-anchor-permalink" href="#Shortest-path-selectors-(Neo4j-5)" title="Permalink"></a></h4><pre><code class="language-julia hljs"># SHORTEST 1 — single shortest path
+shortest(1, a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
+# → MATCH SHORTEST 1 (a:Person)-[:KNOWS]-&gt;+(b:Person)
+
+# ALL SHORTEST — all paths with minimum length
+all_shortest(a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
+# → MATCH ALL SHORTEST (a:Person)-[:KNOWS]-&gt;+(b:Person)
+
+# SHORTEST k GROUPS — k groups by length
+shortest_groups(2, a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
+# → MATCH SHORTEST 2 GROUPS (a:Person)-[:KNOWS]-&gt;+(b:Person)
+
+# ANY — any single path (non-deterministic)
+any_paths(a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
+# → MATCH ANY (a:Person)-[:KNOWS]-&gt;+(b:Person)
+
+# With path variable
+p = shortest(1, a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
+# → MATCH p = SHORTEST 1 (a:Person)-[:KNOWS]-&gt;+(b:Person)
+
+p = all_shortest(a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
+# → MATCH p = ALL SHORTEST (a:Person)-[:KNOWS]-&gt;+(b:Person)</code></pre><h4 id="Arrow-syntax"><a class="docs-heading-anchor" href="#Arrow-syntax">Arrow syntax</a><a id="Arrow-syntax-1"></a><a class="docs-heading-anchor-permalink" href="#Arrow-syntax" title="Permalink"></a></h4><p>The classic Cypher-like arrow syntax also works:</p><pre><code class="language-julia hljs"># Right arrow (typed)
 (p:Person)-[r:KNOWS]-&gt;(q:Person)
 
 # Simple directed arrow
@@ -387,7 +436,64 @@ println(&quot;NOT NULL constraint created&quot;)</code></pre><pre class="documen
 @cypher conn begin
     drop_constraint(:person_name_required)
 end
-println(&quot;Constraint dropped&quot;)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Constraint dropped</code></pre><h3 id="Comprehension-form"><a class="docs-heading-anchor" href="#Comprehension-form">Comprehension form</a><a id="Comprehension-form-1"></a><a class="docs-heading-anchor-permalink" href="#Comprehension-form" title="Permalink"></a></h3><p>For simple match-filter-return queries, use Julia&#39;s comprehension syntax:</p><pre><code class="language-julia hljs">result = @cypher conn [p.name for p in Person if p.age &gt; 25]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 3 rows
+println(&quot;Constraint dropped&quot;)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Constraint dropped</code></pre><h3 id="Step-24:-Quantified-relationships"><a class="docs-heading-anchor" href="#Step-24:-Quantified-relationships">Step 24: Quantified relationships</a><a id="Step-24:-Quantified-relationships-1"></a><a class="docs-heading-anchor-permalink" href="#Step-24:-Quantified-relationships" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Find all Person nodes reachable in exactly 2 hops via KNOWS from Alice
+result = @cypher conn begin
+    a::Person &gt;&gt; KNOWS{2} &gt;&gt; b::Person
+    where(a.name == &quot;Alice&quot;)
+    ret(distinct, b.name =&gt; :name)
+    order(b.name)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 1 row
+ Fields: name
+  [1] (name = &quot;Carol&quot;,)
+</code></pre><pre><code class="language-julia hljs"># One-or-more hops: find everyone reachable from Alice
+result = @cypher conn begin
+    a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person
+    where(a.name == &quot;Alice&quot;)
+    ret(distinct, b.name =&gt; :name)
+    order(b.name)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 2 rows
+ Fields: name
+  [1] (name = &quot;Bob&quot;,)
+  [2] (name = &quot;Carol&quot;,)
+</code></pre><h3 id="Step-25:-Path-variables"><a class="docs-heading-anchor" href="#Step-25:-Path-variables">Step 25: Path variables</a><a id="Step-25:-Path-variables-1"></a><a class="docs-heading-anchor-permalink" href="#Step-25:-Path-variables" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Assign the path to a variable, then inspect its length
+result = @cypher conn begin
+    p = a::Person &gt;&gt; KNOWS &gt;&gt; b::Person
+    where(a.name == &quot;Alice&quot;, b.name == &quot;Bob&quot;)
+    ret(length(p) =&gt; :hops, a.name =&gt; :src, b.name =&gt; :dst)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 1 row
+ Fields: hops, src, dst
+  [1] (hops = 1, src = &quot;Alice&quot;, dst = &quot;Bob&quot;)
+</code></pre><pre><code class="language-julia hljs"># Path variable with quantified relationship — get all nodes along the path
+result = @cypher conn begin
+    p = a::Person &gt;&gt; KNOWS{3} &gt;&gt; b::Person
+    where(a.name == &quot;Alice&quot;, b.name == &quot;Eve&quot;)
+    ret(nodes(p) =&gt; :path_nodes, length(p) =&gt; :hops)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 2 fields, 0 rows
+ Fields: path_nodes, hops
+</code></pre><h3 id="Step-26:-Shortest-path-selectors"><a class="docs-heading-anchor" href="#Step-26:-Shortest-path-selectors">Step 26: Shortest path selectors</a><a id="Step-26:-Shortest-path-selectors-1"></a><a class="docs-heading-anchor-permalink" href="#Step-26:-Shortest-path-selectors" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Find the single shortest path from Alice to Eve
+result = @cypher conn begin
+    p = shortest(1, a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
+    where(a.name == &quot;Alice&quot;, b.name == &quot;Eve&quot;)
+    ret(a.name =&gt; :src, b.name =&gt; :dst, length(p) =&gt; :hops)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 0 rows
+ Fields: src, dst, hops
+</code></pre><pre><code class="language-julia hljs"># All shortest paths (all paths with minimum length)
+result = @cypher conn begin
+    p = all_shortest(a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
+    where(a.name == &quot;Alice&quot;, b.name == &quot;Eve&quot;)
+    ret(length(p) =&gt; :hops)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 0 rows
+ Fields: hops
+</code></pre><pre><code class="language-julia hljs"># Shortest with parameterized endpoints
+src_name = &quot;Alice&quot;
+dst_name = &quot;Eve&quot;
+result = @cypher conn begin
+    p = shortest(1, a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
+    where(a.name == $src_name, b.name == $dst_name)
+    ret(length(p) =&gt; :hops)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 0 rows
+ Fields: hops
+</code></pre><h3 id="Comprehension-form"><a class="docs-heading-anchor" href="#Comprehension-form">Comprehension form</a><a id="Comprehension-form-1"></a><a class="docs-heading-anchor-permalink" href="#Comprehension-form" title="Permalink"></a></h3><p>For simple match-filter-return queries, use Julia&#39;s comprehension syntax:</p><pre><code class="language-julia hljs">result = @cypher conn [p.name for p in Person if p.age &gt; 25]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 3 rows
  Fields: p.name
   [1] (var&quot;p.name&quot; = &quot;Carol&quot;,)
   [2] (var&quot;p.name&quot; = &quot;Dave&quot;,)
@@ -413,9 +519,9 @@ println(&quot;Constraint dropped&quot;)</code></pre><pre class="documenter-examp
   [3] (n = &quot;Eve&quot;,)
   [4] (n = &quot;Alice&quot;,)
   [5] (n = &quot;Bob&quot;,)
-</code></pre><h2 id="Known-limitations"><a class="docs-heading-anchor" href="#Known-limitations">Known limitations</a><a id="Known-limitations-1"></a><a class="docs-heading-anchor-permalink" href="#Known-limitations" title="Permalink"></a></h2><p>These Cypher features are <strong>not supported</strong> by the DSL:</p><ul><li>Inline property patterns in MATCH (<code>{name: $v}</code>) — Julia&#39;s parser cannot parse <code>{…}</code> as an expression; use <code>where()</code> instead</li><li>Shortest path functions (<code>shortestPath</code>, <code>allShortestPaths</code>)</li><li>Procedure calls via <code>CALL db.xxx()</code> (distinct from CALL subqueries)</li><li>Map projections and list comprehensions in the Cypher sense</li></ul><h2 id="Standalone-mutations"><a class="docs-heading-anchor" href="#Standalone-mutations">Standalone mutations</a><a id="Standalone-mutations-1"></a><a class="docs-heading-anchor-permalink" href="#Standalone-mutations" title="Permalink"></a></h2><p>For common single-entity operations, use the dedicated macros:</p><h3 id="@create-—-create-a-node"><a class="docs-heading-anchor" href="#@create-—-create-a-node"><code>@create</code> — create a node</a><a id="@create-—-create-a-node-1"></a><a class="docs-heading-anchor-permalink" href="#@create-—-create-a-node" title="Permalink"></a></h3><pre><code class="language-julia hljs">node = @create conn Person(name=&quot;Diana&quot;, age=28)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Node(:Person {name: &quot;Diana&quot;, age: 28})</code></pre><p>Validates against the registered <code>Person</code> schema (if present).</p><h3 id="@merge-—-upsert-a-node"><a class="docs-heading-anchor" href="#@merge-—-upsert-a-node"><code>@merge</code> — upsert a node</a><a id="@merge-—-upsert-a-node-1"></a><a class="docs-heading-anchor-permalink" href="#@merge-—-upsert-a-node" title="Permalink"></a></h3><pre><code class="language-julia hljs">node = @merge conn Person(name=&quot;Diana&quot;) on_create(age=28, email=&quot;d@b.com&quot;) on_match(age=29)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Node(:Person {name: &quot;Diana&quot;, age: 29})</code></pre><p>Simple merge without <code>on_create</code>/<code>on_match</code>:</p><pre><code class="language-julia hljs">node = @merge conn Person(name=&quot;Diana&quot;, age=29)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Node(:Person {name: &quot;Diana&quot;, age: 29})</code></pre><h3 id="@relate-—-create-a-relationship"><a class="docs-heading-anchor" href="#@relate-—-create-a-relationship"><code>@relate</code> — create a relationship</a><a id="@relate-—-create-a-relationship-1"></a><a class="docs-heading-anchor-permalink" href="#@relate-—-create-a-relationship" title="Permalink"></a></h3><pre><code class="language-julia hljs">diana = @create conn Person(name=&quot;Diana2&quot;, age=28)
+</code></pre><h2 id="Known-limitations"><a class="docs-heading-anchor" href="#Known-limitations">Known limitations</a><a id="Known-limitations-1"></a><a class="docs-heading-anchor-permalink" href="#Known-limitations" title="Permalink"></a></h2><p>These Cypher features are <strong>not supported</strong> by the DSL:</p><ul><li>Inline property patterns in MATCH (<code>{name: $v}</code>) — Julia&#39;s parser cannot parse <code>{…}</code> as an expression; use <code>where()</code> instead</li><li>Legacy <code>shortestPath</code>/<code>allShortestPaths</code> functions — use the modern <code>shortest()</code>, <code>all_shortest()</code> DSL functions instead</li><li>Quantified path patterns (<code>((a)-[r]-&gt;(b)){2,4}</code>) — only quantified relationships (<code>KNOWS{2,5}</code>) are supported</li><li>Match modes (<code>REPEATABLE ELEMENTS</code>, <code>DIFFERENT RELATIONSHIPS</code>) are not yet supported</li><li>Procedure calls via <code>CALL db.xxx()</code> (distinct from CALL subqueries)</li><li>Map projections and list comprehensions in the Cypher sense</li></ul><h2 id="Standalone-mutations"><a class="docs-heading-anchor" href="#Standalone-mutations">Standalone mutations</a><a id="Standalone-mutations-1"></a><a class="docs-heading-anchor-permalink" href="#Standalone-mutations" title="Permalink"></a></h2><p>For common single-entity operations, use the dedicated macros:</p><h3 id="@create-—-create-a-node"><a class="docs-heading-anchor" href="#@create-—-create-a-node"><code>@create</code> — create a node</a><a id="@create-—-create-a-node-1"></a><a class="docs-heading-anchor-permalink" href="#@create-—-create-a-node" title="Permalink"></a></h3><pre><code class="language-julia hljs">node = @create conn Person(name=&quot;Diana&quot;, age=28)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Node(:Person {name: &quot;Diana&quot;, age: 28})</code></pre><p>Validates against the registered <code>Person</code> schema (if present).</p><h3 id="@merge-—-upsert-a-node"><a class="docs-heading-anchor" href="#@merge-—-upsert-a-node"><code>@merge</code> — upsert a node</a><a id="@merge-—-upsert-a-node-1"></a><a class="docs-heading-anchor-permalink" href="#@merge-—-upsert-a-node" title="Permalink"></a></h3><pre><code class="language-julia hljs">node = @merge conn Person(name=&quot;Diana&quot;) on_create(age=28, email=&quot;d@b.com&quot;) on_match(age=29)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Node(:Person {name: &quot;Diana&quot;, age: 29})</code></pre><p>Simple merge without <code>on_create</code>/<code>on_match</code>:</p><pre><code class="language-julia hljs">node = @merge conn Person(name=&quot;Diana&quot;, age=29)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Node(:Person {name: &quot;Diana&quot;, age: 29})</code></pre><h3 id="@relate-—-create-a-relationship"><a class="docs-heading-anchor" href="#@relate-—-create-a-relationship"><code>@relate</code> — create a relationship</a><a id="@relate-—-create-a-relationship-1"></a><a class="docs-heading-anchor-permalink" href="#@relate-—-create-a-relationship" title="Permalink"></a></h3><pre><code class="language-julia hljs">diana = @create conn Person(name=&quot;Diana2&quot;, age=28)
 edgar = @create conn Person(name=&quot;Edgar&quot;, age=32)
 
 rel = @relate conn diana =&gt; KNOWS(since=2024) =&gt; edgar</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Relationship(:KNOWS {since: 2024})</code></pre><pre><code class="language-julia hljs">println(rel.type)
 println(rel[&quot;since&quot;])</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">KNOWS
-2024</code></pre><p>Matches nodes by <code>elementId()</code> and validates against the <code>KNOWS</code> schema (if registered).</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../streaming/">« Streaming</a><a class="docs-footer-nextpage" href="../biomedical_case_study/">Biomedical Case Study »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Tuesday 17 February 2026 14:09">Tuesday 17 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+2024</code></pre><p>Matches nodes by <code>elementId()</code> and validates against the <code>KNOWS</code> schema (if registered).</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../streaming/">« Streaming</a><a class="docs-footer-nextpage" href="../biomedical_case_study/">Biomedical Case Study »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Tuesday 17 February 2026 15:25">Tuesday 17 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
