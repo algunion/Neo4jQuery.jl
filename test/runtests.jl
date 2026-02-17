@@ -1677,6 +1677,11 @@ TEST_KEY4=no_quotes
                 include("graph_dsl_live_test.jl")
             end
 
+            # ── Mixed >> / << chain direction tests ───────────────────────────
+            @testset "Mixed >> / << chain live tests" begin
+                include("mixed_chain_live_test.jl")
+            end
+
             # ── Documentation code snippet verification ───────────────────────
             @testset "Documentation snippets (live DB)" begin
                 include("doc_snippets_test.jl")
