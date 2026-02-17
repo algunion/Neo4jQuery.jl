@@ -1682,6 +1682,11 @@ TEST_KEY4=no_quotes
                 include("mixed_chain_live_test.jl")
             end
 
+            # ── Quantified relationships, path variables, shortest paths ──────
+            @testset "Patterns live tests (quantified/pathvar/shortest)" begin
+                include("patterns_live_test.jl")
+            end
+
             # ── Documentation code snippet verification ───────────────────────
             @testset "Documentation snippets (live DB)" begin
                 include("doc_snippets_test.jl")

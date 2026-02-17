@@ -17,7 +17,10 @@ using Neo4jQuery: _node_to_cypher, _rel_bracket_to_cypher, _match_to_cypher,
     # Mutation detection
     _MUTATION_CLAUSES, _has_mutations,
     # Clause map
-    _CYPHER_CLAUSE_FUNCTIONS
+    _CYPHER_CLAUSE_FUNCTIONS,
+    # Quantified relationships & path selectors
+    _compile_quantifier, _parse_chain_rel,
+    _SELECTOR_FUNCTIONS, _parse_selector_clause
 using Test
 
 # ── Test helpers ────────────────────────────────────────────────────────────
@@ -1399,6 +1402,342 @@ end
         """)
         cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
         @test contains(cypher, "r:KNOWS*1..3")
+    end
+
+    # ════════════════════════════════════════════════════════════════════
+    # SECTION: Quantified relationships in >> chains
+    # ════════════════════════════════════════════════════════════════════
+
+    @testset "Quantified relationships — _compile_quantifier" begin
+        @test _compile_quantifier([3]) == "{3}"
+        @test _compile_quantifier([2, 5]) == "{2,5}"
+        @test _compile_quantifier([1, :nothing]) == "+"
+        @test _compile_quantifier([0, :nothing]) == "*"
+        @test _compile_quantifier([3, :nothing]) == "{3,}"
+        @test _compile_quantifier([0, 10]) == "{0,10}"
+        @test_throws ErrorException _compile_quantifier([])
+    end
+
+    @testset "Quantified relationships — _parse_chain_rel" begin
+        # Standard (no quantifier)
+        @test _parse_chain_rel(:KNOWS) == (":KNOWS", "")
+        @test _parse_chain_rel(Meta.parse("r::KNOWS")) == ("r:KNOWS", "")
+
+        # Bare symbol with quantifier: KNOWS{2,5}
+        @test _parse_chain_rel(Meta.parse("KNOWS{2,5}")) == (":KNOWS", "{2,5}")
+        @test _parse_chain_rel(Meta.parse("KNOWS{3}")) == (":KNOWS", "{3}")
+        @test _parse_chain_rel(Meta.parse("KNOWS{1,nothing}")) == (":KNOWS", "+")
+        @test _parse_chain_rel(Meta.parse("KNOWS{0,nothing}")) == (":KNOWS", "*")
+
+        # Named quantified: r::KNOWS{2,5}
+        @test _parse_chain_rel(Meta.parse("r::KNOWS{2,5}")) == ("r:KNOWS", "{2,5}")
+        @test _parse_chain_rel(Meta.parse("r::KNOWS{1,nothing}")) == ("r:KNOWS", "+")
+
+        # Anonymous quantified: ::KNOWS{2,5}
+        @test _parse_chain_rel(Meta.parse("::KNOWS{2,5}")) == (":KNOWS", "{2,5}")
+        @test _parse_chain_rel(Meta.parse("::LINK{1,nothing}")) == (":LINK", "+")
+    end
+
+    @testset "Quantified relationships — >> chain compilation" begin
+        # Right-directed range quantifier
+        expr = Meta.parse("a::Person >> KNOWS{2,5} >> b::Person")
+        @test _pattern_to_cypher(expr) == "(a:Person)-[:KNOWS]->{2,5}(b:Person)"
+
+        # Right-directed one-or-more (+)
+        expr = Meta.parse("a::Person >> KNOWS{1,nothing} >> b::Person")
+        @test _pattern_to_cypher(expr) == "(a:Person)-[:KNOWS]->+(b:Person)"
+
+        # Right-directed zero-or-more (*)
+        expr = Meta.parse("a::Station >> LINK{0,nothing} >> b::Station")
+        @test _pattern_to_cypher(expr) == "(a:Station)-[:LINK]->*(b:Station)"
+
+        # Right-directed exact
+        expr = Meta.parse("a::Person >> KNOWS{3} >> b::Person")
+        @test _pattern_to_cypher(expr) == "(a:Person)-[:KNOWS]->{3}(b:Person)"
+
+        # Named variable with quantifier
+        expr = Meta.parse("a::Person >> r::KNOWS{1,5} >> b::Person")
+        @test _pattern_to_cypher(expr) == "(a:Person)-[r:KNOWS]->{1,5}(b:Person)"
+
+        # Left-directed quantifier
+        expr = Meta.parse("a::Person << KNOWS{2,5} << b::Person")
+        @test _pattern_to_cypher(expr) == "(a:Person)<-[:KNOWS]-{2,5}(b:Person)"
+
+        # Left-directed one-or-more
+        expr = Meta.parse("a::Person << FOLLOWS{1,nothing} << b::Person")
+        @test _pattern_to_cypher(expr) == "(a:Person)<-[:FOLLOWS]-+(b:Person)"
+    end
+
+    @testset "Quantified relationships — mixed chain" begin
+        # Mixed >> and << with quantifiers
+        expr = Meta.parse("a::Drug >> TREATS{1,3} >> b::Disease << ASSOCIATED_WITH{1,nothing} << c::Gene")
+        @test _pattern_to_cypher(expr) ==
+              "(a:Drug)-[:TREATS]->{1,3}(b:Disease)<-[:ASSOCIATED_WITH]-+(c:Gene)"
+    end
+
+    @testset "Quantified relationships — @cypher block" begin
+        block = Meta.parse("""
+        begin
+            a::Person >> KNOWS{1,nothing} >> b::Person
+            ret(a.name, b.name)
+        end
+        """)
+        cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+        @test cypher == "MATCH (a:Person)-[:KNOWS]->+(b:Person) RETURN a.name, b.name"
+    end
+
+    # ════════════════════════════════════════════════════════════════════
+    # SECTION: Path variable assignment
+    # ════════════════════════════════════════════════════════════════════
+
+    @testset "Path variable assignment — simple" begin
+        block = Meta.parse("""
+        begin
+            p = a::Person >> KNOWS >> b::Person
+            ret(p)
+        end
+        """)
+        clauses = _parse_cypher_block(block)
+        @test clauses[1][1] == :match_path
+        @test clauses[1][2][1] == :p
+
+        cypher, _ = _compile_cypher_block(clauses)
+        @test cypher == "MATCH p = (a:Person)-[:KNOWS]->(b:Person) RETURN p"
+    end
+
+    @testset "Path variable assignment — with quantifier" begin
+        block = Meta.parse("""
+        begin
+            p = a::Person >> r::KNOWS{1,5} >> b::Person
+            ret(p, length(p))
+        end
+        """)
+        cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+        @test cypher == "MATCH p = (a:Person)-[r:KNOWS]->{1,5}(b:Person) RETURN p, length(p)"
+    end
+
+    @testset "Path variable assignment — single node" begin
+        block = Meta.parse("""
+        begin
+            p = a::Person
+            ret(p)
+        end
+        """)
+        cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+        @test cypher == "MATCH p = (a:Person) RETURN p"
+    end
+
+    @testset "Path variable — property SET still works" begin
+        # Ensure p.age = $val is still SET, not path assignment
+        block = Meta.parse("""
+        begin
+            p::Person
+            p.age = 30
+            ret(p)
+        end
+        """)
+        clauses = _parse_cypher_block(block)
+        @test clauses[2][1] == :set
+    end
+
+    # ════════════════════════════════════════════════════════════════════
+    # SECTION: Shortest path selectors
+    # ════════════════════════════════════════════════════════════════════
+
+    @testset "Selector — shortest(k, pattern)" begin
+        block = Meta.parse("""
+        begin
+            shortest(1, a::Person >> KNOWS{1,nothing} >> b::Person)
+            ret(a, b)
+        end
+        """)
+        clauses = _parse_cypher_block(block)
+        @test clauses[1][1] == :selector_match
+        @test clauses[1][2][2] == :shortest
+        @test clauses[1][2][3] == 1
+
+        cypher, _ = _compile_cypher_block(clauses)
+        @test cypher == "MATCH SHORTEST 1 (a:Person)-[:KNOWS]->+(b:Person) RETURN a, b"
+    end
+
+    @testset "Selector — all_shortest(pattern)" begin
+        block = Meta.parse("""
+        begin
+            all_shortest(a::Station >> LINK{1,nothing} >> b::Station)
+            ret(a, b)
+        end
+        """)
+        cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+        @test cypher == "MATCH ALL SHORTEST (a:Station)-[:LINK]->+(b:Station) RETURN a, b"
+    end
+
+    @testset "Selector — shortest_groups(k, pattern)" begin
+        block = Meta.parse("""
+        begin
+            shortest_groups(2, a::Person >> KNOWS{1,nothing} >> b::Person)
+            ret(a, b)
+        end
+        """)
+        cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+        @test cypher == "MATCH SHORTEST 2 GROUPS (a:Person)-[:KNOWS]->+(b:Person) RETURN a, b"
+    end
+
+    @testset "Selector — any_paths(pattern)" begin
+        block = Meta.parse("""
+        begin
+            any_paths(a::Station >> LINK{1,nothing} >> b::Station)
+            ret(a, b)
+        end
+        """)
+        cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+        @test cypher == "MATCH ANY (a:Station)-[:LINK]->+(b:Station) RETURN a, b"
+    end
+
+    @testset "Selector — any_paths(k, pattern)" begin
+        block = Meta.parse("""
+        begin
+            any_paths(3, a::Station >> LINK{1,nothing} >> b::Station)
+            ret(a, b)
+        end
+        """)
+        cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+        @test cypher == "MATCH ANY 3 (a:Station)-[:LINK]->+(b:Station) RETURN a, b"
+    end
+
+    @testset "Selector — with path variable" begin
+        block = Meta.parse("""
+        begin
+            p = shortest(1, a::Person >> KNOWS{1,nothing} >> b::Person)
+            ret(p)
+        end
+        """)
+        cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+        @test cypher == "MATCH p = SHORTEST 1 (a:Person)-[:KNOWS]->+(b:Person) RETURN p"
+    end
+
+    @testset "Selector — all_shortest with path variable" begin
+        block = Meta.parse("""
+        begin
+            p = all_shortest(a::Station >> LINK{1,nothing} >> b::Station)
+            ret(p)
+        end
+        """)
+        cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+        @test cypher == "MATCH p = ALL SHORTEST (a:Station)-[:LINK]->+(b:Station) RETURN p"
+    end
+
+    @testset "Selector — shortest_groups with path variable" begin
+        block = Meta.parse("""
+        begin
+            p = shortest_groups(3, a::Station >> LINK{1,nothing} >> b::Station)
+            ret(p)
+        end
+        """)
+        cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+        @test cypher == "MATCH p = SHORTEST 3 GROUPS (a:Station)-[:LINK]->+(b:Station) RETURN p"
+    end
+
+    @testset "Selector — with WHERE clause" begin
+        block = Meta.parse("""
+        begin
+            shortest(1, a::Station >> LINK{1,nothing} >> b::Station)
+            where(a.name == "London Bridge")
+            ret(a, b)
+        end
+        """)
+        cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+        @test contains(cypher, "MATCH SHORTEST 1")
+        @test contains(cypher, "WHERE a.name = 'London Bridge'")
+    end
+
+    @testset "Selector — complex multi-clause" begin
+        block = Meta.parse("""
+        begin
+            match(a::Station, b::Station)
+            where(a.name == "Denmark Hill", b.name == "Clapham Junction")
+            p = all_shortest(a >> LINK{1,nothing} >> b)
+            ret(p, length(p))
+        end
+        """)
+        cypher, _ = _compile_cypher_block(_parse_cypher_block(block))
+        @test contains(cypher, "MATCH (a:Station), (b:Station)")
+        @test contains(cypher, "MATCH p = ALL SHORTEST")
+        @test contains(cypher, "RETURN p, length(p)")
+    end
+
+    @testset "Selector — error on bad args" begin
+        @test_throws ErrorException _parse_selector_clause(:shortest, Any[], nothing)
+        @test_throws ErrorException _parse_selector_clause(:all_shortest, Any[1, 2], nothing)
+        @test_throws ErrorException _parse_selector_clause(:shortest_groups, Any[1], nothing)
+    end
+
+    # ════════════════════════════════════════════════════════════════════
+    # SECTION: @macroexpand integration for new features
+    # ════════════════════════════════════════════════════════════════════
+
+    @testset "@macroexpand — quantified relationship" begin
+        ex = @macroexpand @cypher conn begin
+            a::Person >> KNOWS{1,nothing} >> b::Person
+            ret(a.name, b.name)
+        end
+        cypher = _find_cypher(ex)
+        @test cypher == "MATCH (a:Person)-[:KNOWS]->+(b:Person) RETURN a.name, b.name"
+        @test _find_access_mode(ex) == :read
+    end
+
+    @testset "@macroexpand — path variable assignment" begin
+        ex = @macroexpand @cypher conn begin
+            p = a::Person >> KNOWS >> b::Person
+            ret(p)
+        end
+        cypher = _find_cypher(ex)
+        @test cypher == "MATCH p = (a:Person)-[:KNOWS]->(b:Person) RETURN p"
+    end
+
+    @testset "@macroexpand — shortest selector" begin
+        ex = @macroexpand @cypher conn begin
+            shortest(1, a::Person >> KNOWS{1,nothing} >> b::Person)
+            ret(a, b)
+        end
+        cypher = _find_cypher(ex)
+        @test cypher == "MATCH SHORTEST 1 (a:Person)-[:KNOWS]->+(b:Person) RETURN a, b"
+        @test _find_access_mode(ex) == :read
+    end
+
+    @testset "@macroexpand — all_shortest with path var" begin
+        ex = @macroexpand @cypher conn begin
+            p = all_shortest(a::Station >> LINK{1,nothing} >> b::Station)
+            ret(p)
+        end
+        cypher = _find_cypher(ex)
+        @test cypher == "MATCH p = ALL SHORTEST (a:Station)-[:LINK]->+(b:Station) RETURN p"
+    end
+
+    @testset "@macroexpand — range quantifier {m,n}" begin
+        ex = @macroexpand @cypher conn begin
+            a::Station >> r::LINK{2,5} >> b::Station
+            ret(a.name, b.name)
+        end
+        cypher = _find_cypher(ex)
+        @test cypher == "MATCH (a:Station)-[r:LINK]->{2,5}(b:Station) RETURN a.name, b.name"
+    end
+
+    @testset "@macroexpand — exact quantifier {n}" begin
+        ex = @macroexpand @cypher conn begin
+            a::Person >> KNOWS{3} >> b::Person
+            ret(a, b)
+        end
+        cypher = _find_cypher(ex)
+        @test cypher == "MATCH (a:Person)-[:KNOWS]->{3}(b:Person) RETURN a, b"
+    end
+
+    @testset "@macroexpand — zero-or-more quantifier (*)" begin
+        ex = @macroexpand @cypher conn begin
+            a::Person >> FOLLOWS{0,nothing} >> b::Person
+            ret(a, b)
+        end
+        cypher = _find_cypher(ex)
+        @test cypher == "MATCH (a:Person)-[:FOLLOWS]->*(b:Person) RETURN a, b"
     end
 
 end # @testset "@cypher Unified DSL"
