@@ -43,11 +43,11 @@ end
 
 Return the `Authorization` header pair for a given authentication strategy.
 """
-function auth_header(auth::BasicAuth)::Pair{String,String}
+function auth_header(auth::BasicAuth)
     encoded = Base64.base64encode("$(auth.username):$(auth.password)")
     return "Authorization" => "Basic $encoded"
 end
 
-function auth_header(auth::BearerAuth)::Pair{String,String}
+function auth_header(auth::BearerAuth)
     return "Authorization" => "Bearer $(auth.token)"
 end

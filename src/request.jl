@@ -1,10 +1,10 @@
 # ── Internal HTTP request helpers ────────────────────────────────────────────
 
-const TYPED_JSON_MEDIA = "application/vnd.neo4j.query.v1.1"
-const TYPED_JSONL_MEDIA = "application/vnd.neo4j.query.v1.1+jsonl"
+const _TYPED_JSON_MEDIA = "application/vnd.neo4j.query.v1.1"
+const _TYPED_JSONL_MEDIA = "application/vnd.neo4j.query.v1.1+jsonl"
 
 """
-    neo4j_request(url, method, body; auth, extra_headers, cluster_affinity) -> (JSON.Object, HTTP.Response)
+    _neo4j_request(url, method, body; auth, extra_headers, cluster_affinity) -> (JSON.Object, HTTP.Response)
 
 Central HTTP helper for all Neo4j Query API calls.
 
@@ -13,13 +13,13 @@ Central HTTP helper for all Neo4j Query API calls.
 - Checks for HTTP 401 → `AuthenticationError`.
 - Checks for `errors` array in response body → `Neo4jQueryError` / `TransactionExpiredError`.
 """
-function neo4j_request(url::AbstractString, method::Symbol, body;
+function _neo4j_request(url::AbstractString, method::Symbol, body;
     auth::AbstractAuth,
     extra_headers::Vector{Pair{String,String}}=Pair{String,String}[],
     cluster_affinity::Union{String,Nothing}=nothing)
     headers = Pair{String,String}[
-        "Content-Type"=>TYPED_JSON_MEDIA,
-        "Accept"=>TYPED_JSON_MEDIA,
+        "Content-Type"=>_TYPED_JSON_MEDIA,
+        "Accept"=>_TYPED_JSON_MEDIA,
         auth_header(auth),
     ]
     append!(headers, extra_headers)
@@ -63,11 +63,11 @@ function neo4j_request(url::AbstractString, method::Symbol, body;
 end
 
 """Issue a DELETE request (used for rollback)."""
-function neo4j_delete(url::AbstractString;
+function _neo4j_delete(url::AbstractString;
     auth::AbstractAuth,
     cluster_affinity::Union{String,Nothing}=nothing)
     headers = Pair{String,String}[
-        "Accept"=>TYPED_JSON_MEDIA,
+        "Accept"=>_TYPED_JSON_MEDIA,
         auth_header(auth),
     ]
     if cluster_affinity !== nothing

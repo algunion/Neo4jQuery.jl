@@ -5,38 +5,38 @@
 #   { "$type": "<CypherType>", "_value": <json-encoded-value> }
 #
 # This module provides bidirectional conversion:
-#   • materialize_typed  — response JSON  →  Julia values
+#   • _materialize_typed — response JSON  →  Julia values
 #   • to_typed_json      — Julia values   →  request parameter JSON
 # ────────────────────────────────────────────────────────────────────────────
 
 # ── Deserialization (response → Julia) ──────────────────────────────────────
 
 """
-    materialize_typed(obj) -> Any
+    _materialize_typed(obj) -> Any
 
 Recursively convert Neo4j Typed JSON values into rich Julia types.
 If `obj` is a `JSON.Object` (or `AbstractDict`) containing `"\$type"` and
 `"_value"` keys it is treated as a typed envelope; otherwise the value is
 returned as-is.
 """
-function materialize_typed(obj::JSON.Object{String,Any})
+function _materialize_typed(obj::JSON.Object{String,Any})
     if haskey(obj, "\$type") && haskey(obj, "_value")
         return _materialize_dispatch(obj["\$type"], obj["_value"])
     end
     # Not a typed envelope – materialise values recursively (plain map)
     result = JSON.Object{String,Any}()
     for (k, v) in obj
-        result[k] = materialize_typed(v)
+        result[k] = _materialize_typed(v)
     end
     return result
 end
 
-materialize_typed(v::AbstractDict) = materialize_typed(JSON.Object{String,Any}(v))
-materialize_typed(v::AbstractVector) = [materialize_typed(x) for x in v]
-materialize_typed(v::AbstractString) = v
-materialize_typed(v::Number) = v
-materialize_typed(v::Bool) = v
-materialize_typed(::Nothing) = nothing
+_materialize_typed(v::AbstractDict) = _materialize_typed(JSON.Object{String,Any}(v))
+_materialize_typed(v::AbstractVector) = [_materialize_typed(x) for x in v]
+_materialize_typed(v::AbstractString) = v
+_materialize_typed(v::Number) = v
+_materialize_typed(v::Bool) = v
+_materialize_typed(::Nothing) = nothing
 
 # ── Dispatch table ──────────────────────────────────────────────────────────
 
@@ -91,14 +91,14 @@ end
 
 function _mat_list(v)
     v isa AbstractVector || error("Expected array for List typed value")
-    return [materialize_typed(x) for x in v]
+    return [_materialize_typed(x) for x in v]
 end
 
 function _mat_map(v)
     result = JSON.Object{String,Any}()
     if v isa AbstractDict
         for (k, val) in v
-            result[String(k)] = materialize_typed(val)
+            result[String(k)] = _materialize_typed(val)
         end
     end
     return result
@@ -164,7 +164,7 @@ function _mat_path(v)
     v isa AbstractVector || error("Expected array for Path typed value")
     elements = Union{Node,Relationship}[]
     for elem in v
-        push!(elements, materialize_typed(elem))
+        push!(elements, _materialize_typed(elem))
     end
     return Path(elements)
 end
@@ -182,7 +182,7 @@ end
 function _materialize_properties(raw::AbstractDict)
     props = JSON.Object{String,Any}()
     for (k, val) in raw
-        props[String(k)] = materialize_typed(val)
+        props[String(k)] = _materialize_typed(val)
     end
     return props
 end

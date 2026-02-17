@@ -56,7 +56,7 @@ function begin_transaction(conn::Neo4jConnection;
         Dict{String,Any}()
     end
 
-    parsed, resp = neo4j_request(tx_url(conn), :POST, body; auth=conn.auth)
+    parsed, resp = _neo4j_request(_tx_url(conn), :POST, body; auth=conn.auth)
 
     tx_meta = parsed["transaction"]
     tx_id = string(tx_meta["id"])
@@ -80,9 +80,9 @@ function query(tx::Transaction, statement::AbstractString;
     include_counters::Bool=false)
     _assert_open(tx)
     body = _build_query_body(statement, parameters; include_counters)
-    url = "$(tx_url(tx.conn))/$(tx.id)"
+    url = "$(_tx_url(tx.conn))/$(tx.id)"
 
-    parsed, resp = neo4j_request(url, :POST, body;
+    parsed, resp = _neo4j_request(url, :POST, body;
         auth=tx.conn.auth,
         cluster_affinity=tx.cluster_affinity)
 
@@ -130,9 +130,9 @@ function commit!(tx::Transaction;
     else
         Dict{String,Any}()
     end
-    url = "$(tx_url(tx.conn))/$(tx.id)/commit"
+    url = "$(_tx_url(tx.conn))/$(tx.id)/commit"
 
-    parsed, _ = neo4j_request(url, :POST, body;
+    parsed, _ = _neo4j_request(url, :POST, body;
         auth=tx.conn.auth,
         cluster_affinity=tx.cluster_affinity)
     tx.committed = true
@@ -148,8 +148,8 @@ Roll back an open transaction, discarding all changes.
 """
 function rollback!(tx::Transaction)
     _assert_open(tx)
-    url = "$(tx_url(tx.conn))/$(tx.id)"
-    neo4j_delete(url; auth=tx.conn.auth, cluster_affinity=tx.cluster_affinity)
+    url = "$(_tx_url(tx.conn))/$(tx.id)"
+    _neo4j_delete(url; auth=tx.conn.auth, cluster_affinity=tx.cluster_affinity)
     tx.rolled_back = true
     return nothing
 end
