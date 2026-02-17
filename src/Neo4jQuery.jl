@@ -28,8 +28,10 @@ include("dsl/cypher.jl")
 
 # ── Public API ──────────────────────────────────────────────────────────────
 
+#! format: off
 # Extension points (not exported, but part of the public interface)
-publicauth_header,to_typed_json
+public auth_header, to_typed_json
+#! format: on
 
 # Connection
 export Neo4jConnection, connect, connect_from_env
