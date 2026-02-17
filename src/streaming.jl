@@ -89,7 +89,7 @@ function stream(conn::Neo4jConnection, statement::AbstractString;
     impersonated_user::Union{String,Nothing}=nothing)
     body = _build_query_body(statement, parameters;
         access_mode, include_counters, bookmarks, impersonated_user)
-    return _start_stream(query_url(conn), body, conn.auth, nothing)
+    return _start_stream(_query_url(conn), body, conn.auth, nothing)
 end
 
 function stream(conn::Neo4jConnection, q::CypherQuery;
@@ -109,7 +109,7 @@ function stream(tx::Transaction, statement::AbstractString;
     include_counters::Bool=false)
     _assert_open(tx)
     body = _build_query_body(statement, parameters; include_counters)
-    url = "$(tx_url(tx.conn))/$(tx.id)"
+    url = "$(_tx_url(tx.conn))/$(tx.id)"
     return _start_stream(url, body, tx.conn.auth, tx.cluster_affinity)
 end
 
@@ -124,8 +124,8 @@ end
 
 function _start_stream(url, body, auth, cluster_affinity)
     headers = Pair{String,String}[
-        "Content-Type"=>TYPED_JSON_MEDIA,
-        "Accept"=>TYPED_JSONL_MEDIA,
+        "Content-Type"=>_TYPED_JSON_MEDIA,
+        "Accept"=>_TYPED_JSONL_MEDIA,
         auth_header(auth),
     ]
     if cluster_affinity !== nothing
@@ -180,7 +180,7 @@ function Base.iterate(sr::StreamingResult, state=nothing)
 
         if etype == "Record"
             vals = event["_body"]
-            materialized = [materialize_typed(v) for v in vals]
+            materialized = [_materialize_typed(v) for v in vals]
             nt = NamedTuple{sr.field_syms}(Tuple(materialized))
             return (nt, nothing)
         elseif etype == "Summary"

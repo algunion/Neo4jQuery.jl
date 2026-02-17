@@ -34,10 +34,10 @@ function connect(host::AbstractString, database::AbstractString;
 end
 
 """Return the URL for implicit-transaction queries."""
-query_url(conn::Neo4jConnection) = "$(conn.base_url)/db/$(conn.database)/query/v2"
+_query_url(conn::Neo4jConnection) = "$(conn.base_url)/db/$(conn.database)/query/v2"
 
 """Return the URL for explicit-transaction operations."""
-tx_url(conn::Neo4jConnection) = "$(conn.base_url)/db/$(conn.database)/query/v2/tx"
+_tx_url(conn::Neo4jConnection) = "$(conn.base_url)/db/$(conn.database)/query/v2/tx"
 
 """Hit `GET /` to verify the server is reachable and responding."""
 function _discover(conn::Neo4jConnection)

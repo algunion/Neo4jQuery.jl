@@ -180,7 +180,7 @@ function _build_result(parsed::AbstractDict)
         field_syms = Tuple(Symbol.(fields))
         raw_values = get(data, "values", [])
         for row_vals in raw_values
-            materialized = [materialize_typed(v) for v in row_vals]
+            materialized = [_materialize_typed(v) for v in row_vals]
             nt = NamedTuple{field_syms}(Tuple(materialized))
             push!(rows, nt)
         end

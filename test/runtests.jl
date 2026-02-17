@@ -1,6 +1,6 @@
 using Neo4jQuery
-using Neo4jQuery: materialize_typed, to_typed_json, _build_result, _build_query_body,
-    _prepare_statement, auth_header, query_url, tx_url, _parse_neo4j_uri, _parse_wkt,
+using Neo4jQuery: _materialize_typed, to_typed_json, _build_result, _build_query_body,
+    _prepare_statement, auth_header, _query_url, _tx_url, _parse_neo4j_uri, _parse_wkt,
     _to_wkt, _parse_offset, _float_str, _materialize_properties, _try_parse,
     _extract_errors, _props_str
 using JSON
@@ -67,62 +67,62 @@ end
     # ── URL construction ────────────────────────────────────────────────────
     @testset "URL construction" begin
         conn = Neo4jConnection("http://localhost:7474", "neo4j", BasicAuth("x", "y"))
-        @test query_url(conn) == "http://localhost:7474/db/neo4j/query/v2"
-        @test tx_url(conn) == "http://localhost:7474/db/neo4j/query/v2/tx"
+        @test _query_url(conn) == "http://localhost:7474/db/neo4j/query/v2"
+        @test _tx_url(conn) == "http://localhost:7474/db/neo4j/query/v2/tx"
     end
 
     # ── Typed JSON materialization ──────────────────────────────────────────
-    @testset "materialize_typed" begin
+    @testset "_materialize_typed" begin
         # Null
-        @test materialize_typed(JSON.Object("\$type" => "Null", "_value" => nothing)) === nothing
+        @test _materialize_typed(JSON.Object("\$type" => "Null", "_value" => nothing)) === nothing
 
         # Boolean
-        @test materialize_typed(JSON.Object("\$type" => "Boolean", "_value" => true)) === true
-        @test materialize_typed(JSON.Object("\$type" => "Boolean", "_value" => false)) === false
+        @test _materialize_typed(JSON.Object("\$type" => "Boolean", "_value" => true)) === true
+        @test _materialize_typed(JSON.Object("\$type" => "Boolean", "_value" => false)) === false
 
         # Integer
-        @test materialize_typed(JSON.Object("\$type" => "Integer", "_value" => "42")) === 42
+        @test _materialize_typed(JSON.Object("\$type" => "Integer", "_value" => "42")) === 42
 
         # Float
-        @test materialize_typed(JSON.Object("\$type" => "Float", "_value" => "3.14")) === 3.14
-        @test materialize_typed(JSON.Object("\$type" => "Float", "_value" => "NaN")) === NaN
-        @test materialize_typed(JSON.Object("\$type" => "Float", "_value" => "Infinity")) === Inf
-        @test materialize_typed(JSON.Object("\$type" => "Float", "_value" => "-Infinity")) === -Inf
+        @test _materialize_typed(JSON.Object("\$type" => "Float", "_value" => "3.14")) === 3.14
+        @test _materialize_typed(JSON.Object("\$type" => "Float", "_value" => "NaN")) === NaN
+        @test _materialize_typed(JSON.Object("\$type" => "Float", "_value" => "Infinity")) === Inf
+        @test _materialize_typed(JSON.Object("\$type" => "Float", "_value" => "-Infinity")) === -Inf
 
         # String
-        @test materialize_typed(JSON.Object("\$type" => "String", "_value" => "hello")) == "hello"
+        @test _materialize_typed(JSON.Object("\$type" => "String", "_value" => "hello")) == "hello"
 
         # Base64
         enc = Base64.base64encode("binary data")
-        result = materialize_typed(JSON.Object("\$type" => "Base64", "_value" => enc))
+        result = _materialize_typed(JSON.Object("\$type" => "Base64", "_value" => enc))
         @test result == Vector{UInt8}("binary data")
 
         # Date
-        d = materialize_typed(JSON.Object("\$type" => "Date", "_value" => "2024-01-15"))
+        d = _materialize_typed(JSON.Object("\$type" => "Date", "_value" => "2024-01-15"))
         @test d == Dates.Date(2024, 1, 15)
 
         # LocalTime
-        t = materialize_typed(JSON.Object("\$type" => "LocalTime", "_value" => "12:30:45"))
+        t = _materialize_typed(JSON.Object("\$type" => "LocalTime", "_value" => "12:30:45"))
         @test t == Dates.Time(12, 30, 45)
 
         # LocalDateTime
-        dt = materialize_typed(JSON.Object("\$type" => "LocalDateTime", "_value" => "2024-01-15T12:30:45"))
+        dt = _materialize_typed(JSON.Object("\$type" => "LocalDateTime", "_value" => "2024-01-15T12:30:45"))
         @test dt == Dates.DateTime(2024, 1, 15, 12, 30, 45)
 
         # Duration
-        dur = materialize_typed(JSON.Object("\$type" => "Duration", "_value" => "P1Y2M3DT4H"))
+        dur = _materialize_typed(JSON.Object("\$type" => "Duration", "_value" => "P1Y2M3DT4H"))
         @test dur isa CypherDuration
         @test dur.value == "P1Y2M3DT4H"
 
         # List
-        lst = materialize_typed(JSON.Object("\$type" => "List", "_value" => [
+        lst = _materialize_typed(JSON.Object("\$type" => "List", "_value" => [
             JSON.Object("\$type" => "Integer", "_value" => "1"),
             JSON.Object("\$type" => "Integer", "_value" => "2"),
         ]))
         @test lst == [1, 2]
 
         # Map
-        m = materialize_typed(JSON.Object("\$type" => "Map", "_value" => JSON.Object(
+        m = _materialize_typed(JSON.Object("\$type" => "Map", "_value" => JSON.Object(
             "key" => JSON.Object("\$type" => "String", "_value" => "val")
         )))
         @test m isa AbstractDict
@@ -140,7 +140,7 @@ end
                 ),
             ),
         )
-        node = materialize_typed(node_data)
+        node = _materialize_typed(node_data)
         @test node isa Node
         @test node.element_id == "4:xxx:0"
         @test node.labels == ["Person"]
@@ -160,16 +160,16 @@ end
                 ),
             ),
         )
-        rel = materialize_typed(rel_data)
+        rel = _materialize_typed(rel_data)
         @test rel isa Relationship
         @test rel.element_id == "5:xxx:1"
         @test rel.type == "KNOWS"
         @test rel["since"] == 2020
 
         # Passthrough of plain values
-        @test materialize_typed(42) === 42
-        @test materialize_typed("hello") == "hello"
-        @test materialize_typed(nothing) === nothing
+        @test _materialize_typed(42) === 42
+        @test _materialize_typed("hello") == "hello"
+        @test _materialize_typed(nothing) === nothing
     end
 
     # ── Typed JSON serialization ────────────────────────────────────────────
@@ -392,20 +392,20 @@ end
     # Extended coverage: typed_json edge cases
     # ═══════════════════════════════════════════════════════════════════════
 
-    @testset "materialize_typed: Point (WKT)" begin
-        pt = materialize_typed(JSON.Object("\$type" => "Point", "_value" => "SRID=4326;POINT (12.5 34.7)"))
+    @testset "_materialize_typed: Point (WKT)" begin
+        pt = _materialize_typed(JSON.Object("\$type" => "Point", "_value" => "SRID=4326;POINT (12.5 34.7)"))
         @test pt isa CypherPoint
         @test pt.srid == 4326
         @test pt.coordinates ≈ [12.5, 34.7]
 
         # 3D point
-        pt3 = materialize_typed(JSON.Object("\$type" => "Point", "_value" => "SRID=9157;POINT (1.0 2.0 3.0)"))
+        pt3 = _materialize_typed(JSON.Object("\$type" => "Point", "_value" => "SRID=9157;POINT (1.0 2.0 3.0)"))
         @test pt3 isa CypherPoint
         @test pt3.srid == 9157
         @test length(pt3.coordinates) == 3
     end
 
-    @testset "materialize_typed: Path" begin
+    @testset "_materialize_typed: Path" begin
         path_data = JSON.Object(
             "\$type" => "Path",
             "_value" => [
@@ -437,7 +437,7 @@ end
                 ),
             ],
         )
-        path = materialize_typed(path_data)
+        path = _materialize_typed(path_data)
         @test path isa Path
         @test length(path.elements) == 3
         @test path.elements[1] isa Node
@@ -445,7 +445,7 @@ end
         @test path.elements[3] isa Node
     end
 
-    @testset "materialize_typed: Vector (CypherVector)" begin
+    @testset "_materialize_typed: Vector (CypherVector)" begin
         vec_data = JSON.Object(
             "\$type" => "Vector",
             "_value" => JSON.Object(
@@ -453,44 +453,44 @@ end
                 "coordinates" => ["1.0", "2.0", "3.0"],
             ),
         )
-        vec = materialize_typed(vec_data)
+        vec = _materialize_typed(vec_data)
         @test vec isa CypherVector
         @test vec.coordinates_type == "float32"
         @test vec.coordinates == ["1.0", "2.0", "3.0"]
     end
 
-    @testset "materialize_typed: Unsupported type passthrough" begin
-        result = materialize_typed(JSON.Object("\$type" => "Unsupported", "_value" => "raw_data"))
+    @testset "_materialize_typed: Unsupported type passthrough" begin
+        result = _materialize_typed(JSON.Object("\$type" => "Unsupported", "_value" => "raw_data"))
         @test result == "raw_data"
     end
 
-    @testset "materialize_typed: Unknown type passthrough" begin
-        result = materialize_typed(JSON.Object("\$type" => "FutureType", "_value" => "some_data"))
+    @testset "_materialize_typed: Unknown type passthrough" begin
+        result = _materialize_typed(JSON.Object("\$type" => "FutureType", "_value" => "some_data"))
         @test result == "some_data"
     end
 
-    @testset "materialize_typed: plain dict recursion" begin
+    @testset "_materialize_typed: plain dict recursion" begin
         # Dict without $type is recursed into
-        result = materialize_typed(JSON.Object{String,Any}("key" => "value", "num" => 42))
+        result = _materialize_typed(JSON.Object{String,Any}("key" => "value", "num" => 42))
         @test result isa AbstractDict
         @test result["key"] == "value"
         @test result["num"] == 42
     end
 
-    @testset "materialize_typed: AbstractDict dispatch" begin
+    @testset "_materialize_typed: AbstractDict dispatch" begin
         # Regular Dict should be converted
-        result = materialize_typed(Dict{String,Any}("\$type" => "Integer", "_value" => "99"))
+        result = _materialize_typed(Dict{String,Any}("\$type" => "Integer", "_value" => "99"))
         @test result === 99
     end
 
-    @testset "materialize_typed: Integer from Number" begin
+    @testset "_materialize_typed: Integer from Number" begin
         # When _value is already a number (not string)
-        result = materialize_typed(JSON.Object("\$type" => "Integer", "_value" => 42))
+        result = _materialize_typed(JSON.Object("\$type" => "Integer", "_value" => 42))
         @test result === Int64(42)
     end
 
-    @testset "materialize_typed: Float from Number" begin
-        result = materialize_typed(JSON.Object("\$type" => "Float", "_value" => 3.14))
+    @testset "_materialize_typed: Float from Number" begin
+        result = _materialize_typed(JSON.Object("\$type" => "Float", "_value" => 3.14))
         @test result === Float64(3.14)
     end
 

@@ -46,7 +46,7 @@ function query(conn::Neo4jConnection, statement::AbstractString;
     body = _build_query_body(statement, parameters;
         access_mode, include_counters, bookmarks, impersonated_user)
 
-    parsed, _ = neo4j_request(query_url(conn), :POST, body; auth=conn.auth)
+    parsed, _ = _neo4j_request(_query_url(conn), :POST, body; auth=conn.auth)
     return _build_result(parsed)
 end
 
