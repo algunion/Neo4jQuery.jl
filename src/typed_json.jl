@@ -34,8 +34,8 @@ end
 _materialize_typed(v::AbstractDict) = _materialize_typed(JSON.Object{String,Any}(v))
 _materialize_typed(v::AbstractVector) = [_materialize_typed(x) for x in v]
 _materialize_typed(v::AbstractString) = v
-_materialize_typed(v::Number) = v
 _materialize_typed(v::Bool) = v
+_materialize_typed(v::Number) = v
 _materialize_typed(::Nothing) = nothing
 
 # ── Dispatch table ──────────────────────────────────────────────────────────
@@ -95,11 +95,10 @@ function _mat_list(v)
 end
 
 function _mat_map(v)
+    v isa AbstractDict || error("Expected object for Map typed value, got $(typeof(v))")
     result = JSON.Object{String,Any}()
-    if v isa AbstractDict
-        for (k, val) in v
-            result[String(k)] = _materialize_typed(val)
-        end
+    for (k, val) in v
+        result[String(k)] = _materialize_typed(val)
     end
     return result
 end
@@ -110,10 +109,20 @@ end
 
 function _mat_time(v)
     # Zoned time, e.g. "12:50:35.556+01:00"
-    return TimeZones.ZonedDateTime(
-        Dates.DateTime(string(v)[1:min(23, length(string(v)))], dateformat"HH:MM:SS.sss"),
-        _parse_offset(string(v))
-    )
+    s = string(v)
+    # Split time from offset: find last +/- that starts the timezone offset
+    m = match(r"^(.+?)([+-]\d{2}:\d{2})$", s)
+    if m !== nothing
+        time_part = m.captures[1]
+        tz = TimeZones.FixedTimeZone(m.captures[2])
+    elseif endswith(s, "Z")
+        time_part = s[1:end-1]
+        tz = TimeZones.FixedTimeZone("UTC")
+    else
+        error("Cannot parse zoned time: $s")
+    end
+    t = Dates.Time(time_part)
+    return (time=t, timezone=tz)
 end
 
 function _mat_localtime(v)

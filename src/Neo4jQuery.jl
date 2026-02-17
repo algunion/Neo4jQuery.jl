@@ -29,7 +29,6 @@ include("dsl/cypher.jl")
 # ── Public API ──────────────────────────────────────────────────────────────
 
 #! format: off
-# Extension points (not exported, but part of the public interface)
 public auth_header, to_typed_json
 #! format: on
 

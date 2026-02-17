@@ -85,6 +85,18 @@ Base.getindex(n::Node, key::Symbol) = n.properties[String(key)]
 Base.getindex(r::Relationship, key::AbstractString) = r.properties[key]
 Base.getindex(r::Relationship, key::Symbol) = r.properties[String(key)]
 
+# ── Property access: haskey / get ────────────────────────────────────────────
+
+Base.haskey(n::Node, key::AbstractString) = haskey(getfield(n, :properties), key)
+Base.haskey(n::Node, key::Symbol) = haskey(getfield(n, :properties), String(key))
+Base.haskey(r::Relationship, key::AbstractString) = haskey(getfield(r, :properties), key)
+Base.haskey(r::Relationship, key::Symbol) = haskey(getfield(r, :properties), String(key))
+
+Base.get(n::Node, key::AbstractString, default) = get(getfield(n, :properties), key, default)
+Base.get(n::Node, key::Symbol, default) = get(getfield(n, :properties), String(key), default)
+Base.get(r::Relationship, key::AbstractString, default) = get(getfield(r, :properties), key, default)
+Base.get(r::Relationship, key::Symbol, default) = get(getfield(r, :properties), String(key), default)
+
 # ── Property access: getproperty (dot syntax) ───────────────────────────────
 
 const _NODE_FIELDS = fieldnames(Node)

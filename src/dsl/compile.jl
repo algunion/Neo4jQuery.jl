@@ -461,13 +461,13 @@ function _condition_to_cypher(expr, params::Vector{Symbol},
         return "'$(_escape_cypher_string(expr))'"
     end
 
-    # Numeric literal
-    if expr isa Number
+    # Boolean literal (must come before Number since Bool <: Integer <: Number)
+    if expr isa Bool
         return string(expr)
     end
 
-    # Boolean literal
-    if expr isa Bool
+    # Numeric literal
+    if expr isa Number
         return string(expr)
     end
 
@@ -568,7 +568,12 @@ end
 
 """Escape a string for safe embedding in Cypher single-quoted literals."""
 function _escape_cypher_string(s::AbstractString)
-    return replace(replace(s, "\\" => "\\\\"), "'" => "\\'")
+    s = replace(s, "\\" => "\\\\")
+    s = replace(s, "'" => "\\'")
+    s = replace(s, "\n" => "\\n")
+    s = replace(s, "\r" => "\\r")
+    s = replace(s, "\t" => "\\t")
+    return s
 end
 
 # ── RETURN clause compilation ────────────────────────────────────────────────

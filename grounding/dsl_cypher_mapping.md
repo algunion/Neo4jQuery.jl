@@ -3,15 +3,34 @@
 How [Neo4jQuery.jl](../src/dsl/) maps Julia DSL constructs to Cypher,
 and known boundaries.
 
+Last updated: after code review (702 tests passing).
+
+---
+
+## Architecture Overview
+
+The DSL consists of three layers:
+
+1. **`cypher"..."` string macro** — lightweight parameterized Cypher via
+   non-standard string literal. Captures `$var` references from caller scope.
+2. **`@cypher` macro** — the unified, canonical DSL. Compiles a Julia
+   `begin...end` block (or comprehension) into parameterized Cypher at
+   macro expansion time. This is the single entry point for all structured
+   Cypher generation.
+3. **Standalone mutation macros** — `@create`, `@merge`, `@relate` for
+   common single-operation patterns with schema validation.
+
 ---
 
 ## Compilation Model
 
 The DSL operates as a **compile-time macro system**:
 
-- `@query` walks a `begin…end` block, identifies `@clause` sub-macros.
+- `@cypher` walks a `begin…end` block, identifies function-call clauses
+  (`where()`, `ret()`, `create()`, etc.), graph patterns, and property
+  assignments.
 - Each clause handler calls pure compilation functions
-  (`_match_to_cypher`, `_condition_to_cypher`, etc.) on the Julia AST.
+  (`_pattern_to_cypher`, `_condition_to_cypher`, etc.) on the Julia AST.
 - The Cypher string is assembled at **macro expansion time**.
 - Only `$param` values are captured at **runtime**.
 
@@ -20,50 +39,50 @@ This means:
   the expanded code.
 - **Parameters are safe** — captured via `Dict{String,Any}(...)`.
 - **Errors in pattern syntax surface at compile time** (macro expansion).
+- **`access_mode` is auto-inferred** — `:read` for queries, `:write` for
+  mutations (overridable via kwarg).
+
+### Source files
+
+| File                  | Responsibility                                  |
+| --------------------- | ----------------------------------------------- |
+| `dsl/compile.jl`      | AST→Cypher primitives (patterns, conditions, operators) |
+| `dsl/cypher.jl`       | `@cypher` macro, block parser, block compiler   |
+| `dsl/schema.jl`       | `@node`/`@rel` schema macros, validation        |
+| `dsl/mutations.jl`    | `@create`/`@merge`/`@relate` standalone macros  |
+| `cypher_macro.jl`     | `cypher"..."` string macro                      |
 
 ---
 
-## Supported Clauses
+## Pattern Syntax — The `>>` / `<<` Chain Language
 
-| DSL Clause           | Cypher Output                                  | Params captured? |
-| -------------------- | ---------------------------------------------- | ---------------- |
-| `@match`             | `MATCH <pattern>`                              | No               |
-| `@optional_match`    | `OPTIONAL MATCH <pattern>`                     | No               |
-| `@where`             | `WHERE <condition>`                            | Yes              |
-| `@return`            | `RETURN <items>`                               | No               |
-| `@with`              | `WITH <items>`                                 | No               |
-| `@unwind`            | `UNWIND <expr> AS <alias>`                     | Yes              |
-| `@create`            | `CREATE <pattern>`                             | No               |
-| `@merge`             | `MERGE <pattern>`                              | No               |
-| `@set`               | `SET <assignments>`                            | Yes              |
-| `@remove`            | `REMOVE <items>`                               | No               |
-| `@delete`            | `DELETE <items>`                               | No               |
-| `@detach_delete`     | `DETACH DELETE <items>`                        | No               |
-| `@orderby`           | `ORDER BY <exprs>`                             | No               |
-| `@skip`              | `SKIP <n>`                                     | Yes (if `$var`)  |
-| `@limit`             | `LIMIT <n>`                                    | Yes (if `$var`)  |
-| `@on_create_set`     | `ON CREATE SET <…>`                            | Yes              |
-| `@on_match_set`      | `ON MATCH SET <…>`                             | Yes              |
-| `@union`             | `UNION`                                        | No               |
-| `@union_all`         | `UNION ALL`                                    | No               |
-| `@call begin…end`    | `CALL { <subquery> }`                          | Yes (in body)    |
-| `@load_csv`          | `LOAD CSV FROM <url> AS <var>`                 | Yes (if `$url`)  |
-| `@load_csv_headers`  | `LOAD CSV WITH HEADERS FROM <url> AS <var>`    | Yes (if `$url`)  |
-| `@foreach`           | `FOREACH (<var> IN <expr> \| <body>)`          | Yes (in body)    |
-| `@create_index`      | `CREATE INDEX [name] FOR (n:L) ON (n.prop)`    | No               |
-| `@drop_index`        | `DROP INDEX <name> IF EXISTS`                  | No               |
-| `@create_constraint` | `CREATE CONSTRAINT FOR (n:L) REQUIRE n.p IS …` | No               |
-| `@drop_constraint`   | `DROP CONSTRAINT <name> IF EXISTS`             | No               |
+The `>>` chain is the **primary, canonical pattern language** for `@cypher`.
+Arrow syntax (`-[]->`) is also supported for backward compatibility.
 
----
+### Node Patterns
 
-## Pattern Syntax Mapping
+| Julia                     | Cypher           | Notes                    |
+| ------------------------- | ---------------- | ------------------------ |
+| `p::Person`               | `(p:Person)`     | Julia type annotation    |
+| `::Person`                | `(:Person)`      | Anonymous typed node     |
+| `(p:Person)`              | `(p:Person)`     | Colon syntax (compat)    |
+| `(:Person)`               | `(:Person)`      | Anonymous colon syntax   |
+| `(p)`                     | `(p)`            | Untyped variable         |
 
-| Julia DSL                          | Cypher                                 |
+### Relationship Chains
+
+| Julia                                        | Cypher                                    |
+| -------------------------------------------- | ----------------------------------------- |
+| `p::Person >> r::KNOWS >> q::Person`         | `(p:Person)-[r:KNOWS]->(q:Person)`        |
+| `p::Person >> KNOWS >> q::Person`            | `(p:Person)-[:KNOWS]->(q:Person)`         |
+| `p::Person << r::KNOWS << q::Person`         | `(p:Person)<-[r:KNOWS]-(q:Person)`        |
+| `a::A >> R1 >> b::B >> R2 >> c::C`           | `(a:A)-[:R1]->(b:B)-[:R2]->(c:C)`        |
+| Mixed: `a::A >> R >> b::B << S << c::C`      | `(a:A)-[:R]->(b:B)<-[:S]-(c:C)`          |
+
+### Arrow Syntax (backward compatible)
+
+| Julia                              | Cypher                                 |
 | ---------------------------------- | -------------------------------------- |
-| `(p:Person)`                       | `(p:Person)`                           |
-| `(:Person)`                        | `(:Person)`                            |
-| `(p)`                              | `(p)`                                  |
 | `(a) --> (b)`                      | `(a)-->(b)`                            |
 | `(a) <-- (b)`                      | `(a)<--(b)`                            |
 | `(a)-[r:KNOWS]->(b)`               | `(a)-[r:KNOWS]->(b)`                   |
@@ -71,73 +90,120 @@ This means:
 | `(a)-[r:KNOWS]-(b)`                | `(a)-[r:KNOWS]-(b)` (undirected)       |
 | `(a)-[r:KNOWS, 1, 3]->(b)`         | `(a)-[r:KNOWS*1..3]->(b)` (var-length) |
 | `(a)-[r:KNOWS, 2]->(b)`            | `(a)-[r:KNOWS*2]->(b)` (exact length)  |
-| `(:A)-[:R]->(:B)`                  | `(:A)-[:R]->(:B)`                      |
-| `(a)-[r:R]->(b)-[s:S]->(c)`        | `(a)-[r:R]->(b)-[s:S]->(c)` (chained)  |
-| `(a:A), (b:B)` (tuple in `@match`) | `(a:A), (b:B)` (multiple patterns)     |
 
-### Known Limitations
+### Key Design Point
 
-- **Inline property patterns** (`{name: $v}`) in `@match` are not supported.
-  Julia cannot parse `{…}` as an expression. Use `@where` conditions instead.
+**One pattern language for all clauses.** The `>>` chain works uniformly in:
+- Bare patterns (implicit `MATCH`)
+- `create()` — relationship creation
+- `merge()` — relationship merge
+- `optional()` — optional match
+- `match()` — explicit multi-pattern match
+
+---
+
+## @cypher Clause Functions
+
+| Clause                                 | Cypher                              | Params? |
+|:---------------------------------------|:------------------------------------|:--------|
+| Bare pattern (implicit)                | `MATCH <pattern>`                   | No      |
+| `where(cond1, cond2)`                  | `WHERE cond1 AND cond2`             | Yes     |
+| `ret(expr => :alias, ...)`             | `RETURN expr AS alias, ...`         | No      |
+| `ret(:distinct, expr)`                 | `RETURN DISTINCT expr`              | No      |
+| `returning(expr)`                      | `RETURN expr` (alias for `ret`)     | No      |
+| `order(expr, :desc)`                   | `ORDER BY expr DESC`                | No      |
+| `take(n)` / `skip(n)`                  | `LIMIT n` / `SKIP n`               | Yes     |
+| `create(pattern)` / `merge(pattern)`   | `CREATE` / `MERGE`                  | No      |
+| `optional(pattern)`                    | `OPTIONAL MATCH pattern`            | No      |
+| `match(p1, p2)`                        | `MATCH p1, p2` (explicit multi)     | No      |
+| `with(expr => :alias, ...)`            | `WITH expr AS alias, ...`           | No      |
+| `with(:distinct, expr)`               | `WITH DISTINCT expr`                | No      |
+| `unwind($list => :var)`                | `UNWIND $list AS var`               | Yes     |
+| `delete(vars)` / `detach_delete(vars)` | `DELETE` / `DETACH DELETE`          | No      |
+| `on_create(p.prop = val)`              | `ON CREATE SET p.prop = val`        | Yes     |
+| `on_match(p.prop = val)`               | `ON MATCH SET p.prop = val`         | Yes     |
+| `p.prop = $val` (assignment)           | `SET p.prop = $val` (auto-SET)      | Yes     |
+| `remove(items)`                        | `REMOVE items`                      | No      |
+| `union()` / `union_all()`              | `UNION` / `UNION ALL`               | No      |
+| `call(begin ... end)`                  | `CALL { ... }` subquery             | Yes     |
+| `load_csv(url => :row)`               | `LOAD CSV FROM url AS row`          | Yes     |
+| `load_csv_headers(url => :row)`        | `LOAD CSV WITH HEADERS ...`         | Yes     |
+| `foreach(expr => :var, begin...end)`   | `FOREACH (var IN expr \| ...)`      | Yes     |
+| `create_index(:Label, :prop)`          | `CREATE INDEX ...`                  | No      |
+| `drop_index(:name)`                    | `DROP INDEX name IF EXISTS`         | No      |
+| `create_constraint(:L, :p, :type)`     | `CREATE CONSTRAINT ...`             | No      |
+| `drop_constraint(:name)`               | `DROP CONSTRAINT name IF EXISTS`    | No      |
 
 ---
 
 ## Operator Mapping
 
-| Julia                   | Cypher                          | Context             |
-| ----------------------- | ------------------------------- | ------------------- |
-| `==`                    | `=`                             | WHERE               |
-| `!=`                    | `<>`                            | WHERE               |
-| `≠`                     | `<>`                            | WHERE               |
-| `&&`                    | `AND`                           | WHERE               |
-| `\|\|`                  | `OR`                            | WHERE               |
-| `!`                     | `NOT`                           | WHERE               |
-| `>=`, `<=`, etc.        | same                            | WHERE               |
-| `startswith`            | `STARTS WITH`                   | WHERE               |
-| `endswith`              | `ENDS WITH`                     | WHERE               |
-| `contains`              | `CONTAINS`                      | WHERE               |
-| `in` / `∈`              | `IN`                            | WHERE               |
-| `isnothing`             | `IS NULL`                       | WHERE               |
-| `matches(a, b)`         | `a =~ b`                        | WHERE               |
-| `exists((pattern))`     | `EXISTS { MATCH pattern }`      | WHERE               |
-| `if/elseif/else`        | `CASE WHEN … THEN … ELSE … END` | WHERE, RETURN, WITH |
-| `+`,`-`,`*`,`/`,`%`,`^` | same                            | WHERE, SET          |
+| Julia                    | Cypher                           | Context             |
+| ------------------------ | -------------------------------- | ------------------- |
+| `==`                     | `=`                              | WHERE               |
+| `!=`                     | `<>`                             | WHERE               |
+| `≠`                      | `<>`                             | WHERE               |
+| `&&`                     | `AND`                            | WHERE               |
+| `\|\|`                   | `OR`                             | WHERE               |
+| `!`                      | `NOT`                            | WHERE               |
+| `>=`, `<=`, `>`, `<`     | same                             | WHERE               |
+| `startswith`             | `STARTS WITH`                    | WHERE               |
+| `endswith`               | `ENDS WITH`                      | WHERE               |
+| `contains`               | `CONTAINS`                       | WHERE               |
+| `in` / `∈`              | `IN`                             | WHERE               |
+| `isnothing`              | `IS NULL`                        | WHERE               |
+| `matches(a, b)`          | `a =~ b`                        | WHERE               |
+| `exists((pattern))`      | `EXISTS { MATCH pattern }`       | WHERE               |
+| `if/elseif/else`         | `CASE WHEN … THEN … ELSE … END` | WHERE, RETURN, WITH |
+| `+`,`-`,`*`,`/`,`%`,`^` | same                             | WHERE, SET          |
 
 ---
 
 ## SET Clause Behavior
 
-- Multiple `@set` statements **coalesce** into a single `SET` line
-  before `RETURN`, `ORDER BY`, `SKIP`, or `LIMIT`.
-- Example: `@set p.a = 1` + `@set p.b = 2` → `SET p.a = 1, p.b = 2`
+- Multiple property assignments **coalesce** into a single `SET` line.
+- Auto-SET: `p.age = $val` at block-level auto-detects as `SET`.
+- SET is flushed before `RETURN`, `ORDER BY`, `SKIP`, `LIMIT`, `DELETE`,
+  `DETACH DELETE`, `REMOVE`, `UNION`, `UNION ALL`, `CALL`.
+- Example: `p.a = 1` + `p.b = 2` → `SET p.a = 1, p.b = 2`
 - SET supports `$param`, literals (string, number, boolean), and `null`.
 
 ---
 
-## Parameter Deduplication
+## Parameter Handling
 
-The same `$var` used in multiple locations produces **exactly one**
-parameter entry in the `Dict{String,Any}`. The `_capture_param!`
-function uses a `Dict{Symbol,Nothing}` seen-set when called within
-`@query` expansion.
+- Same `$var` used in multiple places produces **one** parameter entry.
+- `_capture_param!` uses a `Dict{Symbol,Nothing}` seen-set for dedup.
+- Parameters are always passed as `Dict{String,Any}` at runtime.
+- The `to_typed_json` function converts Julia values to Neo4j Typed JSON
+  envelopes for the Query API v2 wire format.
 
 ---
 
 ## RETURN / WITH Aliases
 
 - `expr => :alias` maps to `expr AS alias`
-- `distinct` keyword → `RETURN DISTINCT` or `WITH DISTINCT`
+- `:distinct` as first arg → `RETURN DISTINCT` or `WITH DISTINCT`
 - `*` → `RETURN *`
+
+---
+
+## Comprehension Form
+
+`@cypher conn [body for var in Label if cond]` compiles to:
+`MATCH (var:Label) WHERE cond RETURN body`
+
+Single-label iteration only. Always infers `:read` access mode.
 
 ---
 
 ## Standalone Mutation Macros
 
-| Macro     | Pattern                                           | Returns        |
-| --------- | ------------------------------------------------- | -------------- |
+| Macro     | Pattern                                            | Returns        |
+| --------- | -------------------------------------------------- | -------------- |
 | `@create` | `@create conn Label(k=v, …)`                      | `Node`         |
 | `@merge`  | `@merge conn Label(k=v) on_create(…) on_match(…)` | `Node`         |
-| `@relate` | `@relate conn a => TYPE(k=v) => b`                | `Relationship` |
+| `@relate` | `@relate conn a => TYPE(k=v) => b`                 | `Relationship` |
 
 These validate against registered schemas (`@node`, `@rel`) at runtime.
 
@@ -153,95 +219,48 @@ Schemas are **runtime-validated, not compile-time enforced**:
   - **Throws** on missing required properties.
   - **Warns** (via `@warn`) on unknown properties.
   - Does **not** type-check values (only presence checks).
+- Label-only and type-only schemas (no properties) are supported.
 
 ---
 
-## `@graph` — Hyper-Ergonomic DSL
+## Block Parsing (`_parse_cypher_block`)
 
-The `@graph` macro provides an alternative syntax that compiles to the same
-parameterised Cypher as `@query`, but with Julia-native conventions.
+The parser recognizes three expression types in order:
 
-### Design Principle: One Pattern Language
+1. **Function-call clauses** (`where()`, `ret()`, `create()`, etc.)
+   → looked up in `_CYPHER_CLAUSE_FUNCTIONS` map
+2. **Property assignments** (`p.prop = val`) → auto-detected `SET`
+3. **Graph patterns** (detected by `_is_graph_pattern`) → implicit `MATCH`
 
-**The `>>` chain is the single, canonical pattern language for `@graph`.**
-It works uniformly across all clause types:
+Unknown expressions produce a descriptive error.
 
-- Bare patterns (implicit `MATCH`)
-- `create()` — relationship creation
-- `merge()` — relationship merge
-- `optional()` — optional match
-- `match()` — explicit multi-pattern match
+---
 
-Arrow syntax (`-[]->`) is backward-compatible but not the documented primary form.
-This eliminates the confusion of having two different pattern syntaxes in the
-same macro.
+## Mixed `>>` / `<<` Chains
 
-### Compilation Model
+For biomedical-style patterns where direction matters per-relationship:
 
-Identical to `@query`: the Cypher string is assembled at **macro expansion
-time**; only `$param` values are captured at **runtime**.
+```julia
+dr::Drug >> ::TREATS >> di::Disease << ::ASSOCIATED_WITH << g::Gene
+```
 
-### Pattern Syntax (`@graph`)
+Compiles to:
+```cypher
+(dr:Drug)-[:TREATS]->(di:Disease)<-[:ASSOCIATED_WITH]-(g:Gene)
+```
 
-| Julia DSL (in @graph)                    | Cypher                                  | Context    |
-| ---------------------------------------- | --------------------------------------- | ---------- |
-| `p::Person`                              | `(p:Person)`                            | any clause |
-| `::Person`                               | `(:Person)`                             | any clause |
-| `p::Person >> r::KNOWS >> q::Person`     | `(p:Person)-[r:KNOWS]->(q:Person)`      | any clause |
-| `p::Person >> KNOWS >> q::Person`        | `(p:Person)-[:KNOWS]->(q:Person)`       | any clause |
-| `p::Person << r::KNOWS << q::Person`     | `(p:Person)<-[r:KNOWS]-(q:Person)`      | any clause |
-| `a::A >> R1 >> b::B >> R2 >> c::C`       | `(a:A)-[:R1]->(b:B)-[:R2]->(c:C)`       | any clause |
-| `[p.name for p in Person if p.age > 25]` | `MATCH (p:Person) WHERE ... RETURN ...` | top-level  |
+Constraint: each relationship's flanking operators must agree (both `>>` or
+both `<<`). Mixing around the same relationship is an error.
 
-**Key point**: `create(a >> r::KNOWS >> b)` and `merge(p::P >> r::R >> q::Q)`
-use the **exact same** `>>` syntax as bare match patterns.
+---
 
-### Clause Mapping (`@graph`)
+## Known Limitations
 
-| @graph clause                | Cypher                              |
-| ---------------------------- | ----------------------------------- |
-| Bare pattern (implicit)      | `MATCH <pattern>`                   |
-| `where(cond1, cond2)`        | `WHERE cond1 AND cond2`             |
-| `ret(expr => :alias)`        | `RETURN expr AS alias`              |
-| `returning(expr)`            | `RETURN expr` (alias for `ret`)     |
-| `ret(distinct, expr)`        | `RETURN DISTINCT expr`              |
-| `order(expr, :desc)`         | `ORDER BY expr DESC`                |
-| `take(n)` / `skip(n)`        | `LIMIT n` / `SKIP n`                |
-| `create(pattern)`            | `CREATE pattern`                    |
-| `merge(pattern)`             | `MERGE pattern`                     |
-| `optional(pattern)`          | `OPTIONAL MATCH pattern`            |
-| `match(p1, p2)`              | `MATCH p1, p2`                      |
-| `with(expr => :alias)`       | `WITH expr AS alias`                |
-| `unwind($list => :var)`      | `UNWIND $list AS var`               |
-| `delete(vars)`               | `DELETE vars`                       |
-| `detach_delete(vars)`        | `DETACH DELETE vars`                |
-| `on_create(p.prop = val)`    | `ON CREATE SET p.prop = val`        |
-| `on_match(p.prop = val)`     | `ON MATCH SET p.prop = val`         |
-| `p.prop = $val` (assignment) | `SET p.prop = $val` (auto-detected) |
-
-### @graph Block Parsing
-
-The `_parse_graph_block` function recognises three expression types:
-
-1. **Graph patterns** (via `_is_graph_pattern`) → implicit `MATCH`
-2. **Function calls** (`where`, `ret`, `order`, etc.) → corresponding clauses
-3. **Property assignments** (`p.prop = val`) → `SET` clauses (auto-detected)
-
-### @graph Comprehension Form
-
-`@graph conn [body for var in Label if cond]` compiles to:
-`MATCH (var:Label) WHERE cond RETURN body`
-
-### >> / << Chain Operators
-
-The `>>` operator produces right-directed relationships; `<<` produces
-left-directed. Elements alternate: node, relationship, node, relationship, node...
-
-`_flatten_chain(expr, op)` flattens the left-associative binary parse tree
-into a flat vector. Odd positions are nodes, even positions are relationships.
-
-### Known @graph Limitations
-
-- Does **not** support `@call` subqueries, `@load_csv`, `@foreach`,
-  index/constraint management — use `@query` for these
-- Comprehension form supports single-label iteration only (no chains)
+- **Inline property patterns** (`{name: $v}`) in MATCH not supported —
+  Julia cannot parse `{…}` as an expression. Use `where()` instead.
+- **Shortest path functions** (`shortestPath`, `allShortestPaths`) not supported.
+- **Procedure calls** (`CALL db.xxx()`) not supported (distinct from CALL subqueries).
+- **Map projections** and **list comprehensions** not in DSL.
+- **Comprehension form** supports single-label iteration only (no chains).
+- Relationship creation in `@cypher` uses `create(a >> r::T >> b)` pattern;
+  inline property patterns on relationships require `SET` or `on_create`.

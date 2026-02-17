@@ -2,7 +2,7 @@ using Neo4jQuery
 using Neo4jQuery: _materialize_typed, to_typed_json, _build_result, _build_query_body,
     _prepare_statement, auth_header, _query_url, _tx_url, _parse_neo4j_uri, _parse_wkt,
     _to_wkt, _parse_offset, _float_str, _materialize_properties, _try_parse,
-    _extract_errors, _props_str
+    _extract_errors, _props_str, _mat_map
 using JSON
 using Dates
 using TimeZones
@@ -516,6 +516,55 @@ end
         @test tz_utc isa TimeZones.FixedTimeZone
 
         @test_throws ErrorException _parse_offset("no-offset-here")
+    end
+
+    # ── Zoned Time materialization (was previously broken) ──────────────
+    @testset "_materialize_typed: Time (zoned)" begin
+        result = _materialize_typed(JSON.Object("\$type" => "Time", "_value" => "12:50:35.556+01:00"))
+        @test result.time == Dates.Time(12, 50, 35, 556)
+        @test result.timezone == TimeZones.FixedTimeZone("+01:00")
+
+        # UTC variant
+        result_utc = _materialize_typed(JSON.Object("\$type" => "Time", "_value" => "00:00:00Z"))
+        @test result_utc.time == Dates.Time(0, 0, 0)
+        @test result_utc.timezone == TimeZones.FixedTimeZone("UTC")
+
+        # Negative offset
+        result_neg = _materialize_typed(JSON.Object("\$type" => "Time", "_value" => "23:59:59.999-05:00"))
+        @test result_neg.time == Dates.Time(23, 59, 59, 999)
+        @test result_neg.timezone == TimeZones.FixedTimeZone("-05:00")
+    end
+
+    # ── Node/Relationship haskey and get ────────────────────────────────
+    @testset "Node haskey and get" begin
+        props = JSON.Object{String,Any}("name" => "Alice", "age" => 30)
+        n = Node("4:xxx:0", ["Person"], props)
+        @test haskey(n, "name") == true
+        @test haskey(n, "missing") == false
+        @test haskey(n, :name) == true
+        @test haskey(n, :missing) == false
+        @test get(n, "name", "default") == "Alice"
+        @test get(n, "missing", "default") == "default"
+        @test get(n, :age, 0) == 30
+        @test get(n, :missing, 0) == 0
+    end
+
+    @testset "Relationship haskey and get" begin
+        props = JSON.Object{String,Any}("since" => 2020)
+        r = Relationship("5:xxx:1", "4:xxx:0", "4:xxx:2", "KNOWS", props)
+        @test haskey(r, "since") == true
+        @test haskey(r, "missing") == false
+        @test haskey(r, :since) == true
+        @test get(r, "since", 0) == 2020
+        @test get(r, "missing", 0) == 0
+        @test get(r, :since, 0) == 2020
+    end
+
+    # ── _mat_map error on non-dict ──────────────────────────────────────
+    @testset "_mat_map rejects non-dict input" begin
+        using Neo4jQuery: _mat_map
+        @test_throws ErrorException _mat_map("not a dict")
+        @test_throws ErrorException _mat_map([1, 2, 3])
     end
 
     @testset "_float_str edge cases" begin

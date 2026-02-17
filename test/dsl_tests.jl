@@ -893,8 +893,12 @@ end
         # Mixed quotes and backslashes
         @test _escape_cypher_string("it's a \\test\\") == "it\\'s a \\\\test\\\\"
 
-        # Multi-line strings (newlines preserved)
-        @test _escape_cypher_string("line1\nline2") == "line1\nline2"
+        # Multi-line strings (newlines escaped for Cypher safety)
+        @test _escape_cypher_string("line1\nline2") == "line1\\nline2"
+
+        # Tab and carriage return
+        @test _escape_cypher_string("col1\tcol2") == "col1\\tcol2"
+        @test _escape_cypher_string("line1\r\nline2") == "line1\\r\\nline2"
 
         # Unicode (should pass through)
         @test _escape_cypher_string("café") == "café"

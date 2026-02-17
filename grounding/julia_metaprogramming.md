@@ -171,6 +171,27 @@ Parser produces it for `:symbol` literals inside expressions.
 
 ## Key Insight for Our DSL
 
+### `>>` / `<<` Chain Operators
+
+The `>>` and `<<` operators are parsed as standard Julia `:call` expressions:
+
+```julia
+dump(:(a >> b >> c))
+# Expr(:call, :>>, Expr(:call, :>>, :a, :b), :c)
+```
+
+Key properties:
+- **Left-associative**: `a >> b >> c` → `>>(>>(a, b), c)`
+- **Both `>>` and `<<`** parse as `:call` with the operator as first arg
+- **Mixed chains** `a >> B >> b << C << c` produce nested calls that can
+  be walked to detect direction changes per relationship
+
+The DSL uses `_is_chain_operator` to detect `>>` / `<<` heads and
+`_chain_to_pattern` to recursively decompose the nested calls into a
+linear sequence of `(node, rel, direction)` tuples.
+
+### Arrow Bracket Syntax
+
 Julia's parser turns `(a:B)-[r:T]->(c:D)` into:
 
 ```
