@@ -205,6 +205,10 @@ shortest_groups(2, a::Person >> KNOWS{1,nothing} >> b::Person)
 any_paths(a::Person >> KNOWS{1,nothing} >> b::Person)
 # → MATCH ANY (a:Person)-[:KNOWS]->+(b:Person)
 
+# ANY k — any k paths
+any_paths(3, a::Person >> KNOWS{1,nothing} >> b::Person)
+# → MATCH ANY 3 (a:Person)-[:KNOWS]->+(b:Person)
+
 # With path variable
 p = shortest(1, a::Person >> KNOWS{1,nothing} >> b::Person)
 # → MATCH p = SHORTEST 1 (a:Person)-[:KNOWS]->+(b:Person)
@@ -245,36 +249,41 @@ match((p:Person), (c:Company))
 
 All clauses use plain function-call syntax — no `@` prefixes:
 
-| Function                                    | Cypher                                     |
-| :------------------------------------------ | :----------------------------------------- |
-| `where(cond1, cond2, ...)`                  | `WHERE cond1 AND cond2 AND ...`            |
-| `ret(expr => :alias, ...)`                  | `RETURN expr AS alias, ...`                |
-| `returning(expr => :alias)`                 | `RETURN expr AS alias` (synonym for `ret`) |
-| `ret(distinct, expr)`                       | `RETURN DISTINCT expr`                     |
-| `order(expr, :desc)`                        | `ORDER BY expr DESC`                       |
-| `take(n)` / `skip(n)`                       | `LIMIT n` / `SKIP n`                       |
-| `match(p1, p2)`                             | `MATCH p1, p2` (explicit multi-pattern)    |
-| `optional(pattern)`                         | `OPTIONAL MATCH pattern`                   |
-| `create(pattern)`                           | `CREATE pattern`                           |
-| `merge(pattern)`                            | `MERGE pattern`                            |
-| `with(expr => :alias, ...)`                 | `WITH expr AS alias, ...`                  |
-| `unwind($list => :var)`                     | `UNWIND $list AS var`                      |
-| `delete(vars...)`                           | `DELETE vars`                              |
-| `detach_delete(vars...)`                    | `DETACH DELETE vars`                       |
-| `on_create(p.prop = val)`                   | `ON CREATE SET p.prop = val`               |
-| `on_match(p.prop = val)`                    | `ON MATCH SET p.prop = val`                |
-| `remove(p.prop)`                            | `REMOVE p.prop`                            |
-| `p.prop = $val` (assignment)                | `SET p.prop = $val` (auto-detected)        |
-| `union()`                                   | `UNION`                                    |
-| `union_all()`                               | `UNION ALL`                                |
-| `call(begin ... end)`                       | `CALL { ... }` subquery                    |
-| `load_csv(url => :row)`                     | `LOAD CSV FROM url AS row`                 |
-| `load_csv_headers(url => :row)`             | `LOAD CSV WITH HEADERS FROM url AS row`    |
-| `foreach(var, :in, expr, begin ... end)`    | `FOREACH (var IN expr \| ...)`             |
-| `create_index(:Label, :prop)`               | `CREATE INDEX FOR (n:Label) ON (n.prop)`   |
-| `drop_index(:name)`                         | `DROP INDEX name IF EXISTS`                |
-| `create_constraint(:Label, :prop, :unique)` | `CREATE CONSTRAINT ... IS UNIQUE`          |
-| `drop_constraint(:name)`                    | `DROP CONSTRAINT name IF EXISTS`           |
+| Function                                    | Cypher                                      |
+| :------------------------------------------ | :------------------------------------------ |
+| `where(cond1, cond2, ...)`                  | `WHERE cond1 AND cond2 AND ...`             |
+| `ret(expr => :alias, ...)`                  | `RETURN expr AS alias, ...`                 |
+| `returning(expr => :alias)`                 | `RETURN expr AS alias` (synonym for `ret`)  |
+| `ret(distinct, expr)`                       | `RETURN DISTINCT expr`                      |
+| `ret(*)`                                    | `RETURN *`                                  |
+| `order(expr, :desc)`                        | `ORDER BY expr DESC`                        |
+| `take(n)` / `skip(n)`                       | `LIMIT n` / `SKIP n`                        |
+| `match(p1, p2)`                             | `MATCH p1, p2` (explicit multi-pattern)     |
+| `optional(pattern)`                         | `OPTIONAL MATCH pattern`                    |
+| `optional(p1, p2)`                          | `OPTIONAL MATCH p1, p2` (multi-pattern)     |
+| `create(pattern)`                           | `CREATE pattern`                            |
+| `create(p1, p2)`                            | `CREATE p1, p2` (multi-pattern)             |
+| `merge(pattern)`                            | `MERGE pattern`                             |
+| `with(expr => :alias, ...)`                 | `WITH expr AS alias, ...`                   |
+| `with(distinct, expr => :alias, ...)`       | `WITH DISTINCT expr AS alias, ...`          |
+| `unwind($list => :var)`                     | `UNWIND $list AS var`                       |
+| `delete(vars...)`                           | `DELETE vars`                               |
+| `detach_delete(vars...)`                    | `DETACH DELETE vars`                        |
+| `on_create(p.prop = val)`                   | `ON CREATE SET p.prop = val`                |
+| `on_match(p.prop = val)`                    | `ON MATCH SET p.prop = val`                 |
+| `remove(p.prop)`                            | `REMOVE p.prop`                             |
+| `p.prop = $val` (assignment)                | `SET p.prop = $val` (auto-detected)         |
+| `union()`                                   | `UNION`                                     |
+| `union_all()`                               | `UNION ALL`                                 |
+| `call(begin ... end)`                       | `CALL { ... }` subquery                     |
+| `load_csv(url => :row)`                     | `LOAD CSV FROM url AS row`                  |
+| `load_csv_headers(url => :row)`             | `LOAD CSV WITH HEADERS FROM url AS row`     |
+| `foreach(var, :in, expr, begin ... end)`    | `FOREACH (var IN expr \| ...)`              |
+| `create_index(:Label, :prop)`               | `CREATE INDEX FOR (n:Label) ON (n.prop)`    |
+| `drop_index(:name)`                         | `DROP INDEX name IF EXISTS`                 |
+| `create_constraint(:Label, :prop, :unique)` | `CREATE CONSTRAINT ... IS UNIQUE`           |
+| `create_constraint(:L, :p, :not_null, :n)`  | NOT NULL constraint (`:notnull` also works) |
+| `drop_constraint(:name)`                    | `DROP CONSTRAINT name IF EXISTS`            |
 
 ### Implicit MATCH
 
@@ -295,7 +304,7 @@ Julia operators are translated to Cypher:
 | Julia                            | Cypher                                |
 | :------------------------------- | :------------------------------------ |
 | `==`                             | `=`                                   |
-| `!=`                             | `<>`                                  |
+| `!=` / `≠`                       | `<>`                                  |
 | `&&`                             | `AND`                                 |
 | `\|\|`                           | `OR`                                  |
 | `!`                              | `NOT`                                 |
@@ -309,12 +318,22 @@ Julia operators are translated to Cypher:
 | `exists((p)-[:R]->(q))`          | `EXISTS { MATCH ... }`                |
 | `if ... elseif ... else ... end` | `CASE WHEN ... THEN ... ELSE ... END` |
 
-Arithmetic operators (`+`, `-`, `*`, `/`, `%`, `^`) are also supported:
+Arithmetic operators (`+`, `-`, `*`, `/`, `%`, `^`) and unary negation (`-expr`) are also supported:
 
 ```julia
 where(p.score * 2 + 10 > $threshold)
 where(p.id % 2 == 0)
+where(-p.balance < $limit)
 ```
+
+Julia's `nothing` maps to Cypher `null`, and vector literals `[a, b, c]` map to Cypher list literals:
+
+```julia
+where(p.email != nothing)          # p.email <> null
+ret(coalesce(p.name, "unknown"))   # any Cypher function works
+```
+
+**Generic function pass-through:** Any function call not specifically listed above is passed through verbatim as a Cypher function call. This means you can use Cypher built-in functions directly — `coalesce(a, b)`, `toUpper(x)`, `toInteger(x)`, `trim(s)`, `size(list)`, `elementId(n)`, `labels(n)`, `type(r)`, `keys(n)`, `properties(n)`, `toString(x)`, `point(...)`, `distance(...)`, `abs(x)`, `round(x)`, `substring(s, start, len)`, etc.
 
 Multi-condition WHERE auto-ANDs:
 

@@ -149,6 +149,8 @@ commit!(tx)
 println("Committed: ", tx.committed)
 ```
 
+Additional fields: `tx.expires` (server-reported expiry timestamp) and `tx.cluster_affinity` (Aura cluster routing, or `nothing`).
+
 Attempting to use a committed or rolled-back transaction raises an error:
 
 ```@example tx

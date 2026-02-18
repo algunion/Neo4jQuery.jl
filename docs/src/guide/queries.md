@@ -88,6 +88,14 @@ result = query(conn, "MATCH (p:Person) RETURN p.name AS name, p.age AS age ORDER
 first_row = result[1]
 println("First: ", first_row)
 
+# Range indexing
+subset = result[1:2]
+println("Subset: ", subset)
+
+# first / last
+println("First: ", first(result))
+println("Last: ", last(result))
+
 # Fields
 println("Fields: ", result.fields)
 
@@ -102,6 +110,7 @@ println("Names: ", names)
 
 # Standard functions
 println("Length: ", length(result))
+println("Size: ", size(result))
 println("Empty? ", isempty(result))
 ```
 
@@ -118,6 +127,15 @@ println("Labels added: ", c.labels_added)
 ```
 
 Available counter fields: `nodes_created`, `nodes_deleted`, `relationships_created`, `relationships_deleted`, `properties_set`, `labels_added`, `labels_removed`, `indexes_added`, `indexes_removed`, `constraints_added`, `constraints_removed`, `contains_updates`, `contains_system_updates`, `system_updates`.
+
+### Query plans
+
+The result also carries optional query plan data:
+
+```julia
+result.query_plan           # Union{JSON.Object, Nothing} — EXPLAIN plan
+result.profiled_query_plan  # Union{JSON.Object, Nothing} — PROFILE plan
+```
 
 ### Bookmarks
 
@@ -139,6 +157,7 @@ result = query(conn, "MATCH (a), (b) RETURN a, b")
 for n in result.notifications
     println(n.severity, ": ", n.title)
     println("  ", n.description)
+    n.position !== nothing && println("  Position: ", n.position)
 end
 println("Notifications: ", length(result.notifications))
 ```
@@ -155,6 +174,8 @@ node = row.p
 println("Node: ", node)
 println("Labels: ", node.labels)
 println("Name: ", node["name"])
+println("Has name? ", haskey(node, "name"))
+println("City: ", get(node, "city", "unknown"))
 
 rel = row.r
 println("Rel type: ", rel.type)
