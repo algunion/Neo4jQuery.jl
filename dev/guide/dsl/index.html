@@ -95,6 +95,10 @@ shortest_groups(2, a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
 any_paths(a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
 # → MATCH ANY (a:Person)-[:KNOWS]-&gt;+(b:Person)
 
+# ANY k — any k paths
+any_paths(3, a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
+# → MATCH ANY 3 (a:Person)-[:KNOWS]-&gt;+(b:Person)
+
 # With path variable
 p = shortest(1, a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
 # → MATCH p = SHORTEST 1 (a:Person)-[:KNOWS]-&gt;+(b:Person)
@@ -120,12 +124,14 @@ p = all_shortest(a::Person &gt;&gt; KNOWS{1,nothing} &gt;&gt; b::Person)
 (a)-[r:R]-&gt;(b)-[s:S]-&gt;(c)
 
 # Multiple patterns (comma-separated)
-match((p:Person), (c:Company))</code></pre><h3 id="Clause-functions"><a class="docs-heading-anchor" href="#Clause-functions">Clause functions</a><a id="Clause-functions-1"></a><a class="docs-heading-anchor-permalink" href="#Clause-functions" title="Permalink"></a></h3><p>All clauses use plain function-call syntax — no <code>@</code> prefixes:</p><table><tr><th style="text-align: left">Function</th><th style="text-align: left">Cypher</th></tr><tr><td style="text-align: left"><code>where(cond1, cond2, ...)</code></td><td style="text-align: left"><code>WHERE cond1 AND cond2 AND ...</code></td></tr><tr><td style="text-align: left"><code>ret(expr =&gt; :alias, ...)</code></td><td style="text-align: left"><code>RETURN expr AS alias, ...</code></td></tr><tr><td style="text-align: left"><code>returning(expr =&gt; :alias)</code></td><td style="text-align: left"><code>RETURN expr AS alias</code> (synonym for <code>ret</code>)</td></tr><tr><td style="text-align: left"><code>ret(distinct, expr)</code></td><td style="text-align: left"><code>RETURN DISTINCT expr</code></td></tr><tr><td style="text-align: left"><code>order(expr, :desc)</code></td><td style="text-align: left"><code>ORDER BY expr DESC</code></td></tr><tr><td style="text-align: left"><code>take(n)</code> / <code>skip(n)</code></td><td style="text-align: left"><code>LIMIT n</code> / <code>SKIP n</code></td></tr><tr><td style="text-align: left"><code>match(p1, p2)</code></td><td style="text-align: left"><code>MATCH p1, p2</code> (explicit multi-pattern)</td></tr><tr><td style="text-align: left"><code>optional(pattern)</code></td><td style="text-align: left"><code>OPTIONAL MATCH pattern</code></td></tr><tr><td style="text-align: left"><code>create(pattern)</code></td><td style="text-align: left"><code>CREATE pattern</code></td></tr><tr><td style="text-align: left"><code>merge(pattern)</code></td><td style="text-align: left"><code>MERGE pattern</code></td></tr><tr><td style="text-align: left"><code>with(expr =&gt; :alias, ...)</code></td><td style="text-align: left"><code>WITH expr AS alias, ...</code></td></tr><tr><td style="text-align: left"><code>unwind($list =&gt; :var)</code></td><td style="text-align: left"><code>UNWIND $list AS var</code></td></tr><tr><td style="text-align: left"><code>delete(vars...)</code></td><td style="text-align: left"><code>DELETE vars</code></td></tr><tr><td style="text-align: left"><code>detach_delete(vars...)</code></td><td style="text-align: left"><code>DETACH DELETE vars</code></td></tr><tr><td style="text-align: left"><code>on_create(p.prop = val)</code></td><td style="text-align: left"><code>ON CREATE SET p.prop = val</code></td></tr><tr><td style="text-align: left"><code>on_match(p.prop = val)</code></td><td style="text-align: left"><code>ON MATCH SET p.prop = val</code></td></tr><tr><td style="text-align: left"><code>remove(p.prop)</code></td><td style="text-align: left"><code>REMOVE p.prop</code></td></tr><tr><td style="text-align: left"><code>p.prop = $val</code> (assignment)</td><td style="text-align: left"><code>SET p.prop = $val</code> (auto-detected)</td></tr><tr><td style="text-align: left"><code>union()</code></td><td style="text-align: left"><code>UNION</code></td></tr><tr><td style="text-align: left"><code>union_all()</code></td><td style="text-align: left"><code>UNION ALL</code></td></tr><tr><td style="text-align: left"><code>call(begin ... end)</code></td><td style="text-align: left"><code>CALL { ... }</code> subquery</td></tr><tr><td style="text-align: left"><code>load_csv(url =&gt; :row)</code></td><td style="text-align: left"><code>LOAD CSV FROM url AS row</code></td></tr><tr><td style="text-align: left"><code>load_csv_headers(url =&gt; :row)</code></td><td style="text-align: left"><code>LOAD CSV WITH HEADERS FROM url AS row</code></td></tr><tr><td style="text-align: left"><code>foreach(var, :in, expr, begin ... end)</code></td><td style="text-align: left"><code>FOREACH (var IN expr | ...)</code></td></tr><tr><td style="text-align: left"><code>create_index(:Label, :prop)</code></td><td style="text-align: left"><code>CREATE INDEX FOR (n:Label) ON (n.prop)</code></td></tr><tr><td style="text-align: left"><code>drop_index(:name)</code></td><td style="text-align: left"><code>DROP INDEX name IF EXISTS</code></td></tr><tr><td style="text-align: left"><code>create_constraint(:Label, :prop, :unique)</code></td><td style="text-align: left"><code>CREATE CONSTRAINT ... IS UNIQUE</code></td></tr><tr><td style="text-align: left"><code>drop_constraint(:name)</code></td><td style="text-align: left"><code>DROP CONSTRAINT name IF EXISTS</code></td></tr></table><h3 id="Implicit-MATCH"><a class="docs-heading-anchor" href="#Implicit-MATCH">Implicit MATCH</a><a id="Implicit-MATCH-1"></a><a class="docs-heading-anchor-permalink" href="#Implicit-MATCH" title="Permalink"></a></h3><p>Bare graph patterns in a <code>@cypher</code> block are automatically treated as MATCH clauses:</p><pre><code class="language-julia hljs">@cypher conn begin
+match((p:Person), (c:Company))</code></pre><h3 id="Clause-functions"><a class="docs-heading-anchor" href="#Clause-functions">Clause functions</a><a id="Clause-functions-1"></a><a class="docs-heading-anchor-permalink" href="#Clause-functions" title="Permalink"></a></h3><p>All clauses use plain function-call syntax — no <code>@</code> prefixes:</p><table><tr><th style="text-align: left">Function</th><th style="text-align: left">Cypher</th></tr><tr><td style="text-align: left"><code>where(cond1, cond2, ...)</code></td><td style="text-align: left"><code>WHERE cond1 AND cond2 AND ...</code></td></tr><tr><td style="text-align: left"><code>ret(expr =&gt; :alias, ...)</code></td><td style="text-align: left"><code>RETURN expr AS alias, ...</code></td></tr><tr><td style="text-align: left"><code>returning(expr =&gt; :alias)</code></td><td style="text-align: left"><code>RETURN expr AS alias</code> (synonym for <code>ret</code>)</td></tr><tr><td style="text-align: left"><code>ret(distinct, expr)</code></td><td style="text-align: left"><code>RETURN DISTINCT expr</code></td></tr><tr><td style="text-align: left"><code>ret(*)</code></td><td style="text-align: left"><code>RETURN *</code></td></tr><tr><td style="text-align: left"><code>order(expr, :desc)</code></td><td style="text-align: left"><code>ORDER BY expr DESC</code></td></tr><tr><td style="text-align: left"><code>take(n)</code> / <code>skip(n)</code></td><td style="text-align: left"><code>LIMIT n</code> / <code>SKIP n</code></td></tr><tr><td style="text-align: left"><code>match(p1, p2)</code></td><td style="text-align: left"><code>MATCH p1, p2</code> (explicit multi-pattern)</td></tr><tr><td style="text-align: left"><code>optional(pattern)</code></td><td style="text-align: left"><code>OPTIONAL MATCH pattern</code></td></tr><tr><td style="text-align: left"><code>optional(p1, p2)</code></td><td style="text-align: left"><code>OPTIONAL MATCH p1, p2</code> (multi-pattern)</td></tr><tr><td style="text-align: left"><code>create(pattern)</code></td><td style="text-align: left"><code>CREATE pattern</code></td></tr><tr><td style="text-align: left"><code>create(p1, p2)</code></td><td style="text-align: left"><code>CREATE p1, p2</code> (multi-pattern)</td></tr><tr><td style="text-align: left"><code>merge(pattern)</code></td><td style="text-align: left"><code>MERGE pattern</code></td></tr><tr><td style="text-align: left"><code>with(expr =&gt; :alias, ...)</code></td><td style="text-align: left"><code>WITH expr AS alias, ...</code></td></tr><tr><td style="text-align: left"><code>with(distinct, expr =&gt; :alias, ...)</code></td><td style="text-align: left"><code>WITH DISTINCT expr AS alias, ...</code></td></tr><tr><td style="text-align: left"><code>unwind($list =&gt; :var)</code></td><td style="text-align: left"><code>UNWIND $list AS var</code></td></tr><tr><td style="text-align: left"><code>delete(vars...)</code></td><td style="text-align: left"><code>DELETE vars</code></td></tr><tr><td style="text-align: left"><code>detach_delete(vars...)</code></td><td style="text-align: left"><code>DETACH DELETE vars</code></td></tr><tr><td style="text-align: left"><code>on_create(p.prop = val)</code></td><td style="text-align: left"><code>ON CREATE SET p.prop = val</code></td></tr><tr><td style="text-align: left"><code>on_match(p.prop = val)</code></td><td style="text-align: left"><code>ON MATCH SET p.prop = val</code></td></tr><tr><td style="text-align: left"><code>remove(p.prop)</code></td><td style="text-align: left"><code>REMOVE p.prop</code></td></tr><tr><td style="text-align: left"><code>p.prop = $val</code> (assignment)</td><td style="text-align: left"><code>SET p.prop = $val</code> (auto-detected)</td></tr><tr><td style="text-align: left"><code>union()</code></td><td style="text-align: left"><code>UNION</code></td></tr><tr><td style="text-align: left"><code>union_all()</code></td><td style="text-align: left"><code>UNION ALL</code></td></tr><tr><td style="text-align: left"><code>call(begin ... end)</code></td><td style="text-align: left"><code>CALL { ... }</code> subquery</td></tr><tr><td style="text-align: left"><code>load_csv(url =&gt; :row)</code></td><td style="text-align: left"><code>LOAD CSV FROM url AS row</code></td></tr><tr><td style="text-align: left"><code>load_csv_headers(url =&gt; :row)</code></td><td style="text-align: left"><code>LOAD CSV WITH HEADERS FROM url AS row</code></td></tr><tr><td style="text-align: left"><code>foreach(var, :in, expr, begin ... end)</code></td><td style="text-align: left"><code>FOREACH (var IN expr | ...)</code></td></tr><tr><td style="text-align: left"><code>create_index(:Label, :prop)</code></td><td style="text-align: left"><code>CREATE INDEX FOR (n:Label) ON (n.prop)</code></td></tr><tr><td style="text-align: left"><code>drop_index(:name)</code></td><td style="text-align: left"><code>DROP INDEX name IF EXISTS</code></td></tr><tr><td style="text-align: left"><code>create_constraint(:Label, :prop, :unique)</code></td><td style="text-align: left"><code>CREATE CONSTRAINT ... IS UNIQUE</code></td></tr><tr><td style="text-align: left"><code>create_constraint(:L, :p, :not_null, :n)</code></td><td style="text-align: left">NOT NULL constraint (<code>:notnull</code> also works)</td></tr><tr><td style="text-align: left"><code>drop_constraint(:name)</code></td><td style="text-align: left"><code>DROP CONSTRAINT name IF EXISTS</code></td></tr></table><h3 id="Implicit-MATCH"><a class="docs-heading-anchor" href="#Implicit-MATCH">Implicit MATCH</a><a id="Implicit-MATCH-1"></a><a class="docs-heading-anchor-permalink" href="#Implicit-MATCH" title="Permalink"></a></h3><p>Bare graph patterns in a <code>@cypher</code> block are automatically treated as MATCH clauses:</p><pre><code class="language-julia hljs">@cypher conn begin
     p::Person &gt;&gt; r::KNOWS &gt;&gt; q::Person    # implicit MATCH
     where(p.age &gt; 25)
     ret(p.name, q.name)
-end</code></pre><h3 id="WHERE-operators"><a class="docs-heading-anchor" href="#WHERE-operators">WHERE operators</a><a id="WHERE-operators-1"></a><a class="docs-heading-anchor-permalink" href="#WHERE-operators" title="Permalink"></a></h3><p>Julia operators are translated to Cypher:</p><table><tr><th style="text-align: left">Julia</th><th style="text-align: left">Cypher</th></tr><tr><td style="text-align: left"><code>==</code></td><td style="text-align: left"><code>=</code></td></tr><tr><td style="text-align: left"><code>!=</code></td><td style="text-align: left"><code>&lt;&gt;</code></td></tr><tr><td style="text-align: left"><code>&amp;&amp;</code></td><td style="text-align: left"><code>AND</code></td></tr><tr><td style="text-align: left"><code>||</code></td><td style="text-align: left"><code>OR</code></td></tr><tr><td style="text-align: left"><code>!</code></td><td style="text-align: left"><code>NOT</code></td></tr><tr><td style="text-align: left"><code>&gt;=</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&lt;</code></td><td style="text-align: left"><code>&gt;=</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&lt;</code></td></tr><tr><td style="text-align: left"><code>startswith</code></td><td style="text-align: left"><code>STARTS WITH</code></td></tr><tr><td style="text-align: left"><code>endswith</code></td><td style="text-align: left"><code>ENDS WITH</code></td></tr><tr><td style="text-align: left"><code>contains</code></td><td style="text-align: left"><code>CONTAINS</code></td></tr><tr><td style="text-align: left"><code>in</code> / <code>∈</code></td><td style="text-align: left"><code>IN</code></td></tr><tr><td style="text-align: left"><code>isnothing</code></td><td style="text-align: left"><code>IS NULL</code></td></tr><tr><td style="text-align: left"><code>matches</code></td><td style="text-align: left"><code>=~</code> (regex match)</td></tr><tr><td style="text-align: left"><code>exists((p)-[:R]-&gt;(q))</code></td><td style="text-align: left"><code>EXISTS { MATCH ... }</code></td></tr><tr><td style="text-align: left"><code>if ... elseif ... else ... end</code></td><td style="text-align: left"><code>CASE WHEN ... THEN ... ELSE ... END</code></td></tr></table><p>Arithmetic operators (<code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>%</code>, <code>^</code>) are also supported:</p><pre><code class="language-julia hljs">where(p.score * 2 + 10 &gt; $threshold)
-where(p.id % 2 == 0)</code></pre><p>Multi-condition WHERE auto-ANDs:</p><pre><code class="language-julia hljs">where(p.age &gt; 25, p.active == true, startswith(p.name, &quot;A&quot;))
+end</code></pre><h3 id="WHERE-operators"><a class="docs-heading-anchor" href="#WHERE-operators">WHERE operators</a><a id="WHERE-operators-1"></a><a class="docs-heading-anchor-permalink" href="#WHERE-operators" title="Permalink"></a></h3><p>Julia operators are translated to Cypher:</p><table><tr><th style="text-align: left">Julia</th><th style="text-align: left">Cypher</th></tr><tr><td style="text-align: left"><code>==</code></td><td style="text-align: left"><code>=</code></td></tr><tr><td style="text-align: left"><code>!=</code> / <code>≠</code></td><td style="text-align: left"><code>&lt;&gt;</code></td></tr><tr><td style="text-align: left"><code>&amp;&amp;</code></td><td style="text-align: left"><code>AND</code></td></tr><tr><td style="text-align: left"><code>||</code></td><td style="text-align: left"><code>OR</code></td></tr><tr><td style="text-align: left"><code>!</code></td><td style="text-align: left"><code>NOT</code></td></tr><tr><td style="text-align: left"><code>&gt;=</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&lt;</code></td><td style="text-align: left"><code>&gt;=</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&lt;</code></td></tr><tr><td style="text-align: left"><code>startswith</code></td><td style="text-align: left"><code>STARTS WITH</code></td></tr><tr><td style="text-align: left"><code>endswith</code></td><td style="text-align: left"><code>ENDS WITH</code></td></tr><tr><td style="text-align: left"><code>contains</code></td><td style="text-align: left"><code>CONTAINS</code></td></tr><tr><td style="text-align: left"><code>in</code> / <code>∈</code></td><td style="text-align: left"><code>IN</code></td></tr><tr><td style="text-align: left"><code>isnothing</code></td><td style="text-align: left"><code>IS NULL</code></td></tr><tr><td style="text-align: left"><code>matches</code></td><td style="text-align: left"><code>=~</code> (regex match)</td></tr><tr><td style="text-align: left"><code>exists((p)-[:R]-&gt;(q))</code></td><td style="text-align: left"><code>EXISTS { MATCH ... }</code></td></tr><tr><td style="text-align: left"><code>if ... elseif ... else ... end</code></td><td style="text-align: left"><code>CASE WHEN ... THEN ... ELSE ... END</code></td></tr></table><p>Arithmetic operators (<code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>%</code>, <code>^</code>) and unary negation (<code>-expr</code>) are also supported:</p><pre><code class="language-julia hljs">where(p.score * 2 + 10 &gt; $threshold)
+where(p.id % 2 == 0)
+where(-p.balance &lt; $limit)</code></pre><p>Julia&#39;s <code>nothing</code> maps to Cypher <code>null</code>, and vector literals <code>[a, b, c]</code> map to Cypher list literals:</p><pre><code class="language-julia hljs">where(p.email != nothing)          # p.email &lt;&gt; null
+ret(coalesce(p.name, &quot;unknown&quot;))   # any Cypher function works</code></pre><p><strong>Generic function pass-through:</strong> Any function call not specifically listed above is passed through verbatim as a Cypher function call. This means you can use Cypher built-in functions directly — <code>coalesce(a, b)</code>, <code>toUpper(x)</code>, <code>toInteger(x)</code>, <code>trim(s)</code>, <code>size(list)</code>, <code>elementId(n)</code>, <code>labels(n)</code>, <code>type(r)</code>, <code>keys(n)</code>, <code>properties(n)</code>, <code>toString(x)</code>, <code>point(...)</code>, <code>distance(...)</code>, <code>abs(x)</code>, <code>round(x)</code>, <code>substring(s, start, len)</code>, etc.</p><p>Multi-condition WHERE auto-ANDs:</p><pre><code class="language-julia hljs">where(p.age &gt; 25, p.active == true, startswith(p.name, &quot;A&quot;))
 # → WHERE p.age &gt; 25 AND p.active = true AND p.name STARTS WITH &#39;A&#39;</code></pre><h3 id="Parameter-capture"><a class="docs-heading-anchor" href="#Parameter-capture">Parameter capture</a><a id="Parameter-capture-1"></a><a class="docs-heading-anchor-permalink" href="#Parameter-capture" title="Permalink"></a></h3><p><code>$var</code> references capture Julia variables as safe Cypher parameters:</p><pre><code class="language-julia hljs">min_age = 25
 result = @cypher conn begin
     p::Person
@@ -198,9 +204,9 @@ result = @cypher conn begin
     ret(p)
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 3 rows
  Fields: p
-  [1] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Carol&quot;, age: 35}),)
-  [2] (p = Node(:Person {name: &quot;Alice&quot;, last_seen: &quot;2025-02-15&quot;, age: 31, email: &quot;alice@latest.com&quot;}),)
-  [3] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Bob&quot;, age: 25}),)
+  [1] (p = Node(:Person {name: &quot;Alice&quot;, last_seen: &quot;2025-02-15&quot;, age: 31, email: &quot;alice@latest.com&quot;}),)
+  [2] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Bob&quot;, age: 25}),)
+  [3] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Carol&quot;, age: 35}),)
 </code></pre><h3 id="Step-9:-Batch-operations-with-UNWIND"><a class="docs-heading-anchor" href="#Step-9:-Batch-operations-with-UNWIND">Step 9: Batch operations with UNWIND</a><a id="Step-9:-Batch-operations-with-UNWIND-1"></a><a class="docs-heading-anchor-permalink" href="#Step-9:-Batch-operations-with-UNWIND" title="Permalink"></a></h3><pre><code class="language-julia hljs">people = [
     Dict(&quot;name&quot; =&gt; &quot;Dave&quot;, &quot;age&quot; =&gt; 28),
     Dict(&quot;name&quot; =&gt; &quot;Eve&quot;, &quot;age&quot; =&gt; 22),
@@ -256,11 +262,11 @@ result = @cypher conn begin
     ret(p)
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 5 rows
  Fields: p
-  [1] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Carol&quot;, age: 35}),)
-  [2] (p = Node(:Person {name: &quot;Dave&quot;, age: 28}),)
-  [3] (p = Node(:Person {name: &quot;Eve&quot;, age: 22}),)
-  [4] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Alice&quot;, age: 31}),)
-  [5] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Bob&quot;, age: 25}),)
+  [1] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Alice&quot;, age: 31}),)
+  [2] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Bob&quot;, age: 25}),)
+  [3] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Carol&quot;, age: 35}),)
+  [4] (p = Node(:Person {name: &quot;Dave&quot;, age: 28}),)
+  [5] (p = Node(:Person {name: &quot;Eve&quot;, age: 22}),)
 </code></pre><h3 id="Step-13:-Complex-WHERE-conditions"><a class="docs-heading-anchor" href="#Step-13:-Complex-WHERE-conditions">Step 13: Complex WHERE conditions</a><a id="Step-13:-Complex-WHERE-conditions-1"></a><a class="docs-heading-anchor-permalink" href="#Step-13:-Complex-WHERE-conditions" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = @cypher conn begin
     p::Person
     where(startswith(p.name, &quot;A&quot;), !(isnothing(p.email)), p.age &gt;= 18)
@@ -275,41 +281,41 @@ result = @cypher conn begin
     ret(p)
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 3 rows
  Fields: p
-  [1] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Carol&quot;, age: 35}),)
-  [2] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Alice&quot;, age: 31}),)
-  [3] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Bob&quot;, age: 25}),)
+  [1] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Alice&quot;, age: 31}),)
+  [2] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Bob&quot;, age: 25}),)
+  [3] (p = Node(:Person {last_seen: &quot;2025-02-15&quot;, name: &quot;Carol&quot;, age: 35}),)
 </code></pre><h3 id="Step-14:-Aggregation-functions"><a class="docs-heading-anchor" href="#Step-14:-Aggregation-functions">Step 14: Aggregation functions</a><a id="Step-14:-Aggregation-functions-1"></a><a class="docs-heading-anchor-permalink" href="#Step-14:-Aggregation-functions" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = @cypher conn begin
     p::Person
     ret(count(p) =&gt; :total, avg(p.age) =&gt; :avg_age, collect(p.name) =&gt; :names)
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 1 row
  Fields: total, avg_age, names
-  [1] (total = 5, avg_age = 28.2, names = [&quot;Carol&quot;, &quot;Dave&quot;, &quot;Eve&quot;, &quot;Alice&quot;, &quot;Bob&quot;])
+  [1] (total = 5, avg_age = 28.2, names = [&quot;Alice&quot;, &quot;Bob&quot;, &quot;Carol&quot;, &quot;Dave&quot;, &quot;Eve&quot;])
 </code></pre><h3 id="Step-15:-Pattern-direction-variants"><a class="docs-heading-anchor" href="#Step-15:-Pattern-direction-variants">Step 15: Pattern direction variants</a><a id="Step-15:-Pattern-direction-variants-1"></a><a class="docs-heading-anchor-permalink" href="#Step-15:-Pattern-direction-variants" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Left-directed chain
 result = @cypher conn begin
     a::Person &lt;&lt; r::KNOWS &lt;&lt; b::Person
     ret(a.name =&gt; :target, b.name =&gt; :source, r.since =&gt; :since)
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 3 fields, 3 rows
  Fields: target, source, since
-  [1] (target = &quot;Carol&quot;, source = &quot;Alice&quot;, since = 2022)
-  [2] (target = &quot;Carol&quot;, source = &quot;Bob&quot;, since = 2023)
-  [3] (target = &quot;Bob&quot;, source = &quot;Alice&quot;, since = 2020)
+  [1] (target = &quot;Bob&quot;, source = &quot;Alice&quot;, since = 2020)
+  [2] (target = &quot;Carol&quot;, source = &quot;Alice&quot;, since = 2022)
+  [3] (target = &quot;Carol&quot;, source = &quot;Bob&quot;, since = 2023)
 </code></pre><pre><code class="language-julia hljs"># Arrow syntax (left arrow)
 result = @cypher conn begin
     (a:Person)&lt;-[r:KNOWS]-(b:Person)
     ret(a.name =&gt; :target, b.name =&gt; :source)
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 2 fields, 3 rows
  Fields: target, source
-  [1] (target = &quot;Carol&quot;, source = &quot;Alice&quot;)
-  [2] (target = &quot;Carol&quot;, source = &quot;Bob&quot;)
-  [3] (target = &quot;Bob&quot;, source = &quot;Alice&quot;)
+  [1] (target = &quot;Bob&quot;, source = &quot;Alice&quot;)
+  [2] (target = &quot;Carol&quot;, source = &quot;Alice&quot;)
+  [3] (target = &quot;Carol&quot;, source = &quot;Bob&quot;)
 </code></pre><pre><code class="language-julia hljs"># Variable-length — find paths of 1 to 3 hops
 result = @cypher conn begin
     (a:Person)-[r:KNOWS, 1, 3]-&gt;(b:Person)
     ret(a.name =&gt; :start, b.name =&gt; :reachable)
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 2 fields, 4 rows
  Fields: start, reachable
-  [1] (start = &quot;Alice&quot;, reachable = &quot;Bob&quot;)
-  [2] (start = &quot;Alice&quot;, reachable = &quot;Carol&quot;)
+  [1] (start = &quot;Alice&quot;, reachable = &quot;Carol&quot;)
+  [2] (start = &quot;Alice&quot;, reachable = &quot;Bob&quot;)
   [3] (start = &quot;Alice&quot;, reachable = &quot;Carol&quot;)
   [4] (start = &quot;Bob&quot;, reachable = &quot;Carol&quot;)
 </code></pre><h3 id="Step-16:-Regex-matching"><a class="docs-heading-anchor" href="#Step-16:-Regex-matching">Step 16: Regex matching</a><a id="Step-16:-Regex-matching-1"></a><a class="docs-heading-anchor-permalink" href="#Step-16:-Regex-matching" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = @cypher conn begin
@@ -324,11 +330,11 @@ end</code></pre><pre class="documenter-example-output"><code class="nohighlight 
     ret(p.name =&gt; :name, if p.age &gt; 65; &quot;senior&quot;; elseif p.age &gt; 30; &quot;adult&quot;; else; &quot;young&quot;; end =&gt; :category)
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 2 fields, 5 rows
  Fields: name, category
-  [1] (name = &quot;Carol&quot;, category = &quot;adult&quot;)
-  [2] (name = &quot;Dave&quot;, category = &quot;young&quot;)
-  [3] (name = &quot;Eve&quot;, category = &quot;young&quot;)
-  [4] (name = &quot;Alice&quot;, category = &quot;adult&quot;)
-  [5] (name = &quot;Bob&quot;, category = &quot;young&quot;)
+  [1] (name = &quot;Alice&quot;, category = &quot;adult&quot;)
+  [2] (name = &quot;Bob&quot;, category = &quot;young&quot;)
+  [3] (name = &quot;Carol&quot;, category = &quot;adult&quot;)
+  [4] (name = &quot;Dave&quot;, category = &quot;young&quot;)
+  [5] (name = &quot;Eve&quot;, category = &quot;young&quot;)
 </code></pre><p>Generates:</p><pre><code class="language-cypher hljs">RETURN p.name AS name, CASE WHEN p.age &gt; 65 THEN &#39;senior&#39; WHEN p.age &gt; 30 THEN &#39;adult&#39; ELSE &#39;young&#39; END AS category</code></pre><h3 id="Step-18:-EXISTS-subqueries"><a class="docs-heading-anchor" href="#Step-18:-EXISTS-subqueries">Step 18: EXISTS subqueries</a><a id="Step-18:-EXISTS-subqueries-1"></a><a class="docs-heading-anchor-permalink" href="#Step-18:-EXISTS-subqueries" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = @cypher conn begin
     p::Person
     where(exists((p)-[:KNOWS]-&gt;(:Person)))
@@ -357,8 +363,8 @@ end</code></pre><pre class="documenter-example-output"><code class="nohighlight 
     ret(p.name =&gt; :name)
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 2 rows
  Fields: name
-  [1] (name = &quot;Carol&quot;,)
-  [2] (name = &quot;Alice&quot;,)
+  [1] (name = &quot;Alice&quot;,)
+  [2] (name = &quot;Carol&quot;,)
 </code></pre><pre><code class="language-julia hljs">result = @cypher conn begin
     p::Person
     ret(p.name =&gt; :name)
@@ -367,11 +373,11 @@ end</code></pre><pre class="documenter-example-output"><code class="nohighlight 
     ret(c.name =&gt; :name)
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 6 rows
  Fields: name
-  [1] (name = &quot;Carol&quot;,)
-  [2] (name = &quot;Dave&quot;,)
-  [3] (name = &quot;Eve&quot;,)
-  [4] (name = &quot;Alice&quot;,)
-  [5] (name = &quot;Bob&quot;,)
+  [1] (name = &quot;Alice&quot;,)
+  [2] (name = &quot;Bob&quot;,)
+  [3] (name = &quot;Carol&quot;,)
+  [4] (name = &quot;Dave&quot;,)
+  [5] (name = &quot;Eve&quot;,)
   [6] (name = &quot;Acme Corp&quot;,)
 </code></pre><h3 id="Step-20:-CALL-subqueries"><a class="docs-heading-anchor" href="#Step-20:-CALL-subqueries">Step 20: CALL subqueries</a><a id="Step-20:-CALL-subqueries-1"></a><a class="docs-heading-anchor-permalink" href="#Step-20:-CALL-subqueries" title="Permalink"></a></h3><p>Nest a full sub-query with <code>call()</code>:</p><pre><code class="language-julia hljs">result = @cypher conn begin
     p::Person
@@ -495,33 +501,33 @@ end</code></pre><pre class="documenter-example-output"><code class="nohighlight 
  Fields: hops
 </code></pre><h3 id="Comprehension-form"><a class="docs-heading-anchor" href="#Comprehension-form">Comprehension form</a><a id="Comprehension-form-1"></a><a class="docs-heading-anchor-permalink" href="#Comprehension-form" title="Permalink"></a></h3><p>For simple match-filter-return queries, use Julia&#39;s comprehension syntax:</p><pre><code class="language-julia hljs">result = @cypher conn [p.name for p in Person if p.age &gt; 25]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 3 rows
  Fields: p.name
-  [1] (var&quot;p.name&quot; = &quot;Carol&quot;,)
-  [2] (var&quot;p.name&quot; = &quot;Dave&quot;,)
-  [3] (var&quot;p.name&quot; = &quot;Alice&quot;,)
+  [1] (var&quot;p.name&quot; = &quot;Alice&quot;,)
+  [2] (var&quot;p.name&quot; = &quot;Carol&quot;,)
+  [3] (var&quot;p.name&quot; = &quot;Dave&quot;,)
 </code></pre><pre><code class="language-julia hljs">result = @cypher conn [p for p in Person]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 5 rows
  Fields: p
-  [1] (p = Node(:Person {name: &quot;Carol&quot;, verified: true, last_seen: &quot;2025-02-15&quot;, age: 35}),)
-  [2] (p = Node(:Person {name: &quot;Dave&quot;, age: 28}),)
-  [3] (p = Node(:Person {name: &quot;Eve&quot;, age: 22}),)
-  [4] (p = Node(:Person {name: &quot;Alice&quot;, verified: true, last_seen: &quot;2025-02-15&quot;, age: 31}),)
-  [5] (p = Node(:Person {name: &quot;Bob&quot;, verified: true, last_seen: &quot;2025-02-15&quot;, age: 25}),)
+  [1] (p = Node(:Person {name: &quot;Alice&quot;, verified: true, last_seen: &quot;2025-02-15&quot;, age: 31}),)
+  [2] (p = Node(:Person {name: &quot;Bob&quot;, verified: true, last_seen: &quot;2025-02-15&quot;, age: 25}),)
+  [3] (p = Node(:Person {name: &quot;Carol&quot;, verified: true, last_seen: &quot;2025-02-15&quot;, age: 35}),)
+  [4] (p = Node(:Person {name: &quot;Dave&quot;, age: 28}),)
+  [5] (p = Node(:Person {name: &quot;Eve&quot;, age: 22}),)
 </code></pre><pre><code class="language-julia hljs">result = @cypher conn [(p.name, p.age) for p in Person]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 2 fields, 5 rows
  Fields: p.name, p.age
-  [1] (var&quot;p.name&quot; = &quot;Carol&quot;, var&quot;p.age&quot; = 35)
-  [2] (var&quot;p.name&quot; = &quot;Dave&quot;, var&quot;p.age&quot; = 28)
-  [3] (var&quot;p.name&quot; = &quot;Eve&quot;, var&quot;p.age&quot; = 22)
-  [4] (var&quot;p.name&quot; = &quot;Alice&quot;, var&quot;p.age&quot; = 31)
-  [5] (var&quot;p.name&quot; = &quot;Bob&quot;, var&quot;p.age&quot; = 25)
+  [1] (var&quot;p.name&quot; = &quot;Alice&quot;, var&quot;p.age&quot; = 31)
+  [2] (var&quot;p.name&quot; = &quot;Bob&quot;, var&quot;p.age&quot; = 25)
+  [3] (var&quot;p.name&quot; = &quot;Carol&quot;, var&quot;p.age&quot; = 35)
+  [4] (var&quot;p.name&quot; = &quot;Dave&quot;, var&quot;p.age&quot; = 28)
+  [5] (var&quot;p.name&quot; = &quot;Eve&quot;, var&quot;p.age&quot; = 22)
 </code></pre><pre><code class="language-julia hljs">result = @cypher conn [p.name =&gt; :n for p in Person]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">QueryResult: 1 field, 5 rows
  Fields: n
-  [1] (n = &quot;Carol&quot;,)
-  [2] (n = &quot;Dave&quot;,)
-  [3] (n = &quot;Eve&quot;,)
-  [4] (n = &quot;Alice&quot;,)
-  [5] (n = &quot;Bob&quot;,)
+  [1] (n = &quot;Alice&quot;,)
+  [2] (n = &quot;Bob&quot;,)
+  [3] (n = &quot;Carol&quot;,)
+  [4] (n = &quot;Dave&quot;,)
+  [5] (n = &quot;Eve&quot;,)
 </code></pre><h2 id="Known-limitations"><a class="docs-heading-anchor" href="#Known-limitations">Known limitations</a><a id="Known-limitations-1"></a><a class="docs-heading-anchor-permalink" href="#Known-limitations" title="Permalink"></a></h2><p>These Cypher features are <strong>not supported</strong> by the DSL:</p><ul><li>Inline property patterns in MATCH (<code>{name: $v}</code>) — Julia&#39;s parser cannot parse <code>{…}</code> as an expression; use <code>where()</code> instead</li><li>Legacy <code>shortestPath</code>/<code>allShortestPaths</code> functions — use the modern <code>shortest()</code>, <code>all_shortest()</code> DSL functions instead</li><li>Quantified path patterns (<code>((a)-[r]-&gt;(b)){2,4}</code>) — only quantified relationships (<code>KNOWS{2,5}</code>) are supported</li><li>Match modes (<code>REPEATABLE ELEMENTS</code>, <code>DIFFERENT RELATIONSHIPS</code>) are not yet supported</li><li>Procedure calls via <code>CALL db.xxx()</code> (distinct from CALL subqueries)</li><li>Map projections and list comprehensions in the Cypher sense</li></ul><h2 id="Standalone-mutations"><a class="docs-heading-anchor" href="#Standalone-mutations">Standalone mutations</a><a id="Standalone-mutations-1"></a><a class="docs-heading-anchor-permalink" href="#Standalone-mutations" title="Permalink"></a></h2><p>For common single-entity operations, use the dedicated macros:</p><h3 id="@create-—-create-a-node"><a class="docs-heading-anchor" href="#@create-—-create-a-node"><code>@create</code> — create a node</a><a id="@create-—-create-a-node-1"></a><a class="docs-heading-anchor-permalink" href="#@create-—-create-a-node" title="Permalink"></a></h3><pre><code class="language-julia hljs">node = @create conn Person(name=&quot;Diana&quot;, age=28)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Node(:Person {name: &quot;Diana&quot;, age: 28})</code></pre><p>Validates against the registered <code>Person</code> schema (if present).</p><h3 id="@merge-—-upsert-a-node"><a class="docs-heading-anchor" href="#@merge-—-upsert-a-node"><code>@merge</code> — upsert a node</a><a id="@merge-—-upsert-a-node-1"></a><a class="docs-heading-anchor-permalink" href="#@merge-—-upsert-a-node" title="Permalink"></a></h3><pre><code class="language-julia hljs">node = @merge conn Person(name=&quot;Diana&quot;) on_create(age=28, email=&quot;d@b.com&quot;) on_match(age=29)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Node(:Person {name: &quot;Diana&quot;, age: 29})</code></pre><p>Simple merge without <code>on_create</code>/<code>on_match</code>:</p><pre><code class="language-julia hljs">node = @merge conn Person(name=&quot;Diana&quot;, age=29)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Node(:Person {name: &quot;Diana&quot;, age: 29})</code></pre><h3 id="@relate-—-create-a-relationship"><a class="docs-heading-anchor" href="#@relate-—-create-a-relationship"><code>@relate</code> — create a relationship</a><a id="@relate-—-create-a-relationship-1"></a><a class="docs-heading-anchor-permalink" href="#@relate-—-create-a-relationship" title="Permalink"></a></h3><pre><code class="language-julia hljs">diana = @create conn Person(name=&quot;Diana2&quot;, age=28)
 edgar = @create conn Person(name=&quot;Edgar&quot;, age=32)
 
 rel = @relate conn diana =&gt; KNOWS(since=2024) =&gt; edgar</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Relationship(:KNOWS {since: 2024})</code></pre><pre><code class="language-julia hljs">println(rel.type)
 println(rel[&quot;since&quot;])</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">KNOWS
-2024</code></pre><p>Matches nodes by <code>elementId()</code> and validates against the <code>KNOWS</code> schema (if registered).</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../streaming/">« Streaming</a><a class="docs-footer-nextpage" href="../biomedical_case_study/">Biomedical Case Study »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Tuesday 17 February 2026 15:25">Tuesday 17 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+2024</code></pre><p>Matches nodes by <code>elementId()</code> and validates against the <code>KNOWS</code> schema (if registered).</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../streaming/">« Streaming</a><a class="docs-footer-nextpage" href="../biomedical_case_study/">Biomedical Case Study »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Wednesday 18 February 2026 00:22">Wednesday 18 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

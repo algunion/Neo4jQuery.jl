@@ -40,6 +40,14 @@ result = query(conn,
 first_row = result[1]
 println(&quot;First: &quot;, first_row)
 
+# Range indexing
+subset = result[1:2]
+println(&quot;Subset: &quot;, subset)
+
+# first / last
+println(&quot;First: &quot;, first(result))
+println(&quot;Last: &quot;, last(result))
+
 # Fields
 println(&quot;Fields: &quot;, result.fields)
 
@@ -54,7 +62,11 @@ println(&quot;Names: &quot;, names)
 
 # Standard functions
 println(&quot;Length: &quot;, length(result))
+println(&quot;Size: &quot;, size(result))
 println(&quot;Empty? &quot;, isempty(result))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">First: (name = &quot;Alice&quot;, age = 30)
+Subset: NamedTuple[(name = &quot;Alice&quot;, age = 30), (name = &quot;Alice&quot;, age = 30)]
+First: (name = &quot;Alice&quot;, age = 30)
+Last: (name = &quot;Carol&quot;, age = 35)
 Fields: [&quot;name&quot;, &quot;age&quot;]
 Alice — 30
 Alice — 30
@@ -62,13 +74,15 @@ Bob — 25
 Carol — 35
 Names: [&quot;Alice&quot;, &quot;Alice&quot;, &quot;Bob&quot;, &quot;Carol&quot;]
 Length: 4
+Size: (4,)
 Empty? false</code></pre><h3 id="Counters"><a class="docs-heading-anchor" href="#Counters">Counters</a><a id="Counters-1"></a><a class="docs-heading-anchor-permalink" href="#Counters" title="Permalink"></a></h3><p>When <code>include_counters=true</code>, the result includes a <a href="../../api/#Neo4jQuery.QueryCounters"><code>QueryCounters</code></a> struct:</p><pre><code class="language-julia hljs">result = query(conn, &quot;CREATE (n:Test) RETURN n&quot;; include_counters=true)
 c = result.counters
 println(&quot;Nodes created: &quot;, c.nodes_created)
 println(&quot;Properties set: &quot;, c.properties_set)
 println(&quot;Labels added: &quot;, c.labels_added)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Nodes created: 1
 Properties set: 0
-Labels added: 1</code></pre><p>Available counter fields: <code>nodes_created</code>, <code>nodes_deleted</code>, <code>relationships_created</code>, <code>relationships_deleted</code>, <code>properties_set</code>, <code>labels_added</code>, <code>labels_removed</code>, <code>indexes_added</code>, <code>indexes_removed</code>, <code>constraints_added</code>, <code>constraints_removed</code>, <code>contains_updates</code>, <code>contains_system_updates</code>, <code>system_updates</code>.</p><h3 id="Bookmarks"><a class="docs-heading-anchor" href="#Bookmarks">Bookmarks</a><a id="Bookmarks-1"></a><a class="docs-heading-anchor-permalink" href="#Bookmarks" title="Permalink"></a></h3><p>Every result carries <code>bookmarks</code> for causal consistency across queries:</p><pre><code class="language-julia hljs">r1 = query(conn, &quot;CREATE (n:Test)&quot;)
+Labels added: 1</code></pre><p>Available counter fields: <code>nodes_created</code>, <code>nodes_deleted</code>, <code>relationships_created</code>, <code>relationships_deleted</code>, <code>properties_set</code>, <code>labels_added</code>, <code>labels_removed</code>, <code>indexes_added</code>, <code>indexes_removed</code>, <code>constraints_added</code>, <code>constraints_removed</code>, <code>contains_updates</code>, <code>contains_system_updates</code>, <code>system_updates</code>.</p><h3 id="Query-plans"><a class="docs-heading-anchor" href="#Query-plans">Query plans</a><a id="Query-plans-1"></a><a class="docs-heading-anchor-permalink" href="#Query-plans" title="Permalink"></a></h3><p>The result also carries optional query plan data:</p><pre><code class="language-julia hljs">result.query_plan           # Union{JSON.Object, Nothing} — EXPLAIN plan
+result.profiled_query_plan  # Union{JSON.Object, Nothing} — PROFILE plan</code></pre><h3 id="Bookmarks"><a class="docs-heading-anchor" href="#Bookmarks">Bookmarks</a><a id="Bookmarks-1"></a><a class="docs-heading-anchor-permalink" href="#Bookmarks" title="Permalink"></a></h3><p>Every result carries <code>bookmarks</code> for causal consistency across queries:</p><pre><code class="language-julia hljs">r1 = query(conn, &quot;CREATE (n:Test)&quot;)
 r2 = query(conn, &quot;MATCH (n:Test) RETURN n&quot;; bookmarks=r1.bookmarks)
 println(&quot;Bookmarks: &quot;, length(r2.bookmarks), &quot; bookmark(s)&quot;)
 println(&quot;Test nodes found: &quot;, length(r2))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Bookmarks: 1 bookmark(s)
@@ -76,9 +90,11 @@ Test nodes found: 2</code></pre><h3 id="Notifications"><a class="docs-heading-an
 for n in result.notifications
     println(n.severity, &quot;: &quot;, n.title)
     println(&quot;  &quot;, n.description)
+    n.position !== nothing &amp;&amp; println(&quot;  Position: &quot;, n.position)
 end
 println(&quot;Notifications: &quot;, length(result.notifications))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">INFORMATION: This query builds a cartesian product between disconnected patterns.
   If a part of a query contains multiple disconnected patterns, this will build a cartesian product between all those parts. This may produce a large amount of data and slow down query processing. While occasionally intended, it may often be possible to reformulate the query that avoids the use of this cross product, perhaps by adding a relationship between the different parts or by using OPTIONAL MATCH (identifier is: (b))
+  Position: JSON.Object{String, Any}(&quot;offset&quot; =&gt; 0, &quot;line&quot; =&gt; 1, &quot;column&quot; =&gt; 1)
 Notifications: 1</code></pre><h2 id="Graph-types"><a class="docs-heading-anchor" href="#Graph-types">Graph types</a><a id="Graph-types-1"></a><a class="docs-heading-anchor-permalink" href="#Graph-types" title="Permalink"></a></h2><p>Nodes, relationships, and paths are returned as rich Julia structs:</p><pre><code class="language-julia hljs">result = query(conn, &quot;MATCH (p:Person)-[r:KNOWS]-&gt;(q) RETURN p, r, q&quot;)
 row = result[1]
 
@@ -86,12 +102,16 @@ node = row.p
 println(&quot;Node: &quot;, node)
 println(&quot;Labels: &quot;, node.labels)
 println(&quot;Name: &quot;, node[&quot;name&quot;])
+println(&quot;Has name? &quot;, haskey(node, &quot;name&quot;))
+println(&quot;City: &quot;, get(node, &quot;city&quot;, &quot;unknown&quot;))
 
 rel = row.r
 println(&quot;Rel type: &quot;, rel.type)
 println(&quot;Since: &quot;, rel[&quot;since&quot;])</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Node: Node(:Person {name: &quot;Alice&quot;, city: &quot;Berlin&quot;, age: 30})
 Labels: [&quot;Person&quot;]
 Name: Alice
+Has name? true
+City: Berlin
 Rel type: KNOWS
 Since: 2024</code></pre><h3 id="Paths"><a class="docs-heading-anchor" href="#Paths">Paths</a><a id="Paths-1"></a><a class="docs-heading-anchor-permalink" href="#Paths" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = query(conn, &quot;&quot;&quot;
     MATCH path = (a:Person)-[:KNOWS*1..3]-&gt;(b:Person)
@@ -108,4 +128,4 @@ println(&quot;SRID: &quot;, pt.srid)
 println(&quot;Coordinates: &quot;, pt.coordinates)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">SRID: 4326
 Coordinates: [-0.1, 51.5]</code></pre><h3 id="Duration-values"><a class="docs-heading-anchor" href="#Duration-values">Duration values</a><a id="Duration-values-1"></a><a class="docs-heading-anchor-permalink" href="#Duration-values" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = query(conn, &quot;RETURN duration(&#39;P1Y2M3DT4H&#39;) AS d&quot;)
 d = result[1].d
-println(&quot;Duration: &quot;, d.value)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Duration: P1Y2M3DT4H</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../connections/">« Connections</a><a class="docs-footer-nextpage" href="../transactions/">Transactions »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Tuesday 17 February 2026 15:25">Tuesday 17 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+println(&quot;Duration: &quot;, d.value)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Duration: P1Y2M3DT4H</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../connections/">« Connections</a><a class="docs-footer-nextpage" href="../transactions/">Transactions »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Wednesday 18 February 2026 00:22">Wednesday 18 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
