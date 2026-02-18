@@ -46,8 +46,9 @@ Expected variables (with default prefix `NEO4J_`):
 | `NEO4J_DATABASE` | Database name                                     |
 
 The URI scheme is parsed to determine HTTP vs HTTPS:
-- `neo4j+s://`, `bolt+s://`, `https://` → HTTPS
-- `neo4j://`, `bolt://`, `http://` → HTTP
+
+- `neo4j+s://`, `neo4j+ssc://`, `bolt+s://`, `bolt+ssc://` → HTTPS
+- `neo4j://`, `bolt://` → HTTP
 
 ## Authentication
 
@@ -75,7 +76,7 @@ You can load `.env` files independently:
 vars = dotenv(".env"; overwrite=false)
 ```
 
-Supports comments (`#`), quoted values, and `export` prefix. Existing `ENV` keys are preserved unless `overwrite=true`.
+Supports comments (`#`), quoted values. Existing `ENV` keys are preserved unless `overwrite=true`.
 
 ### `.env` file format
 
@@ -89,9 +90,6 @@ NEO4J_DATABASE=neo4j
 # Quoted values (quotes are stripped)
 NEO4J_PASSWORD="my secret password"
 NEO4J_PASSWORD='my secret password'
-
-# "export" prefix is supported
-export NEO4J_URI=neo4j://localhost
 ```
 
 ## URI scheme mapping
@@ -102,12 +100,12 @@ The scheme in `NEO4J_URI` is mapped to HTTP or HTTPS:
 | :------------- | :------- | :----------- |
 | `neo4j://`     | HTTP     | 7474         |
 | `bolt://`      | HTTP     | 7474         |
-| `http://`      | HTTP     | 7474         |
 | `neo4j+s://`   | HTTPS    | 443          |
 | `neo4j+ssc://` | HTTPS    | 443          |
 | `bolt+s://`    | HTTPS    | 443          |
 | `bolt+ssc://`  | HTTPS    | 443          |
-| `https://`     | HTTPS    | 443          |
+
+An explicit port in the URI overrides the default, e.g. `neo4j+s://host:7688` → HTTPS on port 7688.
 
 ## Custom authentication
 

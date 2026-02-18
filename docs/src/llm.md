@@ -87,8 +87,10 @@ Reads from env vars (optionally from `.env` file first):
 | `NEO4J_DATABASE` | Database name (default: `"neo4j"`)   |
 
 URI scheme mapping:
-- `neo4j+s://`, `neo4j+ssc://`, `bolt+s://`, `bolt+ssc://`, `https://` → HTTPS, port 443
-- `neo4j://`, `bolt://`, `http://` → HTTP, port 7474
+- `neo4j+s://`, `neo4j+ssc://`, `bolt+s://`, `bolt+ssc://` → HTTPS, port 443
+- `neo4j://`, `bolt://` → HTTP, port 7474
+
+An explicit port in the URI overrides the default: `neo4j+s://host:7688` → HTTPS, port 7688.
 
 ### `dotenv`
 
@@ -96,7 +98,7 @@ URI scheme mapping:
 vars = dotenv(".env"; overwrite=false)
 ```
 
-Loads `.env` into `ENV`. Supports `#` comments, quoted values, `export` prefix. Existing keys preserved unless `overwrite=true`.
+Loads `.env` into `ENV`. Supports `#` comments, quoted values. Existing keys preserved unless `overwrite=true`.
 
 ---
 
@@ -157,6 +159,10 @@ q = cypher"MATCH (p:Person {name: $name, age: $age}) RETURN p"
 result = query(conn, q)
 ```
 
+### Parameter mismatch warnings
+
+When using raw string queries with a `parameters` dict, the client warns if parameter keys don't appear as `$key` placeholders in the query string. This catches accidental Julia string interpolation (where `$var` was expanded before reaching Neo4j).
+
 ### Query options
 
 | Keyword             | Type                    | Default    | Description                  |
@@ -178,8 +184,12 @@ result = query(conn, "MATCH (p:Person) RETURN p.name AS name, p.age AS age")
 
 result[1]           # first row NamedTuple: (name = "Alice", age = 30)
 result[1].name      # "Alice"
+result[1:3]         # range indexing → Vector{NamedTuple}
+first(result)       # first row
+last(result)        # last row
 result.fields       # ["name", "age"]
 length(result)      # number of rows
+size(result)        # (nrows,)
 isempty(result)     # Bool
 
 for row in result
@@ -199,6 +209,13 @@ c = result.counters
 #         constraints_added, constraints_removed, contains_updates, contains_system_updates, system_updates
 ```
 
+### Query plans
+
+```julia
+result.query_plan           # Union{JSON.Object, Nothing} — EXPLAIN plan
+result.profiled_query_plan  # Union{JSON.Object, Nothing} — PROFILE plan
+```
+
 ### Bookmarks
 
 ```julia
@@ -211,6 +228,7 @@ r2 = query(conn, "MATCH (n:Test) RETURN n"; bookmarks=r1.bookmarks)
 ```julia
 result.notifications  # Vector{Notification} — performance warnings, deprecation hints
 # Each has: code, title, description, severity, category, position
+# position is Union{JSON.Object, Nothing} — byte offset in query string
 ```
 
 ---
@@ -225,6 +243,9 @@ node.labels             # Vector{String}
 node.properties         # JSON.Object{String,Any}
 node["name"]            # property access (indexing)
 node.name               # property access (dot syntax)
+haskey(node, "name")    # Bool — check if property exists
+get(node, "name", "")   # property with default fallback
+propertynames(node)     # all field + property names as symbols
 ```
 
 ### Relationship
@@ -236,6 +257,9 @@ rel.end_node_element_id       # String
 rel.type                      # String (e.g. "KNOWS")
 rel["since"]                  # property access
 rel.since                     # dot syntax
+haskey(rel, "since")          # Bool
+get(rel, "since", 0)          # with default
+propertynames(rel)            # all field + property names
 ```
 
 ### Path
@@ -301,8 +325,10 @@ end  # auto-commits; auto-rolls-back on exception
 ### Transaction state
 
 ```julia
-tx.committed     # Bool
-tx.rolled_back   # Bool
+tx.committed        # Bool
+tx.rolled_back      # Bool
+tx.expires          # String — server-reported expiry timestamp
+tx.cluster_affinity # Union{String, Nothing} — Aura cluster routing
 # Using committed/rolled-back tx throws an error
 ```
 
@@ -319,7 +345,7 @@ for row in sr
 end
 ```
 
-Same keyword arguments as `query`. Also works inside transactions:
+Same keyword arguments as `query` (including `include_counters`). Also works inside transactions:
 
 ```julia
 tx = begin_transaction(conn)
@@ -335,6 +361,8 @@ import Neo4jQuery: summary   # required — Base.summary takes precedence
 s = summary(sr)
 # s.bookmarks, s.counters, s.notifications, s.transaction, s.query_plan, s.profiled_query_plan
 ```
+
+`StreamingResult` implements `Base.iterate`, `Base.IteratorSize` (→ `SizeUnknown`), and `Base.eltype` (→ `NamedTuple`).
 
 ---
 
@@ -463,6 +491,44 @@ p::Person >> r::KNOWS >> q::Person          # (p:Person)-[r:KNOWS]->(q:Person)
 p::Person >> KNOWS >> q::Person             # (p:Person)-[:KNOWS]->(q:Person)
 p::Person << r::KNOWS << q::Person          # (p:Person)<-[r:KNOWS]-(q:Person)
 a::A >> R1 >> b::B >> R2 >> c::C            # (a:A)-[:R1]->(b:B)-[:R2]->(c:C)
+
+# Mixed-direction chains (>> forward, << backward)
+dr::Drug >> ::TREATS >> d::Disease << ::ASSOCIATED_WITH << g::Gene
+# → (dr:Drug)-[:TREATS]->(d:Disease)<-[:ASSOCIATED_WITH]-(g:Gene)
+```
+
+#### Quantified relationships (variable-length, Neo4j 5+)
+
+```julia
+a::Person >> KNOWS{2,5} >> b::Person        # (a:Person)-[:KNOWS]->{2,5}(b:Person)
+a::Person >> KNOWS{3} >> b::Person           # exact: (a:Person)-[:KNOWS]->{3}(b:Person)
+a::Person >> KNOWS{1,nothing} >> b::Person   # one-or-more: ->+
+a::Person >> KNOWS{0,nothing} >> b::Person   # zero-or-more: ->*
+a::Person >> r::KNOWS{1,5} >> b::Person      # named: (a)-[r:KNOWS]->{1,5}(b)
+b::Person << KNOWS{2,4} << a::Person         # left-directed with quantifier
+```
+
+#### Path variables
+
+```julia
+p = a::Person >> KNOWS >> b::Person          # MATCH p = (a:Person)-[:KNOWS]->(b:Person)
+p = a::Person >> KNOWS{1,nothing} >> b::Person  # path with quantifier
+```
+
+Use `length(p)`, `nodes(p)`, `relationships(p)` on path variables.
+
+#### Shortest path selectors (Neo4j 5+)
+
+```julia
+shortest(1, a::Person >> KNOWS{1,nothing} >> b::Person)        # SHORTEST 1
+all_shortest(a::Person >> KNOWS{1,nothing} >> b::Person)        # ALL SHORTEST
+shortest_groups(2, a::Person >> KNOWS{1,nothing} >> b::Person)  # SHORTEST 2 GROUPS
+any_paths(a::Person >> KNOWS{1,nothing} >> b::Person)           # ANY
+any_paths(3, a::Person >> KNOWS{1,nothing} >> b::Person)        # ANY 3
+
+# With path variable:
+p = shortest(1, a::Person >> KNOWS{1,nothing} >> b::Person)
+p = all_shortest(a::Person >> KNOWS{1,nothing} >> b::Person)
 ```
 
 #### Arrow syntax (also supported)
@@ -482,38 +548,42 @@ Bare patterns in a block are implicit MATCH clauses.
 
 ### Clause Functions
 
-| DSL                                                  | Cypher                                   |
-| ---------------------------------------------------- | ---------------------------------------- |
-| `where(cond1, cond2)`                                | `WHERE cond1 AND cond2`                  |
-| `ret(expr => :alias, ...)`                           | `RETURN expr AS alias, ...`              |
-| `returning(expr => :alias)`                          | `RETURN expr AS alias` (synonym)         |
-| `ret(distinct, expr)`                                | `RETURN DISTINCT expr`                   |
-| `order(expr, :desc)`                                 | `ORDER BY expr DESC`                     |
-| `take(n)` / `skip(n)`                                | `LIMIT n` / `SKIP n`                     |
-| `match(p1, p2)`                                      | `MATCH p1, p2`                           |
-| `optional(pattern)`                                  | `OPTIONAL MATCH pattern`                 |
-| `create(pattern)`                                    | `CREATE pattern`                         |
-| `merge(pattern)`                                     | `MERGE pattern`                          |
-| `with(expr => :alias, ...)`                          | `WITH expr AS alias, ...`                |
-| `unwind($list => :var)`                              | `UNWIND $list AS var`                    |
-| `delete(vars...)`                                    | `DELETE vars`                            |
-| `detach_delete(vars...)`                             | `DETACH DELETE vars`                     |
-| `on_create(p.prop = val)`                            | `ON CREATE SET p.prop = val`             |
-| `on_match(p.prop = val)`                             | `ON MATCH SET p.prop = val`              |
-| `remove(p.prop)`                                     | `REMOVE p.prop`                          |
-| `p.prop = $val` (assignment)                         | `SET p.prop = $val`                      |
-| `union()`                                            | `UNION`                                  |
-| `union_all()`                                        | `UNION ALL`                              |
-| `call(begin ... end)`                                | `CALL { ... }` subquery                  |
-| `load_csv(url => :row)`                              | `LOAD CSV FROM url AS row`               |
-| `load_csv_headers(url => :row)`                      | `LOAD CSV WITH HEADERS FROM url AS row`  |
-| `foreach(var, :in, expr, begin ... end)`             | `FOREACH (var IN expr \| ...)`           |
-| `create_index(:Label, :prop)`                        | `CREATE INDEX FOR (n:Label) ON (n.prop)` |
-| `create_index(:Label, :prop, :name)`                 | named index                              |
-| `drop_index(:name)`                                  | `DROP INDEX name IF EXISTS`              |
-| `create_constraint(:Label, :prop, :unique)`          | uniqueness constraint                    |
-| `create_constraint(:Label, :prop, :not_null, :name)` | NOT NULL constraint (named)              |
-| `drop_constraint(:name)`                             | `DROP CONSTRAINT name IF EXISTS`         |
+| DSL                                                  | Cypher                                                 |
+| ---------------------------------------------------- | ------------------------------------------------------ |
+| `where(cond1, cond2)`                                | `WHERE cond1 AND cond2`                                |
+| `ret(expr => :alias, ...)`                           | `RETURN expr AS alias, ...`                            |
+| `returning(expr => :alias)`                          | `RETURN expr AS alias` (synonym)                       |
+| `ret(distinct, expr)`                                | `RETURN DISTINCT expr`                                 |
+| `ret(*)`                                             | `RETURN *`                                             |
+| `order(expr, :desc)`                                 | `ORDER BY expr DESC`                                   |
+| `take(n)` / `skip(n)`                                | `LIMIT n` / `SKIP n`                                   |
+| `match(p1, p2)`                                      | `MATCH p1, p2`                                         |
+| `optional(pattern)`                                  | `OPTIONAL MATCH pattern`                               |
+| `optional(p1, p2)`                                   | `OPTIONAL MATCH p1, p2` (multi-pattern)                |
+| `create(pattern)`                                    | `CREATE pattern`                                       |
+| `create(p1, p2)`                                     | `CREATE p1, p2` (multi-pattern)                        |
+| `merge(pattern)`                                     | `MERGE pattern`                                        |
+| `with(expr => :alias, ...)`                          | `WITH expr AS alias, ...`                              |
+| `with(distinct, expr => :alias, ...)`                | `WITH DISTINCT expr AS alias, ...`                     |
+| `unwind($list => :var)`                              | `UNWIND $list AS var`                                  |
+| `delete(vars...)`                                    | `DELETE vars`                                          |
+| `detach_delete(vars...)`                             | `DETACH DELETE vars`                                   |
+| `on_create(p.prop = val)`                            | `ON CREATE SET p.prop = val`                           |
+| `on_match(p.prop = val)`                             | `ON MATCH SET p.prop = val`                            |
+| `remove(p.prop)`                                     | `REMOVE p.prop`                                        |
+| `p.prop = $val` (assignment)                         | `SET p.prop = $val`                                    |
+| `union()`                                            | `UNION`                                                |
+| `union_all()`                                        | `UNION ALL`                                            |
+| `call(begin ... end)`                                | `CALL { ... }` subquery                                |
+| `load_csv(url => :row)`                              | `LOAD CSV FROM url AS row`                             |
+| `load_csv_headers(url => :row)`                      | `LOAD CSV WITH HEADERS FROM url AS row`                |
+| `foreach(var, :in, expr, begin ... end)`             | `FOREACH (var IN expr \| ...)`                         |
+| `create_index(:Label, :prop)`                        | `CREATE INDEX FOR (n:Label) ON (n.prop)`               |
+| `create_index(:Label, :prop, :name)`                 | named index                                            |
+| `drop_index(:name)`                                  | `DROP INDEX name IF EXISTS`                            |
+| `create_constraint(:Label, :prop, :unique)`          | uniqueness constraint                                  |
+| `create_constraint(:Label, :prop, :not_null, :name)` | NOT NULL constraint (named) (`:notnull` also accepted) |
+| `drop_constraint(:name)`                             | `DROP CONSTRAINT name IF EXISTS`                       |
 
 ---
 
@@ -522,12 +592,13 @@ Bare patterns in a block are implicit MATCH clauses.
 | Julia                        | Cypher                                |
 | ---------------------------- | ------------------------------------- |
 | `==`                         | `=`                                   |
-| `!=`                         | `<>`                                  |
+| `!=` / `≠`                   | `<>`                                  |
 | `&&`                         | `AND`                                 |
 | `\|\|`                       | `OR`                                  |
 | `!`                          | `NOT`                                 |
 | `>=`, `<=`, `>`, `<`         | same                                  |
 | `+`, `-`, `*`, `/`, `%`, `^` | same (arithmetic)                     |
+| `-expr` (unary)              | `-expr`                               |
 | `startswith(p.name, "A")`    | `p.name STARTS WITH 'A'`              |
 | `endswith(p.name, "e")`      | `p.name ENDS WITH 'e'`                |
 | `contains(p.name, "li")`     | `p.name CONTAINS 'li'`                |
@@ -536,8 +607,12 @@ Bare patterns in a block are implicit MATCH clauses.
 | `matches(p.name, "^A.*")`    | `p.name =~ '^A.*'`                    |
 | `exists((p)-[:R]->(q))`      | `EXISTS { MATCH (p)-[:R]->(q) }`      |
 | `if/elseif/else/end`         | `CASE WHEN ... THEN ... ELSE ... END` |
+| `nothing`                    | `null` literal                        |
+| `[a, b, c]`                  | `[a, b, c]` (Cypher list literal)     |
 
 Multi-condition `where()` auto-ANDs: `where(a, b, c)` → `WHERE a AND b AND c`.
+
+**Generic function pass-through:** Any function call not listed above is passed through verbatim to Cypher. This means you can use any Cypher built-in function directly — `coalesce(a, b)`, `toUpper(x)`, `toInteger(x)`, `trim(s)`, `size(list)`, `id(n)`, `elementId(n)`, `labels(n)`, `type(r)`, `keys(n)`, `properties(n)`, `toString(x)`, `point(...)`, `distance(...)`, `date(...)`, `abs(x)`, `round(x)`, `substring(s, start, len)`, etc.
 
 ---
 
@@ -730,7 +805,9 @@ end
 These Cypher features are **not supported** by the DSL:
 
 - Inline property patterns in MATCH (`{name: $v}`) — Julia's parser cannot parse `{…}`; use `where()` instead
-- `shortestPath` / `allShortestPaths`
+- Legacy `shortestPath` / `allShortestPaths` — use the modern `shortest()`, `all_shortest()` DSL functions instead
+- Quantified path patterns (`((a)-[r]->(b)){2,4}`) — only quantified relationships (`KNOWS{2,5}`) are supported
+- Match modes (`REPEATABLE ELEMENTS`, `DIFFERENT RELATIONSHIPS`) are not yet supported
 - Procedure calls via `CALL db.xxx()` (distinct from CALL subqueries)
 - Map projections and list comprehensions (Cypher sense)
 

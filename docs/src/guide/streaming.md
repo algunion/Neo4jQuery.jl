@@ -152,3 +152,4 @@ A `StreamingResult` tracks its consumption state:
 
 The iterator protocol (`Base.iterate`) is implemented, so streaming results
 work with `for` loops, `collect`, comprehensions, and any iterator combinator.
+`Base.IteratorSize` returns `SizeUnknown()` and `Base.eltype` returns `NamedTuple`.
