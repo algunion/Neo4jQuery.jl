@@ -50,6 +50,15 @@ StreamingResult
 Neo4jQuery.summary
 ```
 
+## Read-Only Guard
+
+```@docs
+ReadOnlyConnection
+read_query
+read_stream
+ReadOnlyViolationError
+```
+
 ## Result Types
 
 ```@docs

@@ -46,6 +46,16 @@ q = cypher"MATCH (p:Person) WHERE p.age > $min_age AND p.city = $city RETURN p"
 result = query(conn, q; access_mode=:read)
 ```
 
+Parameter capture also works inside procedure calls — pass Julia values
+(vectors, integers, …) straight through instead of hand-building a parameter
+dict (shown here without execution, as it requires a vector index):
+
+```julia
+idx = "embeddings"; k = 5; vec = rand(Float64, 384)
+q = cypher"CALL db.index.vector.queryNodes($idx, $k, $vec) YIELD node, score RETURN elementId(node) AS id, score"
+result = query(conn, q)   # idx, k, vec captured as parameters
+```
+
 ### Parameters with raw strings
 
 If you prefer raw strings, pass a `parameters` dict.  Use `\$` to denote Neo4j
