@@ -33,14 +33,19 @@ include("aqua_tests.jl")
 
 # JET is only compatible with Julia 1.12.x — install and run conditionally
 if v"1.12" <= VERSION < v"1.13"
-    try
+    jet_loaded = try
         using Pkg
         Pkg.add("JET")
         using JET
-        include("jet_tests.jl")
+        true
     catch e
         @warn "Skipping JET tests (failed to install or load)" VERSION exception = e
+        false
     end
+    # Outside the try: a JET analysis failure must fail the suite, not be
+    # swallowed as a load-failure warning (TestSetException escaped into the
+    # catch above and silently downgraded the gate).
+    jet_loaded && include("jet_tests.jl")
 else
     @warn "Skipping JET tests (only compatible with Julia 1.12)" VERSION
 end
