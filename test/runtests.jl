@@ -20,6 +20,7 @@ include("live/credentials.jl")
 include("dsl_tests.jl")
 include("cypher_dsl_tests.jl")
 include("readonly_tests.jl")
+include("retry_tests.jl")
 include("typed_datetime_tests.jl")
 
 # Quality assurance and type stability

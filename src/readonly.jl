@@ -93,7 +93,9 @@ end
     read_query(roc, statement; parameters, include_counters, bookmarks, impersonated_user) -> QueryResult
 
 Run a read-only query. Rejects any write statement before contacting the server;
-`access_mode` is always `:read`.
+`access_mode` is always `:read`. Because reads are provably side-effect-free
+(server-enforced, not just client intent), a transient transport failure (e.g.
+a stale pooled connection) is automatically retried once — see [`query`](@ref).
 """
 function read_query(roc::ReadOnlyConnection, statement::AbstractString;
     parameters::Dict{String,<:Any}=Dict{String,Any}(),
@@ -114,7 +116,8 @@ end
 """
     read_stream(roc, statement; parameters, kwargs...) -> StreamingResult
 
-Streaming variant of [`read_query`](@ref); same read-only guarantee.
+Streaming variant of [`read_query`](@ref); same read-only guarantee, including
+the auto-retry of a transient transport failure (see [`stream`](@ref)).
 """
 function read_stream(roc::ReadOnlyConnection, statement::AbstractString;
     parameters::Dict{String,<:Any}=Dict{String,Any}(), kwargs...)
