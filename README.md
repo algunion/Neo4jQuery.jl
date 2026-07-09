@@ -54,6 +54,23 @@ q = cypher"MATCH (p:Person {name: $name}) RETURN p"
 result = query(conn, q)
 ```
 
+### Parameters — prefer `@cypher_str`
+
+`@cypher_str` captures same-named local variables as query parameters, so you
+rarely need to hand-build a `Dict{String,Any}` or escape `$` in a Julia string.
+This applies to procedure calls too — pass Julia values (vectors, integers, …)
+straight through:
+
+```julia
+idx = "embeddings"; k = 5; vec = rand(Float64, 384)
+q = cypher"CALL db.index.vector.queryNodes($idx, $k, $vec) YIELD node, score RETURN elementId(node) AS id, score"
+result = query(conn, q)   # idx, k, vec captured as parameters automatically
+```
+
+If you prefer explicit parameters, `query(conn, statement; parameters=Dict(...))`
+also works — use `{{name}}` placeholders to avoid escaping `$` in the Julia
+string literal.
+
 ## DSL
 
 Neo4jQuery provides a unified `@cypher` macro that compiles Julia expressions into parameterised Cypher at macro-expansion time.
