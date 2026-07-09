@@ -40,7 +40,7 @@ jobs:
           flags: unit,${{ matrix.os }},julia-${{ matrix.version }}
 
   test-live-aura:
-    name: Julia 1.12 - ubuntu-latest - live Aura coverage
+    name: Julia 1.12 - ubuntu-latest - live Aura (test01 read-write)
     runs-on: ubuntu-latest
     concurrency:
       group: neo4j-aura-live
@@ -59,6 +59,19 @@ jobs:
           test -n "$NEO4J_URI" || { echo "Missing secret NEO4J_URI"; exit 1; }
           test -n "$NEO4J_USERNAME" || { echo "Missing secret NEO4J_USERNAME"; exit 1; }
           test -n "$NEO4J_PASSWORD" || { echo "Missing secret NEO4J_PASSWORD"; exit 1; }
+      - name: Write test01 credential file from secrets
+        shell: bash
+        run: |
+          # The live suites gate on credential files, not ENV. Write test01's file
+          # from the Aura secrets so the read-write integration runs in CI. (leny01
+          # read-only self-skips — no file — unless its own secrets are added.)
+          mkdir -p credentials
+          {
+            printf 'NEO4J_URI=%s\n'      "$NEO4J_URI"
+            printf 'NEO4J_USERNAME=%s\n' "$NEO4J_USERNAME"
+            printf 'NEO4J_PASSWORD=%s\n' "$NEO4J_PASSWORD"
+            printf 'NEO4J_DATABASE=%s\n' "$NEO4J_DATABASE"
+          } > credentials/test01-read-write.txt
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1.12'
