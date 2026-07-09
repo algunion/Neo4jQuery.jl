@@ -47,3 +47,16 @@ using Neo4jQuery: ReadOnlyConnection, read_query, read_stream, Neo4jConnection, 
     @test e isa ReadOnlyViolationError
     @test occursin("CREATE", uppercase(e.matched))
 end
+
+@testset "credential file parsing (offline)" begin
+    # _parse_cred_file comes from test/live/credentials.jl (included by runtests.jl)
+    dir = mktempdir()
+    p = joinpath(dir, "cred.txt")
+    write(p, "# a comment\nNEO4J_URI=neo4j+s://abc.databases.neo4j.io\n" *
+             "NEO4J_USERNAME=neo4j\nNEO4J_PASSWORD=\"sekret\"\nNEO4J_DATABASE=neo4j\n")
+    v = _parse_cred_file(p)
+    @test v["NEO4J_URI"] == "neo4j+s://abc.databases.neo4j.io"
+    @test v["NEO4J_USERNAME"] == "neo4j"
+    @test v["NEO4J_PASSWORD"] == "sekret"           # surrounding quotes stripped
+    @test _parse_cred_file(joinpath(dir, "absent.txt")) === nothing
+end

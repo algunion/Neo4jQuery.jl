@@ -13,6 +13,9 @@ using Test
 include("test_utils.jl")
 using .TestGraphUtils
 
+# Live-DB credential loader (parses credentials/*.txt without ambient-ENV shadow)
+include("live/credentials.jl")
+
 # Include DSL tests
 include("dsl_tests.jl")
 include("cypher_dsl_tests.jl")
