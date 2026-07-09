@@ -74,6 +74,10 @@ end
 Execute a Cypher query with streaming enabled.  Returns a `StreamingResult` that
 yields `NamedTuple` rows via iteration.
 
+As with [`query`](@ref), `access_mode=:read` auto-retries a transient transport
+failure once (safe: server-enforced read-only), while the `:write` default
+never retries.
+
 # Example
 ```julia
 for row in stream(conn, "MATCH (n:Person) RETURN n.name AS name")
@@ -89,7 +93,8 @@ function stream(conn::Neo4jConnection, statement::AbstractString;
     impersonated_user::Union{String,Nothing}=nothing)
     body = _build_query_body(statement, parameters;
         access_mode, include_counters, bookmarks, impersonated_user)
-    return _start_stream(_query_url(conn), body, conn.auth, nothing)
+    return _start_stream(_query_url(conn), body, conn.auth, nothing;
+        retryable=(access_mode === :read))
 end
 
 function stream(conn::Neo4jConnection, q::CypherQuery;
@@ -122,7 +127,7 @@ end
 
 # ── Internal setup ───────────────────────────────────────────────────────────
 
-function _start_stream(url, body, auth, cluster_affinity)
+function _start_stream(url, body, auth, cluster_affinity; retryable::Bool=false)
     headers = Pair{String,String}[
         "Content-Type"=>_TYPED_JSON_MEDIA,
         "Accept"=>_TYPED_JSONL_MEDIA,
@@ -133,7 +138,8 @@ function _start_stream(url, body, auth, cluster_affinity)
     end
 
     body_str = JSON.json(body; omit_null=true)
-    resp = HTTP.post(url, headers, body_str; status_exception=false)
+    resp = HTTP.post(url, headers, body_str;
+        status_exception=false, retry_non_idempotent=retryable)
 
     if resp.status == 401
         throw(AuthenticationError("Neo.ClientError.Security.Unauthorized", "HTTP 401"))

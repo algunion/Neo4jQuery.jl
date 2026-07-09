@@ -30,6 +30,26 @@ using Test
     @test _classify_cypher("MATCH (n) CALL { WITH n CREATE (:Y) } RETURN n") === :write
 end
 
+@testset "classifier documented lexical limitations (characterization)" begin
+    # Pin the KNOWN, documented inaccuracies of the lexical classifier (see the
+    # `_classify_cypher` docstring). These are intentional current behavior, not
+    # bugs to fix here — if a future change alters them, the docstring must be
+    # updated in lockstep (this test is what forces that).
+
+    # False positive: a write keyword used as a bare alias is conservatively
+    # over-refused, even though the statement performs no write.
+    @test _classify_cypher("MATCH (n) RETURN n.id AS create") === :write
+    @test _classify_cypher("MATCH (n) RETURN n.id AS set") === :write
+    @test _classify_cypher("MATCH (n) RETURN n.id AS remove") === :write
+    # Control: the `\b` boundary means a longer identifier does NOT trip it.
+    @test _classify_cypher("MATCH (n) RETURN n.id AS created") === :read
+
+    # False negative: a write performed inside a called procedure is not detected
+    # by clause scanning (mitigated by the server-enforced `:read`).
+    @test _classify_cypher(
+        "CALL apoc.create.node(['Person'], {name:'x'}) YIELD node RETURN node") === :read
+end
+
 using Neo4jQuery: ReadOnlyConnection, read_query, read_stream, Neo4jConnection, BasicAuth
 
 @testset "ReadOnlyConnection guard (offline, no network)" begin

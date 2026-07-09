@@ -160,3 +160,30 @@ function _props_str(props::JSON.Object{String,Any})
     end
     return "{" * join(parts, ", ") * "}"
 end
+
+# ── JSON serialization ───────────────────────────────────────────────────────
+# Explicit `JSON.lower` methods declare a stable, documented JSON shape for the
+# graph entity types, so re-serializing query results (e.g. handing a Node to a
+# web response or an LLM tool) does not depend incidentally on JSON.jl's default
+# struct reflection. The shapes below match that former default exactly, so this
+# is non-breaking:
+#   Node         → {"element_id", "labels", "properties"}
+#   Relationship → {"element_id", "start_node_element_id",
+#                   "end_node_element_id", "type", "properties"}
+#   Path         → {"elements": [...]}  (each element a Node/Relationship)
+# `getfield` is used for field access: Node/Relationship override `getproperty`
+# for property (dot) access. The field names below don't currently collide with
+# any property name, but `getfield` keeps this correct regardless.
+JSON.lower(n::Node) = (
+    element_id=getfield(n, :element_id),
+    labels=getfield(n, :labels),
+    properties=getfield(n, :properties),
+)
+JSON.lower(r::Relationship) = (
+    element_id=getfield(r, :element_id),
+    start_node_element_id=getfield(r, :start_node_element_id),
+    end_node_element_id=getfield(r, :end_node_element_id),
+    type=getfield(r, :type),
+    properties=getfield(r, :properties),
+)
+JSON.lower(p::Path) = (elements=getfield(p, :elements),)

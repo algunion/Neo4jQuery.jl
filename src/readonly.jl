@@ -59,9 +59,19 @@ end
     _classify_cypher(statement) -> Symbol
 
 `:write` if `statement` contains any write clause (after stripping comments and
-literals), else `:read`. Conservative / fail-closed. Known gap: writes performed
-inside a called procedure (`CALL some.write.proc()`) are not detected by clause
-scanning.
+literals), else `:read`. Conservative / fail-closed.
+
+Because it scans for keywords lexically (it is not a Cypher parser), it has two
+known, opposite inaccuracies:
+
+- **False negative** — a write performed inside a called procedure
+  (`CALL some.write.proc()`) is not detected by clause scanning. On a
+  [`ReadOnlyConnection`](@ref) this is still rejected by the server-enforced
+  `access_mode=:read`, so read-only safety is preserved.
+- **False positive** — a write keyword used as a bare identifier or alias
+  (e.g. `RETURN n AS create`, `RETURN x AS set`) is misclassified as a write
+  and refused, even though the statement performs no write. This is a
+  conservative over-refusal (a usability cost), not a safety issue.
 """
 function _classify_cypher(statement::AbstractString)::Symbol
     occursin(_WRITE_CLAUSE_RE, _strip_cypher_literals_and_comments(statement)) ? :write : :read
@@ -72,7 +82,14 @@ end
 
 A wrapper permitting only reads. Every statement is classified by
 [`_classify_cypher`](@ref) before any request is built; writes throw
-[`ReadOnlyViolationError`](@ref). `access_mode` is always forced to `:read`.
+[`ReadOnlyViolationError`](@ref). `access_mode` is always forced to `:read`, so
+the Neo4j server independently enforces read-only — the client-side classifier
+is a fail-fast guard, not the sole guarantee.
+
+The classifier is lexical and errs on the side of refusing: a write keyword used
+as a bare alias (e.g. `RETURN n AS create`) is conservatively rejected even
+though it performs no write. See [`_classify_cypher`](@ref) for the full set of
+known lexical inaccuracies.
 """
 struct ReadOnlyConnection
     conn::Neo4jConnection
@@ -93,7 +110,9 @@ end
     read_query(roc, statement; parameters, include_counters, bookmarks, impersonated_user) -> QueryResult
 
 Run a read-only query. Rejects any write statement before contacting the server;
-`access_mode` is always `:read`.
+`access_mode` is always `:read`. Because reads are provably side-effect-free
+(server-enforced, not just client intent), a transient transport failure (e.g.
+a stale pooled connection) is automatically retried once — see [`query`](@ref).
 """
 function read_query(roc::ReadOnlyConnection, statement::AbstractString;
     parameters::Dict{String,<:Any}=Dict{String,Any}(),
@@ -114,7 +133,8 @@ end
 """
     read_stream(roc, statement; parameters, kwargs...) -> StreamingResult
 
-Streaming variant of [`read_query`](@ref); same read-only guarantee.
+Streaming variant of [`read_query`](@ref); same read-only guarantee, including
+the auto-retry of a transient transport failure (see [`stream`](@ref)).
 """
 function read_stream(roc::ReadOnlyConnection, statement::AbstractString;
     parameters::Dict{String,<:Any}=Dict{String,Any}(), kwargs...)

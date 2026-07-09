@@ -4,7 +4,7 @@ const _TYPED_JSON_MEDIA = "application/vnd.neo4j.query.v1.1"
 const _TYPED_JSONL_MEDIA = "application/vnd.neo4j.query.v1.1+jsonl"
 
 """
-    _neo4j_request(url, method, body; auth, extra_headers, cluster_affinity) -> (JSON.Object, HTTP.Response)
+    _neo4j_request(url, method, body; auth, extra_headers, cluster_affinity, retryable) -> (JSON.Object, HTTP.Response)
 
 Central HTTP helper for all Neo4j Query API calls.
 
@@ -12,11 +12,19 @@ Central HTTP helper for all Neo4j Query API calls.
 - Parses the response body via `JSON.parse` into a `JSON.Object{String,Any}`.
 - Checks for HTTP 401 → `AuthenticationError`.
 - Checks for `errors` array in response body → `Neo4jQueryError` / `TransactionExpiredError`.
+- `retryable::Bool=false` — when `true`, a transient transport failure (e.g. an
+  `EOFError`/`IOError` from a stale pooled keep-alive connection) is retried
+  once via HTTP.jl's `retry_non_idempotent`. This is only safe for requests
+  that are provably side-effect-free — i.e. `access_mode=:read` queries, whose
+  read-only-ness is enforced by the server, not just the client. Writes must
+  keep the conservative default (`false`): retrying a non-idempotent POST that
+  already landed server-side could double-apply it.
 """
 function _neo4j_request(url::AbstractString, method::Symbol, body;
     auth::AbstractAuth,
     extra_headers::Vector{Pair{String,String}}=Pair{String,String}[],
-    cluster_affinity::Union{String,Nothing}=nothing)
+    cluster_affinity::Union{String,Nothing}=nothing,
+    retryable::Bool=false)
     headers = Pair{String,String}[
         "Content-Type"=>_TYPED_JSON_MEDIA,
         "Accept"=>_TYPED_JSON_MEDIA,
@@ -33,7 +41,8 @@ function _neo4j_request(url::AbstractString, method::Symbol, body;
         JSON.json(body; omit_null=true)
     end
 
-    resp = HTTP.request(string(method), url, headers, body_str; status_exception=false)
+    resp = HTTP.request(string(method), url, headers, body_str;
+        status_exception=false, retry_non_idempotent=retryable)
 
     # Authentication errors
     if resp.status == 401

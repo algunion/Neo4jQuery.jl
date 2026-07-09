@@ -14,6 +14,10 @@ Execute a Cypher `statement` against the database using an implicit transaction.
 # Keyword Arguments
 - `parameters::Dict{String,Any}=Dict{String,Any}()` — query parameters.
 - `access_mode::Symbol=:write` — `:read` or `:write` for cluster routing.
+  `:read` requests also auto-retry a transient transport failure (e.g. a stale
+  pooled connection) once, since a read is provably side-effect-free
+  (`access_mode=:read` is enforced server-side, not just by client intent).
+  `:write` (the default) never retries, to avoid double-applying a mutation.
 - `include_counters::Bool=false` — whether to request query counters.
 - `bookmarks::Vector{String}=String[]` — bookmarks for causal consistency.
 - `impersonated_user::Union{String,Nothing}=nothing` — run as another user.
@@ -46,7 +50,8 @@ function query(conn::Neo4jConnection, statement::AbstractString;
     body = _build_query_body(statement, parameters;
         access_mode, include_counters, bookmarks, impersonated_user)
 
-    parsed, _ = _neo4j_request(_query_url(conn), :POST, body; auth=conn.auth)
+    parsed, _ = _neo4j_request(_query_url(conn), :POST, body;
+        auth=conn.auth, retryable=(access_mode === :read))
     return _build_result(parsed)
 end
 
