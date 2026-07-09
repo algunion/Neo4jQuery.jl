@@ -131,14 +131,35 @@ function _mat_localtime(v)
     return Dates.Time(s)
 end
 
+"""
+    _normalize_frac_ms(s) -> String
+
+Normalize an ISO-8601 datetime's sub-second fraction to exactly 3 digits
+(milliseconds), inserting `.000` when absent and preserving any trailing
+timezone/offset. Neo4j emits micro/nanosecond precision; Julia `DateTime` and
+TimeZones are millisecond-precision, so sub-millisecond digits are truncated
+(lossy by design). Strings that don't match are returned unchanged.
+"""
+function _normalize_frac_ms(s::AbstractString)
+    m = match(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(.*)$", s)
+    m === nothing && return String(s)
+    base = m.captures[1]
+    frac = m.captures[2]
+    suffix = m.captures[3]
+    ms = frac === nothing ? "000" : rpad(first(frac, 3), 3, '0')
+    return string(base, '.', ms, suffix)
+end
+
 function _mat_offset_datetime(v)
-    s = string(v)
-    # TimeZones.jl can parse ISO-8601 with timezone info
-    return TimeZones.ZonedDateTime(s, TimeZones.dateformat"yyyy-mm-ddTHH:MM:SS.ssszzzzz")
+    # Neo4j OffsetDateTime: yyyy-MM-ddTHH:mm:ss[.f{1,9}]±HH:MM (µs/ns → ms).
+    return TimeZones.ZonedDateTime(_normalize_frac_ms(string(v)),
+        TimeZones.dateformat"yyyy-mm-ddTHH:MM:SS.ssszzzzz")
 end
 
 function _mat_local_datetime(v)
-    return Dates.DateTime(string(v))
+    # Neo4j LocalDateTime: yyyy-MM-ddTHH:mm:ss[.f{1,9}] (µs/ns → ms).
+    return Dates.DateTime(_normalize_frac_ms(string(v)),
+        Dates.dateformat"yyyy-mm-ddTHH:MM:SS.s")
 end
 
 function _mat_duration(v)
