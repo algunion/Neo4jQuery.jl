@@ -1422,8 +1422,11 @@ TEST_KEY4=no_quotes
         @test isempty(result2)
     end
 
+    # ── Live read-only suite: leny01 (self-skips if credentials absent) ──────
+    include("live/readonly_leny01.jl")
+
     # ════════════════════════════════════════════════════════════════════════
-    # Integration tests — live Neo4j Aura instance
+    # Integration tests — live Neo4j (test01, read-write, DISPOSABLE)
     # ════════════════════════════════════════════════════════════════════════
 
     env_file = joinpath(@__DIR__, "..", ".env")
