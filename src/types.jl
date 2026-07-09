@@ -171,8 +171,9 @@ end
 #   Relationship → {"element_id", "start_node_element_id",
 #                   "end_node_element_id", "type", "properties"}
 #   Path         → {"elements": [...]}  (each element a Node/Relationship)
-# `getfield` is used deliberately: Node/Relationship override `getproperty` for
-# property (dot) access, so field access must bypass it.
+# `getfield` is used for field access: Node/Relationship override `getproperty`
+# for property (dot) access. The field names below don't currently collide with
+# any property name, but `getfield` keeps this correct regardless.
 JSON.lower(n::Node) = (
     element_id=getfield(n, :element_id),
     labels=getfield(n, :labels),

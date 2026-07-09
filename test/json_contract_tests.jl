@@ -47,10 +47,19 @@ using Test
         @test parsed["elements"][3]["properties"]["name"] == "Bob"
     end
 
-    @testset "empty properties" begin
+    @testset "empty containers" begin
         n = Node("4:db:9", String[], JSON.parse("{}"))
-        parsed = JSON.parse(JSON.json(n))
-        @test parsed["labels"] == []
-        @test parsed["properties"] == Dict()
+        pn = JSON.parse(JSON.json(n))
+        @test pn["labels"] == []
+        @test pn["properties"] == Dict()
+
+        r = Relationship("5:db:9", "4:db:9", "4:db:10", "REL", JSON.parse("{}"))
+        pr = JSON.parse(JSON.json(r))
+        @test pr["properties"] == Dict()
+        @test pr["type"] == "REL"
+
+        empty_path = Path(Union{Node,Relationship}[])
+        pp = JSON.parse(JSON.json(empty_path))
+        @test pp["elements"] == []
     end
 end
