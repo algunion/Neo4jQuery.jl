@@ -103,3 +103,23 @@ end
         @test_throws Neo4jQueryError query(conn, "RETURN 1 AS x")
     end
 end
+
+# Task 4 (F-02, P14a): the STREAM path used to swallow an HTTP error response into
+# a silent empty iterator — `_read_header!` walked to EOF without a Header event and
+# returned a zero-row StreamingResult, which an LLM consumer reads as "no data" and
+# answers wrong. It must now fail loud: a plain-JSON `errors[]` document → the same
+# Neo4jQueryError the non-streaming path raises; a non-`errors[]` body (proxy HTML or
+# a header-less JSON object) → Neo4jHTTPError carrying the HTTP status + a body snippet.
+@testset "stream fail-loud (F-02)" begin
+    errbody = "{\"errors\":[{\"code\":\"Neo.ClientError.Database.DatabaseNotFound\",\"message\":\"db oops\"}]}"
+    HttpHarness.scripted_server(404, errbody) do conn
+        @test_throws Neo4jQueryError stream(conn, "RETURN 1 AS x")
+    end
+    HttpHarness.scripted_server(502, "<html>nope</html>"; ctype="text/html") do conn
+        @test_throws Neo4jHTTPError stream(conn, "RETURN 1 AS x")
+    end
+    # a well-formed but header-less 202 body must not silently yield zero rows
+    HttpHarness.scripted_server(202, "{\"unexpected\":true}") do conn
+        @test_throws Neo4jHTTPError stream(conn, "RETURN 1 AS x")
+    end
+end

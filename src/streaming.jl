@@ -157,11 +157,20 @@ function _start_stream(url, body, auth, cluster_affinity; retryable::Bool=false)
 end
 
 function _read_header!(sr::StreamingResult)
+    # Collect any non-event lines so a missing-Header failure can quote the body.
+    garbage = String[]
     while !eof(sr._stream)
         line = readline(sr._stream)
         isempty(strip(line)) && continue
-        event = JSON.parse(line)
-        etype = get(event, "\$event", "")
+        # A non-JSON line (e.g. proxy/load-balancer HTML) must not surface as a raw
+        # JSON.parse ArgumentError — buffer it and fall through to the fail-loud EOF.
+        event = try
+            JSON.parse(line)
+        catch
+            push!(garbage, line)
+            continue
+        end
+        etype = event isa JSON.Object{String,Any} ? get(event, "\$event", "") : ""
         if etype == "Header"
             body = event["_body"]
             sr.fields = String[string(f) for f in get(body, "fields", [])]
@@ -170,8 +179,28 @@ function _read_header!(sr::StreamingResult)
             return
         elseif etype == "Error"
             _handle_stream_error(event)
+        elseif event isa JSON.Object{String,Any} && haskey(event, "errors")
+            # Plain-JSON error document: the server refused the request before it
+            # ever streamed (e.g. HTTP 4xx/5xx + {"errors":[…]}). Fail loud instead
+            # of returning a silent empty iterator — an LLM consumer reads zero rows
+            # as "no data" and answers wrong (P14a). Mirror `_handle_stream_error`'s
+            # construction; Task 5 unifies both with the non-streaming classifier.
+            errs = _extract_errors(event)
+            if !isempty(errs)
+                err = first(errs)
+                throw(Neo4jQueryError(string(get(err, "code", "")),
+                    string(get(err, "message", ""))))
+            end
+            push!(garbage, line)
+        else
+            push!(garbage, line)
         end
     end
+    # No Header event ever arrived: this is not an empty result set, it is a broken
+    # or non-streaming response. Fail loud with the HTTP status + a body snippet.
+    throw(Neo4jHTTPError(sr._response.status,
+        "stream ended without a Header event; body: " *
+        first(join(garbage, " "), 300)))
 end
 
 # ── Iteration protocol ──────────────────────────────────────────────────────
