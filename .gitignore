@@ -30,3 +30,7 @@ JuliaLocalPreferences.toml
 # Environment files with secrets
 .env
 .env.*
+
+# Credential files (Neo4j Aura instance logins — never commit)
+/credentials/
+credentials/
