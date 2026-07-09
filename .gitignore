@@ -38,3 +38,6 @@ credentials/
 # Local working notes (not part of the package)
 docs/superpowers/
 qa/
+grounding/
+# Private, local, auto-loaded project handoff for Claude Code (never committed)
+.claude.local.md
