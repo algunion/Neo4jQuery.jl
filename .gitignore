@@ -34,3 +34,6 @@ JuliaLocalPreferences.toml
 # Credential files (Neo4j Aura instance logins — never commit)
 /credentials/
 credentials/
+
+# Local working notes (not part of the package)
+docs/superpowers/
