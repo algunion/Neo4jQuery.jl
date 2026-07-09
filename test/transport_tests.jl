@@ -41,6 +41,34 @@ isdefined(@__MODULE__, :load_readwrite_test01) ||
     end
 end
 
+@testset "Null parameter wire contract — streaming path (F-01/F-26)" begin
+    # Same defect, distinct chokepoint: _start_stream serializes the body itself
+    # (src/streaming.jl), independently of _neo4j_request. Capture the raw request
+    # and assert the Null envelope keeps `_value`.
+    captured = Ref{String}("")
+    server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+        captured[] = String(read(http))
+        HTTP.setstatus(http, 202)
+        HTTP.setheader(http, "Content-Type" => HttpHarness.TYPED_JSONL_MEDIA)
+        HTTP.startwrite(http)
+        # Minimal valid JSONL stream: Header + one Record + Summary
+        write(http,
+            "{\"\$event\":\"Header\",\"_body\":{\"fields\":[\"x\"]}}\n" *
+            "{\"\$event\":\"Record\",\"_body\":[{\"\$type\":\"Null\",\"_value\":null}]}\n" *
+            "{\"\$event\":\"Summary\",\"_body\":{}}\n")
+    end
+    try
+        conn = Neo4jConnection("http://127.0.0.1:$(HTTP.port(server))", "neo4j", BasicAuth("u", "p"))
+        sr = stream(conn, "RETURN \$x AS x"; parameters=Dict{String,Any}("x" => nothing))
+        rows = collect(sr)                              # drain the stream fully
+        @test length(rows) == 1
+        @test rows[1].x === nothing
+        @test occursin("\"_value\":null", captured[])   # ← FAILS with omit_null on the streaming path
+    finally
+        close(server)
+    end
+end
+
 @testset "Null parameter live round-trip (test01, F-01)" begin
     conn = load_readwrite_test01()
     if conn === nothing
