@@ -60,3 +60,13 @@ end
     @test v["NEO4J_PASSWORD"] == "sekret"           # surrounding quotes stripped
     @test _parse_cred_file(joinpath(dir, "absent.txt")) === nothing
 end
+
+@testset "credential loader skips unreachable instance" begin
+    # present-but-unreachable (e.g. a paused Aura instance or a stale secret) →
+    # graceful skip (nothing), not a thrown error. `.invalid` fails DNS instantly.
+    dir = mktempdir()
+    p = joinpath(dir, "dead.txt")
+    write(p, "NEO4J_URI=neo4j+s://nonexistent.invalid\n" *
+             "NEO4J_USERNAME=neo4j\nNEO4J_PASSWORD=x\nNEO4J_DATABASE=neo4j\n")
+    @test _connect_from_cred_file(p) === nothing
+end

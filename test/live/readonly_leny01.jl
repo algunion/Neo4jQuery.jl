@@ -1,7 +1,7 @@
 @testset "leny01 read-only live" begin
     roc = load_readonly_leny01()
     if roc === nothing
-        @warn "Skipping leny01 read-only suite — credentials/leny01-read-only.txt absent"
+        @warn "Skipping leny01 read-only suite — credentials absent or instance unreachable"
     else
         @test roc isa ReadOnlyConnection
 

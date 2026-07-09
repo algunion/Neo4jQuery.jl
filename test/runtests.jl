@@ -1716,6 +1716,6 @@ TEST_KEY4=no_quotes
             end
         end
     else
-        @warn "Skipping test01 integration — credentials/test01-read-write.txt absent"
+        @warn "Skipping test01 integration — credentials absent or instance unreachable"
     end
 end
