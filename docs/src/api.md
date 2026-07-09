@@ -85,6 +85,7 @@ Neo4jError
 AuthenticationError
 Neo4jQueryError
 TransactionExpiredError
+Neo4jHTTPError
 ```
 
 ## DSL — Schema

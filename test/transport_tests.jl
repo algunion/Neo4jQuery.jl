@@ -79,3 +79,27 @@ end
         @test r[1].isnull === true
     end
 end
+
+# Task 3 (F-03): a non-2xx response whose JSON body lacks `errors[]` used to
+# yield a SILENT empty success; a non-JSON body (proxy HTML) surfaced as a raw
+# `ArgumentError` from JSON.parse. Both must now fail loud with `Neo4jHTTPError`,
+# while a body carrying `errors[]` still classifies as a `Neo4jQueryError`
+# regardless of HTTP status (the server rides Cypher errors on 202 + errors[]).
+@testset "HTTP status fail-loud (F-03)" begin
+    # 500 + JSON body without errors[] → must throw, not return empty success
+    HttpHarness.scripted_server(500, "{\"whatever\":true}") do conn
+        @test_throws Neo4jHTTPError query(conn, "RETURN 1 AS x")
+    end
+    # 502 + HTML body → typed error carrying status + snippet, not a raw parse error
+    HttpHarness.scripted_server(502, "<html>Bad Gateway</html>"; ctype="text/html") do conn
+        err = try query(conn, "RETURN 1 AS x"); nothing catch e; e end
+        @test err isa Neo4jHTTPError
+        @test err.status == 502
+        @test occursin("Bad Gateway", err.message)
+    end
+    # errors[] still wins regardless of status (server contract: 202 + errors[])
+    HttpHarness.scripted_server(202,
+        "{\"errors\":[{\"code\":\"Neo.ClientError.Statement.SyntaxError\",\"message\":\"boom\"}]}") do conn
+        @test_throws Neo4jQueryError query(conn, "RETURN 1 AS x")
+    end
+end

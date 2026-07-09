@@ -48,27 +48,47 @@ function _neo4j_request(url::AbstractString, method::Symbol, body;
 
     # Authentication errors
     if resp.status == 401
-        resp_body = _try_parse(resp)
-        errs = _extract_errors(resp_body)
-        if !isempty(errs)
-            throw(AuthenticationError(errs[1]["code"], errs[1]["message"]))
+        resp_body = _parse_body(resp)
+        if resp_body !== nothing
+            errs = _extract_errors(resp_body)
+            if !isempty(errs)
+                throw(AuthenticationError(errs[1]["code"], errs[1]["message"]))
+            end
         end
         throw(AuthenticationError("Neo.ClientError.Security.Unauthorized", "HTTP 401"))
     end
 
-    parsed = _try_parse(resp)
+    # Read the body exactly once: `String(resp.body)` steals the buffer, so we
+    # keep `body_str` for both JSON parsing and the fail-loud diagnostic snippet.
+    # `HTTP.Response.body` is declared `::Any`; narrow to `String` so the typed
+    # `Neo4jHTTPError.message::String` sink stays inference-clean (JET).
+    body_str = String(resp.body)::String
+    parsed = _parse_body_str(body_str)
 
-    # Check for errors in body
-    errs = _extract_errors(parsed)
-    if !isempty(errs)
-        code = string(errs[1]["code"])
-        msg = string(errs[1]["message"])
-        # Detect expired/missing transaction
-        if occursin("was not found", msg) || occursin("timed out", msg)
-            throw(TransactionExpiredError(msg))
+    # Cypher errors ride in the body regardless of HTTP status (e.g. 202 + errors[]).
+    # NOTE: the message-sniffing classification below (TransactionExpiredError vs
+    # Neo4jQueryError) is kept inline verbatim — its extraction is Task 5, not here.
+    if parsed !== nothing
+        errs = _extract_errors(parsed)
+        if !isempty(errs)
+            code = string(errs[1]["code"])
+            msg = string(errs[1]["message"])
+            # Detect expired/missing transaction
+            if occursin("was not found", msg) || occursin("timed out", msg)
+                throw(TransactionExpiredError(msg))
+            end
+            throw(Neo4jQueryError(code, msg))
         end
-        throw(Neo4jQueryError(code, msg))
     end
+
+    # No Neo4j `errors[]` in the body: a non-success status or a non-JSON-object
+    # payload is a transport/proxy failure — fail loud instead of silent-empty.
+    resp.status in (200, 202) ||
+        throw(Neo4jHTTPError(resp.status,
+            "unexpected HTTP status; body: " * first(body_str, 300)))
+    parsed === nothing &&
+        throw(Neo4jHTTPError(resp.status,
+            "response body is not a JSON object: " * first(body_str, 300)))
 
     return (parsed, resp)
 end
@@ -88,14 +108,29 @@ function _neo4j_delete(url::AbstractString;
     if resp.status == 401
         throw(AuthenticationError("Neo.ClientError.Security.Unauthorized", "HTTP 401"))
     end
-    return (_try_parse(resp), resp)
+    return (_parse_body(resp), resp)
 end
 
-function _try_parse(resp::HTTP.Response)
-    body_str = String(resp.body)
-    isempty(body_str) && return JSON.Object{String,Any}()
-    return JSON.parse(body_str)
+"""
+Parse a response-body string as JSON.
+
+Returns an (empty) `JSON.Object{String,Any}` for an empty body, the parsed
+object for a JSON object, and `nothing` for anything else — a non-JSON payload
+(e.g. proxy HTML, which makes `JSON.parse` throw) or a valid-but-non-object JSON
+value. `nothing` is the caller's signal to fail loud with `Neo4jHTTPError`.
+"""
+function _parse_body_str(s::String)::Union{JSON.Object{String,Any},Nothing}
+    isempty(s) && return JSON.Object{String,Any}()
+    try
+        parsed = JSON.parse(s)
+        return parsed isa JSON.Object{String,Any} ? parsed : nothing
+    catch
+        return nothing
+    end
 end
+
+"One-shot wrapper: parse `resp.body` (consumed) as JSON. See `_parse_body_str`."
+_parse_body(resp::HTTP.Response) = _parse_body_str(String(resp.body))
 
 function _extract_errors(parsed)
     haskey(parsed, "errors") || return []

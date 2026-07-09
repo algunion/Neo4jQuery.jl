@@ -61,7 +61,7 @@ export QueryResult, QueryCounters, Notification
 export Node, Relationship, Path, CypherPoint, CypherDuration, CypherVector
 
 # Errors
-export Neo4jError, AuthenticationError, Neo4jQueryError, TransactionExpiredError
+export Neo4jError, AuthenticationError, Neo4jQueryError, TransactionExpiredError, Neo4jHTTPError
 
 # ── DSL API ─────────────────────────────────────────────────────────────────
 

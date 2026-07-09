@@ -1,8 +1,8 @@
 using Neo4jQuery
 using Neo4jQuery: _materialize_typed, to_typed_json, _build_result, _build_query_body,
     _prepare_statement, auth_header, _query_url, _tx_url, _parse_neo4j_uri, _parse_wkt,
-    _to_wkt, _parse_offset, _float_str, _materialize_properties, _try_parse,
-    _extract_errors, _props_str, _mat_map
+    _to_wkt, _parse_offset, _float_str, _materialize_properties, _parse_body,
+    _parse_body_str, _extract_errors, _props_str, _mat_map
 using JSON
 using Dates
 using TimeZones
@@ -1396,7 +1396,7 @@ TEST_KEY4=no_quotes
     end
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Extended coverage: _extract_errors / _try_parse
+    # Extended coverage: _extract_errors / _parse_body
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "_extract_errors" begin
@@ -1417,15 +1417,31 @@ TEST_KEY4=no_quotes
         @test errs[1]["code"] == "err.code"
     end
 
-    @testset "_try_parse" begin
+    @testset "_parse_body / _parse_body_str" begin
+        # Valid JSON object body → JSON.Object
         resp = HTTP.Response(200; body=Vector{UInt8}("{\"key\": \"value\"}"))
-        result = _try_parse(resp)
+        result = _parse_body(resp)
+        @test result isa JSON.Object{String,Any}
         @test result["key"] == "value"
 
-        # Empty body
+        # Empty body → empty JSON.Object (NOT nothing)
         resp2 = HTTP.Response(200; body=UInt8[])
-        result2 = _try_parse(resp2)
+        result2 = _parse_body(resp2)
+        @test result2 isa JSON.Object{String,Any}
         @test isempty(result2)
+
+        # Empty string → empty JSON.Object
+        @test _parse_body_str("") isa JSON.Object{String,Any}
+        @test isempty(_parse_body_str(""))
+
+        # Object string → JSON.Object
+        @test _parse_body_str("{\"a\":1}")["a"] == 1
+
+        # Non-JSON body (proxy HTML makes JSON.parse throw) → nothing, no throw
+        @test _parse_body_str("<html>Bad Gateway</html>") === nothing
+
+        # Valid JSON that is not an object (top-level array) → nothing
+        @test _parse_body_str("[1,2,3]") === nothing
     end
 
     # ── Live read-only suite: leny01 (self-skips if credentials absent) ──────

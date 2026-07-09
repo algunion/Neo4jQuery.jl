@@ -49,3 +49,18 @@ end
 function Base.showerror(io::IO, e::TransactionExpiredError)
     print(io, "TransactionExpiredError: ", e.message)
 end
+
+"""
+    Neo4jHTTPError <: Neo4jError
+
+Raised when the server (or an intermediary such as a proxy/load balancer)
+returns an HTTP failure that carries no Neo4j `errors` array — e.g. a 5xx with
+an HTML body, or an unexpected status with an unparseable payload.
+"""
+struct Neo4jHTTPError <: Neo4jError
+    status::Int
+    message::String
+end
+
+Base.showerror(io::IO, e::Neo4jHTTPError) =
+    print(io, "Neo4jHTTPError (HTTP ", e.status, "): ", e.message)
