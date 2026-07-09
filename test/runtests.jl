@@ -16,6 +16,7 @@ using .TestGraphUtils
 # Include DSL tests
 include("dsl_tests.jl")
 include("cypher_dsl_tests.jl")
+include("readonly_tests.jl")
 
 # Quality assurance and type stability
 include("aqua_tests.jl")

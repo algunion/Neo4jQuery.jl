@@ -18,6 +18,7 @@ include("result.jl")
 include("query.jl")
 include("transactions.jl")
 include("streaming.jl")
+include("readonly.jl")
 include("env.jl")
 
 # ── DSL (depends on query.jl, types.jl) ────────────────────────────────────
