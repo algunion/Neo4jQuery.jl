@@ -1429,17 +1429,20 @@ TEST_KEY4=no_quotes
     # Integration tests — live Neo4j (test01, read-write, DISPOSABLE)
     # ════════════════════════════════════════════════════════════════════════
 
-    env_file = joinpath(@__DIR__, "..", ".env")
-    has_env_file = isfile(env_file)
+    rw_conn = load_readwrite_test01()   # credentials/test01-read-write.txt — DISPOSABLE, never leny01
 
-    required_live_keys = ("NEO4J_URI", "NEO4J_USERNAME", "NEO4J_PASSWORD")
-    has_env_credentials = all(k -> haskey(ENV, k) && !isempty(get(ENV, k, "")), required_live_keys)
+    if rw_conn !== nothing
+        @testset "Integration (live DB: test01)" begin
+            conn = rw_conn
 
-    run_integration = has_env_file || has_env_credentials
-
-    if run_integration
-        @testset "Integration (live DB)" begin
-            conn = has_env_file ? connect_from_env(path=env_file) : connect_from_env()
+            # The legacy live sub-suites (biomedical/DSL/patterns/doc-snippets)
+            # call connect_from_env() themselves; point that at test01 for this
+            # run. leny01 is NEVER reachable via ENV — only via load_readonly_leny01.
+            let v = _parse_cred_file(joinpath(_CRED_DIR, "test01-read-write.txt"))
+                v === nothing || for k in ("NEO4J_URI", "NEO4J_USERNAME", "NEO4J_PASSWORD", "NEO4J_DATABASE")
+                    haskey(v, k) && (ENV[k] = v[k])
+                end
+            end
 
             # ── Purge all data at start ─────────────────────────────────────
             @testset "Purge" begin
@@ -1701,6 +1704,6 @@ TEST_KEY4=no_quotes
             end
         end
     else
-        @warn "Skipping integration tests — provide .env or set NEO4J_URI/NEO4J_USERNAME/NEO4J_PASSWORD in ENV" env_file
+        @warn "Skipping test01 integration — credentials/test01-read-write.txt absent"
     end
 end
