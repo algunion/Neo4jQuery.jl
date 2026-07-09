@@ -13,6 +13,9 @@ using Test
 include("test_utils.jl")
 using .TestGraphUtils
 
+# Scripted local-HTTP harness for transport regression tests (Tasks 2–8)
+include("http_harness.jl")
+
 # Live-DB credential loader (parses credentials/*.txt without ambient-ENV shadow)
 include("live/credentials.jl")
 
