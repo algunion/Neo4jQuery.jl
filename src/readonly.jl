@@ -66,3 +66,58 @@ scanning.
 function _classify_cypher(statement::AbstractString)::Symbol
     occursin(_WRITE_CLAUSE_RE, _strip_cypher_literals_and_comments(statement)) ? :write : :read
 end
+
+"""
+    ReadOnlyConnection(conn::Neo4jConnection)
+
+A wrapper permitting only reads. Every statement is classified by
+[`_classify_cypher`](@ref) before any request is built; writes throw
+[`ReadOnlyViolationError`](@ref). `access_mode` is always forced to `:read`.
+"""
+struct ReadOnlyConnection
+    conn::Neo4jConnection
+end
+
+Base.show(io::IO, roc::ReadOnlyConnection) =
+    print(io, "ReadOnlyConnection(", roc.conn.base_url, "/db/", roc.conn.database, ")")
+
+function _assert_read(statement::AbstractString)
+    if _classify_cypher(statement) === :write
+        m = match(_WRITE_CLAUSE_RE, _strip_cypher_literals_and_comments(statement))
+        throw(ReadOnlyViolationError(String(statement), m === nothing ? "" : String(m.match)))
+    end
+    return nothing
+end
+
+"""
+    read_query(roc, statement; parameters, include_counters, bookmarks, impersonated_user) -> QueryResult
+
+Run a read-only query. Rejects any write statement before contacting the server;
+`access_mode` is always `:read`.
+"""
+function read_query(roc::ReadOnlyConnection, statement::AbstractString;
+    parameters::Dict{String,<:Any}=Dict{String,Any}(),
+    include_counters::Bool=false,
+    bookmarks::Vector{String}=String[],
+    impersonated_user::Union{String,Nothing}=nothing)
+    _assert_read(statement)
+    return query(roc.conn, statement; parameters, access_mode=:read,
+        include_counters, bookmarks, impersonated_user)
+end
+
+function read_query(roc::ReadOnlyConnection, q::CypherQuery;
+    parameters::Dict{String,<:Any}=Dict{String,Any}(), kwargs...)
+    _assert_read(q.statement)
+    return read_query(roc, q.statement; parameters=merge(q.parameters, parameters), kwargs...)
+end
+
+"""
+    read_stream(roc, statement; parameters, kwargs...) -> StreamingResult
+
+Streaming variant of [`read_query`](@ref); same read-only guarantee.
+"""
+function read_stream(roc::ReadOnlyConnection, statement::AbstractString;
+    parameters::Dict{String,<:Any}=Dict{String,Any}(), kwargs...)
+    _assert_read(statement)
+    return stream(roc.conn, statement; parameters, access_mode=:read, kwargs...)
+end

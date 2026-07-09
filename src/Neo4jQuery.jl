@@ -45,6 +45,9 @@ export AbstractAuth, BasicAuth, BearerAuth
 # Query
 export query, @cypher_str, CypherQuery
 
+# Read-only guard
+export ReadOnlyConnection, read_query, read_stream, ReadOnlyViolationError
+
 # Transactions
 export Transaction, begin_transaction, commit!, rollback!, transaction
 

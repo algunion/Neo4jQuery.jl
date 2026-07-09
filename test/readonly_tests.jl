@@ -29,3 +29,21 @@ using Test
     @test _classify_cypher("LOAD CSV FROM 'f.csv' AS row CREATE (:X)") === :write
     @test _classify_cypher("MATCH (n) CALL { WITH n CREATE (:Y) } RETURN n") === :write
 end
+
+using Neo4jQuery: ReadOnlyConnection, read_query, read_stream, Neo4jConnection, BasicAuth
+
+@testset "ReadOnlyConnection guard (offline, no network)" begin
+    # TEST-NET-1 (RFC 5737): writes are rejected pre-flight, so it is never dialed.
+    roc = ReadOnlyConnection(Neo4jConnection("http://192.0.2.1:7474", "neo4j", BasicAuth("x", "y")))
+    @test_throws ReadOnlyViolationError read_query(roc, "MATCH (n) DETACH DELETE n")
+    @test_throws ReadOnlyViolationError read_query(roc, "CREATE (n:X)")
+    @test_throws ReadOnlyViolationError read_query(roc, "MATCH (n) SET n.p = 1")
+    @test_throws ReadOnlyViolationError read_stream(roc, "MERGE (n:X {id:1})")
+    e = try
+        read_query(roc, "CREATE (n)")
+    catch err
+        err
+    end
+    @test e isa ReadOnlyViolationError
+    @test occursin("CREATE", uppercase(e.matched))
+end
