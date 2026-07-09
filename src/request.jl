@@ -35,10 +35,12 @@ function _neo4j_request(url::AbstractString, method::Symbol, body;
         push!(headers, "neo4j-cluster-affinity" => cluster_affinity)
     end
 
-    body_str = if body === nothing || body === Dict()
+    body_str = if body === nothing || isempty(body)
         ""
     else
-        JSON.json(body; omit_null=true)
+        # NOTE: no omit_null — the Typed JSON Null envelope is {"$type":"Null","_value":null}
+        # and the server rejects an envelope missing `_value` (Neo.ClientError.Request.Invalid).
+        JSON.json(body)
     end
 
     resp = HTTP.request(string(method), url, headers, body_str;

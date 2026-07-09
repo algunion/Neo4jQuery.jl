@@ -137,7 +137,9 @@ function _start_stream(url, body, auth, cluster_affinity; retryable::Bool=false)
         push!(headers, "neo4j-cluster-affinity" => cluster_affinity)
     end
 
-    body_str = JSON.json(body; omit_null=true)
+    # NOTE: no omit_null — a Null parameter must serialize as {"$type":"Null","_value":null};
+    # the server rejects an envelope missing `_value` (Neo.ClientError.Request.Invalid).
+    body_str = JSON.json(body)
     resp = HTTP.post(url, headers, body_str;
         status_exception=false, retry_non_idempotent=retryable)
 
