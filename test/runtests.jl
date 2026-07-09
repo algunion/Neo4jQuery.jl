@@ -1444,6 +1444,18 @@ TEST_KEY4=no_quotes
                 end
             end
 
+            # SAFETY: refuse the destructive suite against a populated GraphRAG
+            # graph. test01 is an empty scratch DB; leny01 carries the
+            # __Entity__/__Community__ signature labels. Abort before any mutation
+            # if the target is misconfigured (e.g. a CI secret pointing at leny01).
+            let labels = Set(r.label for r in query(conn,
+                    "CALL db.labels() YIELD label RETURN label"; access_mode=:read))
+                ("__Entity__" in labels && "__Community__" in labels) && error(
+                    "Refusing read-write suite: target has GraphRAG labels " *
+                    "(__Entity__/__Community__) — looks like leny01, not test01. " *
+                    "Aborting before any mutation.")
+            end
+
             # ── Purge all data at start ─────────────────────────────────────
             @testset "Purge" begin
                 counts = purge_db!(conn; verify=true)
