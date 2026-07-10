@@ -94,6 +94,72 @@ end
           CypherTime(Time(9), TimeZones.FixedTimeZone("+01:00"))
 end
 
+# Task 12 (F-06): named-timezone ZonedDateTime. The server emits the REAL wire shape
+# "2024-01-15T10:30:00+01:00[Europe/Paris]" ($type "ZonedDateTime", confirmed live L3).
+# Pre-fix this materialized as a raw String (the dispatch had no ZonedDateTime entry so it
+# fell through to `return value` — hidden behind F-13's silent unknown-type passthrough),
+# and the write path always emitted an OffsetDateTime envelope, dropping the zone name.
+# The read path splits the `[zone]` suffix, validates the IANA name, and re-anchors the
+# instant onto the NAMED zone via `astimezone`; the write path keeps named zones as a
+# ZonedDateTime envelope and fixed offsets as OffsetDateTime (byte-stable with 0.3.x).
+# Julia's ZonedDateTime wraps a millisecond-resolution DateTime, so server µs/ns fractions
+# are truncated to ms — pinned below, never silently rounded.
+@testset "ZonedDateTime named zone (F-06)" begin
+    mz(s) = _materialize_typed(JSON.Object{String,Any}("\$type" => "ZonedDateTime", "_value" => s))
+
+    zd = mz("2024-01-15T10:30:00+01:00[Europe/Paris]")
+    @test zd isa ZonedDateTime                                    # RED pre-fix: raw String
+    @test TimeZones.timezone(zd) == tz"Europe/Paris"              # the NAMED zone …
+    @test !(TimeZones.timezone(zd) isa TimeZones.FixedTimeZone)   # … a VariableTimeZone, not UTC+01:00
+    @test zd == ZonedDateTime(2024, 1, 15, 10, 30, tz"Europe/Paris")  # same instant
+
+    # write path: a named zone must keep its name on the wire (RED pre-fix: OffsetDateTime).
+    out = to_typed_json(ZonedDateTime(2024, 1, 15, 10, 30, tz"Europe/Paris"))
+    @test out["\$type"] == "ZonedDateTime"
+    @test out["_value"] == "2024-01-15T10:30:00+01:00[Europe/Paris]"   # no double-bracket
+
+    # a fixed-offset ZonedDateTime stays an OffsetDateTime envelope (byte-stable with 0.3.x).
+    fx = to_typed_json(ZonedDateTime(2024, 1, 15, 10, 30, tz"UTC+02:00"))
+    @test fx["\$type"] == "OffsetDateTime"
+    @test fx["_value"] == "2024-01-15T10:30:00+02:00"
+
+    # full read→write round-trip is byte-identical to the server's wire form.
+    @test to_typed_json(zd)["_value"] == "2024-01-15T10:30:00+01:00[Europe/Paris]"
+
+    # millisecond fraction survives both directions (server sends .123, we keep it).
+    ms = mz("2024-01-15T10:30:00.123+01:00[Europe/Paris]")
+    @test ms == ZonedDateTime(2024, 1, 15, 10, 30, 0, 123, tz"Europe/Paris")
+    @test to_typed_json(ms)["_value"] == "2024-01-15T10:30:00.123+01:00[Europe/Paris]"
+
+    # sub-millisecond (µs/ns) fraction: Julia ZonedDateTime is ms-resolution, so the
+    # server's ns are TRUNCATED to ms (.123456789 → .123). Pinned, not silently rounded.
+    ns = mz("2024-01-15T10:30:00.123456789+01:00[Europe/Paris]")
+    @test ns == ZonedDateTime(2024, 1, 15, 10, 30, 0, 123, tz"Europe/Paris")
+
+    # DST edge: an instant just after the Europe/Paris spring-forward (CEST, +02:00)
+    # round-trips byte-perfectly and keeps the named zone.
+    dst = mz("2024-03-31T03:00:00+02:00[Europe/Paris]")
+    @test TimeZones.timezone(dst) == tz"Europe/Paris"
+    @test to_typed_json(dst)["_value"] == "2024-03-31T03:00:00+02:00[Europe/Paris]"
+
+    # unknown IANA zone → actionable error naming the zone and the offending value.
+    @test_throws ErrorException mz("2024-01-15T10:30:00+01:00[Mars/Olympus]")
+    err = try
+        mz("2024-01-15T10:30:00+01:00[Mars/Olympus]")
+    catch e
+        sprint(showerror, e)
+    end
+    @test occursin("Unknown IANA timezone", err)
+    @test occursin("Mars/Olympus", err)
+
+    # offset-only payload inside a ZonedDateTime envelope (no [zone]) falls through to the
+    # OffsetDateTime parse — a fixed-offset ZonedDateTime, not an error, not a raw String.
+    off = mz("2024-01-15T10:30:00+01:00")
+    @test off isa ZonedDateTime
+    @test TimeZones.timezone(off) == TimeZones.FixedTimeZone("+01:00")
+    @test off == ZonedDateTime(2024, 1, 15, 10, 30, tz"UTC+01:00")
+end
+
 # Live-gated (test01): the server itself must agree the round-tripped parameter
 # equals the same localdatetime literal — the on-the-wire F1 losslessness check.
 # Skips cleanly when no credentials/ dir is present (loader returns `nothing`).
@@ -104,6 +170,21 @@ end
     else
         r = query(conn, "RETURN \$d = localdatetime('2024-01-01T12:00:00.123') AS eq";
             parameters=Dict("d" => DateTime(2024, 1, 1, 12, 0, 0, 123)), access_mode=:read)
+        @test r[1].eq === true
+    end
+end
+
+# Live-gated (test01, F-06): the server must agree the round-tripped named-zone
+# ZonedDateTime parameter equals the same `datetime('…[Europe/Paris]')` literal — the
+# on-the-wire proof that the `[zone]` suffix survives write → server → equality.
+@testset "ZonedDateTime named-zone live round-trip (test01, F-06)" begin
+    conn = load_readwrite_test01()
+    if conn === nothing
+        @warn "test01 unreachable — skipping live ZonedDateTime named-zone round-trip test"
+    else
+        z = ZonedDateTime(2024, 1, 15, 10, 30, tz"Europe/Paris")
+        r = query(conn, "RETURN \$z = datetime('2024-01-15T10:30:00[Europe/Paris]') AS eq";
+            parameters=Dict("z" => z), access_mode=:read)
         @test r[1].eq === true
     end
 end

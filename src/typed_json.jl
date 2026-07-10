@@ -53,6 +53,7 @@ function _materialize_dispatch(type::AbstractString, value)
     type == "Time" && return _mat_time(value)
     type == "LocalTime" && return _mat_localtime(value)
     type == "OffsetDateTime" && return _mat_offset_datetime(value)
+    type == "ZonedDateTime" && return _mat_zoned_datetime(value)
     type == "LocalDateTime" && return _mat_local_datetime(value)
     type == "Duration" && return _mat_duration(value)
     type == "Point" && return _mat_point(value)
@@ -169,6 +170,37 @@ function _mat_offset_datetime(v)
     # Neo4j OffsetDateTime: yyyy-MM-ddTHH:mm:ss[.f{1,9}]±HH:MM (µs/ns → ms).
     return TimeZones.ZonedDateTime(_normalize_frac_ms(string(v)),
         TimeZones.dateformat"yyyy-mm-ddTHH:MM:SS.ssszzzzz")
+end
+
+"""
+    _mat_zoned_datetime(v) -> TimeZones.ZonedDateTime
+
+Materialise a Neo4j `ZonedDateTime`, whose wire form carries a named IANA zone in a
+trailing bracket: `yyyy-MM-ddTHH:mm:ss[.f{1,9}]±HH:MM[Area/City]` (e.g.
+`2024-01-15T10:30:00+01:00[Europe/Paris]` — F-06). We parse the offset-bearing prefix into
+a fixed-offset instant, then `astimezone` it onto the *named* zone so `timezone(result)`
+is the DST-aware `VariableTimeZone`, not the bare offset. The IANA name is validated via
+`TimeZones.Class(:ALL)` (accepts FIXED/STANDARD/LEGACY zones); an unknown name raises a
+loud, actionable error naming the zone and the offending value instead of silently
+degrading. A payload with no `[...]` suffix (a bare offset) falls through to
+[`_mat_offset_datetime`](@ref). Sub-millisecond fractions (µs/ns) are truncated to
+milliseconds by [`_normalize_frac_ms`](@ref): Julia's `ZonedDateTime` wraps a
+ms-resolution `DateTime`, so ns cannot be represented (lossy by design, symmetric with
+`_mat_offset_datetime`).
+"""
+function _mat_zoned_datetime(v)
+    s = string(v)
+    m = match(r"^(.*)\[([^\]]+)\]$", s)
+    m === nothing && return _mat_offset_datetime(s)  # bare offset in a ZonedDateTime envelope
+    fixed = TimeZones.ZonedDateTime(_normalize_frac_ms(m.captures[1]),
+        TimeZones.dateformat"yyyy-mm-ddTHH:MM:SS.ssszzzzz")
+    tz = try
+        TimeZones.TimeZone(m.captures[2], TimeZones.Class(:ALL))
+    catch e
+        error("Unknown IANA timezone $(repr(m.captures[2])) in Neo4j ZonedDateTime " *
+              "$(repr(s)): $(sprint(showerror, e))")
+    end
+    return TimeZones.astimezone(fixed, tz)
 end
 
 function _mat_local_datetime(v)
@@ -296,8 +328,24 @@ to_typed_json(v::Dates.Date) = Dict{String,Any}("\$type" => "Date", "_value" => 
 to_typed_json(v::Dates.Time) = Dict{String,Any}("\$type" => "LocalTime", "_value" => string(v))
 to_typed_json(v::Dates.DateTime) = Dict{String,Any}("\$type" => "LocalDateTime", "_value" => Dates.format(v, dateformat"yyyy-mm-ddTHH:MM:SS.sss"))
 
+"""
+    to_typed_json(v::TimeZones.ZonedDateTime)
+
+Serialize a `ZonedDateTime` to its Neo4j Typed JSON envelope. A **named** IANA zone
+(`VariableTimeZone`) lowers to a `ZonedDateTime` envelope whose `_value` carries the
+`±HH:MM[Area/City]` suffix the server expects (e.g.
+`2024-01-15T10:30:00+01:00[Europe/Paris]`), so the zone name survives the round-trip
+(F-06). A **fixed offset** (`FixedTimeZone`) lowers to an `OffsetDateTime` envelope —
+byte-stable with 0.3.x, where every `ZonedDateTime` serialized as a bare offset.
+`string(::ZonedDateTime)` emits the offset form and renders a millisecond fraction only
+when non-zero; Julia's ms resolution means no sub-millisecond digits are ever produced.
+"""
 function to_typed_json(v::TimeZones.ZonedDateTime)
-    Dict{String,Any}("\$type" => "OffsetDateTime", "_value" => string(v))
+    if TimeZones.timezone(v) isa TimeZones.FixedTimeZone
+        return Dict{String,Any}("\$type" => "OffsetDateTime", "_value" => string(v))
+    end
+    return Dict{String,Any}("\$type" => "ZonedDateTime",
+        "_value" => string(string(v), "[", TimeZones.name(TimeZones.timezone(v)), "]"))
 end
 
 """
