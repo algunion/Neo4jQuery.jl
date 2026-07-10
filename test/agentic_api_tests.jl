@@ -4,6 +4,8 @@
 using Neo4jQuery
 using Test
 using HTTP, JSON
+using Base64   # base64encode/base64decode below; runtests.jl imports it, but a standalone
+               # `julia --project=. test/agentic_api_tests.jl` run must import it itself.
 
 isdefined(@__MODULE__, :HttpHarness) ||
     include(joinpath(@__DIR__, "http_harness.jl"))
@@ -851,7 +853,6 @@ end
         @info "create_vector_index live" idxname
     end
 end
-    include(joinpath(@__DIR__, "http_harness.jl"))
 
 @testset "access_mode validation (F-14)" begin
     # 192.0.2.1 is TEST-NET-1 (RFC 5737) — never dialed: validation throws before any
