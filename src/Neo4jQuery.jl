@@ -19,6 +19,7 @@ include("query.jl")
 include("transactions.jl")
 include("streaming.jl")
 include("readonly.jl")
+include("introspect.jl")
 include("env.jl")
 
 # ── DSL (depends on query.jl, types.jl) ────────────────────────────────────
@@ -47,6 +48,9 @@ export query, @cypher_str, CypherQuery
 
 # Read-only guard
 export ReadOnlyConnection, read_query, read_stream, ReadOnlyViolationError
+
+# Introspection (server-truth validation)
+export validate_cypher
 
 # Transactions
 export Transaction, begin_transaction, commit!, rollback!, transaction

@@ -59,6 +59,12 @@ read_stream
 ReadOnlyViolationError
 ```
 
+## Introspection
+
+```@docs
+validate_cypher
+```
+
 ## Result Types
 
 ```@docs
