@@ -111,15 +111,28 @@ end
 # Neo4jQueryError the non-streaming path raises; a non-`errors[]` body (proxy HTML or
 # a header-less JSON object) → Neo4jHTTPError carrying the HTTP status + a body snippet.
 @testset "stream fail-loud (F-02)" begin
+    # Pin exception TYPE and CONTENT (status/code/snippet), same pattern as the
+    # non-stream cases above — a bare @test_throws Type would still pass if the
+    # status were hardcoded wrong, the body snippet dropped, or the error code
+    # misclassified (mutation-checked; evidence in task-4-report.md).
     errbody = "{\"errors\":[{\"code\":\"Neo.ClientError.Database.DatabaseNotFound\",\"message\":\"db oops\"}]}"
     HttpHarness.scripted_server(404, errbody) do conn
-        @test_throws Neo4jQueryError stream(conn, "RETURN 1 AS x")
+        err = try stream(conn, "RETURN 1 AS x"); nothing catch e; e end
+        @test err isa Neo4jQueryError
+        @test err.code == "Neo.ClientError.Database.DatabaseNotFound"
+        @test occursin("db oops", err.message)
     end
     HttpHarness.scripted_server(502, "<html>nope</html>"; ctype="text/html") do conn
-        @test_throws Neo4jHTTPError stream(conn, "RETURN 1 AS x")
+        err = try stream(conn, "RETURN 1 AS x"); nothing catch e; e end
+        @test err isa Neo4jHTTPError
+        @test err.status == 502
+        @test occursin("nope", err.message)          # snippet carries the garbage body
     end
     # a well-formed but header-less 202 body must not silently yield zero rows
     HttpHarness.scripted_server(202, "{\"unexpected\":true}") do conn
-        @test_throws Neo4jHTTPError stream(conn, "RETURN 1 AS x")
+        err = try stream(conn, "RETURN 1 AS x"); nothing catch e; e end
+        @test err isa Neo4jHTTPError
+        @test err.status == 202
+        @test occursin("unexpected", err.message)    # snippet non-empty (garbage line)
     end
 end
