@@ -26,6 +26,7 @@ include("readonly_tests.jl")
 include("retry_tests.jl")
 include("transport_tests.jl")
 include("agentic_api_tests.jl")
+include("typed_roundtrip_tests.jl")
 include("json_contract_tests.jl")
 include("typed_datetime_tests.jl")
 
@@ -200,7 +201,7 @@ end
         @test to_typed_json("hello") == JSON.Object("\$type" => "String", "_value" => "hello")
         @test to_typed_json(Dates.Date(2024, 1, 15)) == JSON.Object("\$type" => "Date", "_value" => "2024-01-15")
         @test to_typed_json(Dates.Time(12, 30)) == JSON.Object("\$type" => "LocalTime", "_value" => "12:30:00")
-        @test to_typed_json(Dates.DateTime(2024, 1, 15, 12, 30)) == JSON.Object("\$type" => "LocalDateTime", "_value" => "2024-01-15T12:30:00")
+        @test to_typed_json(Dates.DateTime(2024, 1, 15, 12, 30)) == JSON.Object("\$type" => "LocalDateTime", "_value" => "2024-01-15T12:30:00.000")
 
         # List
         lst = to_typed_json([1, 2, 3])
@@ -483,9 +484,12 @@ end
         @test result == "raw_data"
     end
 
-    @testset "_materialize_typed: Unknown type passthrough" begin
-        result = _materialize_typed(JSON.Object("\$type" => "FutureType", "_value" => "some_data"))
-        @test result == "some_data"
+    @testset "_materialize_typed: unknown type fails loud (F-13)" begin
+        # An unknown $type raises, it does NOT silently return its raw _value — that passthrough
+        # hid F-06 (a ZonedDateTime that surfaced as a raw String). The documented "Unsupported"
+        # escape hatch stays a passthrough (asserted in the testset above).
+        @test_throws ErrorException _materialize_typed(
+            JSON.Object("\$type" => "FutureType", "_value" => "some_data"))
     end
 
     @testset "_materialize_typed: plain dict recursion" begin
@@ -537,19 +541,22 @@ end
         @test_throws ErrorException _parse_offset("no-offset-here")
     end
 
-    # ── Zoned Time materialization (was previously broken) ──────────────
-    @testset "_materialize_typed: Time (zoned)" begin
+    # ── Zoned Time materialization → typed CypherTime (F-12) ────────────
+    @testset "_materialize_typed: Time (zoned) → CypherTime" begin
         result = _materialize_typed(JSON.Object("\$type" => "Time", "_value" => "12:50:35.556+01:00"))
+        @test result isa CypherTime          # Task 11: was an anonymous NamedTuple
         @test result.time == Dates.Time(12, 50, 35, 556)
         @test result.timezone == TimeZones.FixedTimeZone("+01:00")
 
         # UTC variant
         result_utc = _materialize_typed(JSON.Object("\$type" => "Time", "_value" => "00:00:00Z"))
+        @test result_utc isa CypherTime
         @test result_utc.time == Dates.Time(0, 0, 0)
         @test result_utc.timezone == TimeZones.FixedTimeZone("UTC")
 
         # Negative offset
         result_neg = _materialize_typed(JSON.Object("\$type" => "Time", "_value" => "23:59:59.999-05:00"))
+        @test result_neg isa CypherTime
         @test result_neg.time == Dates.Time(23, 59, 59, 999)
         @test result_neg.timezone == TimeZones.FixedTimeZone("-05:00")
     end
