@@ -68,7 +68,7 @@ validate_node_properties, validate_rel_properties
 
 ## Connection
 
-### `connect`
+### `connect(host, database; kwargs...)`
 
 ```julia
 conn = connect("localhost", "neo4j"; port=7474, auth=BasicAuth("neo4j", "password"), scheme="http")
@@ -84,7 +84,7 @@ conn = connect("localhost", "neo4j"; port=7474, auth=BasicAuth("neo4j", "passwor
 
 Hits `GET /` discovery endpoint on construction; throws on failure.
 
-### `connect_from_env`
+### `connect_from_env(; path, prefix)`
 
 ```julia
 conn = connect_from_env(; path=".env", prefix="NEO4J_")
@@ -105,7 +105,7 @@ URI scheme mapping:
 
 An explicit port in the URI overrides the default: `neo4j+s://host:7688` → HTTPS, port 7688.
 
-### `dotenv`
+### `dotenv(path; overwrite)`
 
 ```julia
 vars = dotenv(".env"; overwrite=false)
@@ -128,7 +128,7 @@ Custom auth: subtype `AbstractAuth`, implement `auth_header(::YourAuth) -> Pair{
 struct ApiKeyAuth <: Neo4jQuery.AbstractAuth
     key::String
 end
-Neo4jQuery.auth_header(a::ApiKeyAuth) = "ApiKey $(a.key)"
+Neo4jQuery.auth_header(a::ApiKeyAuth) = "Authorization" => "ApiKey $(a.key)"
 ```
 
 ---
@@ -481,7 +481,7 @@ RETURN elementId(node) AS id, labels(node) AS labels, properties(node) AS proper
 
 > **Deprecation:** Neo4j 2026.04 deprecates `db.index.vector.queryNodes` in favour of the Cypher-25 `SEARCH` clause. The helper will migrate to `SEARCH` transparently; the signature above is the stable contract.
 
-### `create_vector_index`
+### `create_vector_index(conn, name, label, property; dimensions)`
 
 ```julia
 create_vector_index(conn, name, label, property;
@@ -500,7 +500,7 @@ create_vector_index(conn, "chunk_vec", "Chunk", "embedding"; dimensions=384, sim
 
 ## DSL — Schema System
 
-### `@node`
+### `@node Label begin ... end`
 
 ```julia
 @node Person begin
@@ -512,7 +512,7 @@ end
 
 Creates a `NodeSchema` constant and registers it globally. Label-only: `@node Marker`.
 
-### `@rel`
+### `@rel TYPE begin ... end`
 
 ```julia
 @rel KNOWS begin

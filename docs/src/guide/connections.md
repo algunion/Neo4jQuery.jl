@@ -6,7 +6,7 @@ Neo4jQuery connects to Neo4j over HTTP using the **Query API v2**.
 using Neo4jQuery
 ```
 
-## `connect`
+## Connecting with `connect`
 
 ```julia
 conn = connect(host, database;
@@ -50,7 +50,7 @@ A timed-out request is **not** retried, even for a read: the underlying HTTP lay
 !!! note "Client vs. server timeouts"
     These are **client-side** timeouts — they abort the client's wait, but do not tell Neo4j to stop executing. To bound *server-side* execution, pass `max_execution_time` (seconds) to [`query`](@ref)/[`stream`](@ref)/[`read_query`](@ref)/[`read_stream`](@ref)/[`begin_transaction`](@ref): the database itself aborts a pathological query after that budget and returns a Cypher error (**requires Neo4j 2026.04+**; older servers reject the unknown field — that server error is the intended signal). Set the client `timeout` **larger** than `max_execution_time` so the server's own abort wins and surfaces as a clean error, instead of the client giving up first and leaving the query running. The companion `tx_metadata` keyword (arbitrary metadata stamped on the transaction, visible in `SHOW TRANSACTIONS` / the query log) rides the same five carriers; `cypher_version` (pin the Cypher language version, `5` or `25`) rides `query`/`stream`/`read_query`/`read_stream` but not `begin_transaction`. On `read_query`/`read_stream` all of these pass through alongside the read-only guard.
 
-## `connect_from_env`
+## Connecting from the environment: `connect_from_env`
 
 Loads connection details from environment variables, optionally reading them from a `.env` file first:
 
@@ -89,7 +89,7 @@ auth = BearerAuth("eyJhbGciOi...")
 println(auth)
 ```
 
-Both produce an `Authorization` header used on every request. Implement `auth_header(::YourAuth)` for custom strategies.
+Both produce the `Authorization` header pair used on every request. Implement `auth_header(::YourAuth)` for custom strategies.
 
 ## The `dotenv` helper
 
@@ -132,14 +132,14 @@ An explicit port in the URI overrides the default, e.g. `neo4j+s://host:7688` �
 
 ## Custom authentication
 
-To implement a custom auth strategy, define a struct that subtypes `AbstractAuth` and implement `auth_header`:
+To implement a custom auth strategy, define a struct that subtypes `AbstractAuth` and implement `auth_header`, returning the full header **pair** (`"Authorization" => value`):
 
 ```julia
 struct ApiKeyAuth <: Neo4jQuery.AbstractAuth
     key::String
 end
 
-Neo4jQuery.auth_header(a::ApiKeyAuth) = "ApiKey $(a.key)"
+Neo4jQuery.auth_header(a::ApiKeyAuth) = "Authorization" => "ApiKey $(a.key)"
 
 conn = connect("localhost", "neo4j"; auth=ApiKeyAuth("my-api-key"))
 ```
@@ -151,7 +151,7 @@ conn = connect("localhost", "neo4j"; auth=ApiKeyAuth("my-api-key"))
 ```julia
 try
     conn = connect("localhost", "neo4j"; auth=BasicAuth("neo4j", "pw"))
-    println("Connected to: ", conn.host)
+    println("Connected to: ", conn.base_url)
 catch e
     println("Connection failed: ", e)
 end
@@ -161,5 +161,5 @@ end
 
 ```julia
 conn = connect("localhost", "neo4j"; auth=BasicAuth("neo4j", "pw"))
-println(conn)  # Neo4jConnection(http://localhost:7474, db=neo4j)
+println(conn)  # Neo4jConnection(http://localhost:7474/db/neo4j)
 ```
