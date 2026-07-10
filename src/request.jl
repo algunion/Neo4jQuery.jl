@@ -4,14 +4,16 @@ const _TYPED_JSON_MEDIA = "application/vnd.neo4j.query.v1.1"
 const _TYPED_JSONL_MEDIA = "application/vnd.neo4j.query.v1.1+jsonl"
 
 """
-    _neo4j_request(url, method, body; auth, extra_headers, cluster_affinity, retryable) -> (JSON.Object, HTTP.Response)
+    _neo4j_request(url, method, body; auth, extra_headers, cluster_affinity, retryable, tx_context) -> (JSON.Object, HTTP.Response)
 
 Central HTTP helper for all Neo4j Query API calls.
 
 - Always uses Typed JSON content types.
 - Parses the response body via `JSON.parse` into a `JSON.Object{String,Any}`.
 - Checks for HTTP 401 → `AuthenticationError`.
-- Checks for `errors` array in response body → `Neo4jQueryError` / `TransactionExpiredError`.
+- Checks for `errors` array in response body → classified by
+  [`_throw_query_error`](@ref) into `Neo4jQueryError` or (only when
+  `tx_context=true`) `TransactionExpiredError`.
 - `retryable::Bool=false` — when `true`, a transient transport failure (e.g. an
   `EOFError`/`IOError` from a stale pooled keep-alive connection) is retried
   once via HTTP.jl's `retry_non_idempotent`. This is only safe for requests
@@ -19,12 +21,16 @@ Central HTTP helper for all Neo4j Query API calls.
   read-only-ness is enforced by the server, not just the client. Writes must
   keep the conservative default (`false`): retrying a non-idempotent POST that
   already landed server-side could double-apply it.
+- `tx_context::Bool=false` — `true` only for requests that reference an
+  EXISTING explicit transaction (`query(tx, …)`, `commit!`). Plain queries and
+  `begin_transaction` keep `false`: they cannot mean "that transaction is gone".
 """
 function _neo4j_request(url::AbstractString, method::Symbol, body;
     auth::AbstractAuth,
     extra_headers::Vector{Pair{String,String}}=Pair{String,String}[],
     cluster_affinity::Union{String,Nothing}=nothing,
-    retryable::Bool=false)
+    retryable::Bool=false,
+    tx_context::Bool=false)
     headers = Pair{String,String}[
         "Content-Type"=>_TYPED_JSON_MEDIA,
         "Accept"=>_TYPED_JSON_MEDIA,
@@ -66,19 +72,9 @@ function _neo4j_request(url::AbstractString, method::Symbol, body;
     parsed = _parse_body_str(body_str)
 
     # Cypher errors ride in the body regardless of HTTP status (e.g. 202 + errors[]).
-    # NOTE: the message-sniffing classification below (TransactionExpiredError vs
-    # Neo4jQueryError) is kept inline verbatim — its extraction is Task 5, not here.
     if parsed !== nothing
         errs = _extract_errors(parsed)
-        if !isempty(errs)
-            code = string(errs[1]["code"])
-            msg = string(errs[1]["message"])
-            # Detect expired/missing transaction
-            if occursin("was not found", msg) || occursin("timed out", msg)
-                throw(TransactionExpiredError(msg))
-            end
-            throw(Neo4jQueryError(code, msg))
-        end
+        isempty(errs) || _throw_query_error(errs; tx_context)
     end
 
     # No Neo4j `errors[]` in the body: a non-success status or a non-JSON-object
@@ -137,4 +133,41 @@ function _extract_errors(parsed)
     errs = parsed["errors"]
     (errs isa AbstractVector && !isempty(errs)) || return []
     return errs
+end
+
+# Neo4j status codes that mean "the server no longer has that transaction"
+# (expired, timed out, or rolled back). Only meaningful for requests that
+# reference an existing transaction.
+const _TX_GONE_CODES = (
+    "Neo.ClientError.Transaction.TransactionNotFound",
+    "Neo.ClientError.Transaction.TransactionTimedOut",
+    "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration",
+)
+
+"""
+    _throw_query_error(errs::AbstractVector; tx_context::Bool=false)
+
+Throw the typed error for a non-empty Neo4j `errors[]` payload (first error
+wins). Shared by the non-streaming (`_neo4j_request`) and streaming
+(`_read_header!` / `_handle_stream_error`) paths.
+
+`tx_context=true` marks requests that reference an existing explicit
+transaction (`query(tx, …)`, `commit!`, `stream(tx, …)`) — only those can mean
+"that transaction is gone", raised as `TransactionExpiredError` when the code
+is in `_TX_GONE_CODES`, or for the documented expired-tx shape
+`Neo.ClientError.Request.Invalid` + "was not found" (the Query API reports
+expiry under that generic code, so a message sniff is unavoidable — but only
+inside tx context). Everything else — including every `tx_context=false`
+error, e.g. a plain-query lock timeout whose message says "timed out" — raises
+`Neo4jQueryError` carrying the server code (F-11).
+"""
+function _throw_query_error(errs::AbstractVector; tx_context::Bool=false)
+    e1 = first(errs)
+    code = string(get(e1, "code", ""))
+    msg = string(get(e1, "message", ""))
+    if tx_context && (code in _TX_GONE_CODES ||
+                      (code == "Neo.ClientError.Request.Invalid" && occursin("was not found", msg)))
+        throw(TransactionExpiredError(msg))
+    end
+    throw(Neo4jQueryError(code, msg))
 end

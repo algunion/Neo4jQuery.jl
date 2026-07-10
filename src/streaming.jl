@@ -23,6 +23,10 @@ mutable struct StreamingResult
     _summary::Union{JSON.Object{String,Any},Nothing}
     _done::Bool
     _transaction_info::Union{JSON.Object{String,Any},Nothing}
+    # true only for stream(tx, …): errors[] / $event:Error payloads may then
+    # classify as TransactionExpiredError (see _throw_query_error). Carried on
+    # the result so iterate-time errors classify the same as pre-Header ones.
+    _tx_context::Bool
 end
 
 function Base.show(io::IO, sr::StreamingResult)
@@ -115,7 +119,7 @@ function stream(tx::Transaction, statement::AbstractString;
     _assert_open(tx)
     body = _build_query_body(statement, parameters; include_counters)
     url = "$(_tx_url(tx.conn))/$(tx.id)"
-    return _start_stream(url, body, tx.conn.auth, tx.cluster_affinity)
+    return _start_stream(url, body, tx.conn.auth, tx.cluster_affinity; tx_context=true)
 end
 
 function stream(tx::Transaction, q::CypherQuery;
@@ -127,7 +131,8 @@ end
 
 # ── Internal setup ───────────────────────────────────────────────────────────
 
-function _start_stream(url, body, auth, cluster_affinity; retryable::Bool=false)
+function _start_stream(url, body, auth, cluster_affinity;
+    retryable::Bool=false, tx_context::Bool=false)
     headers = Pair{String,String}[
         "Content-Type"=>_TYPED_JSON_MEDIA,
         "Accept"=>_TYPED_JSONL_MEDIA,
@@ -149,7 +154,7 @@ function _start_stream(url, body, auth, cluster_affinity; retryable::Bool=false)
 
     # For streaming we read line-by-line from the body
     io = IOBuffer(resp.body)
-    sr = StreamingResult(String[], (), resp, io, nothing, false, nothing)
+    sr = StreamingResult(String[], (), resp, io, nothing, false, nothing, tx_context)
 
     # Read the first event – should be Header
     _read_header!(sr)
@@ -178,19 +183,15 @@ function _read_header!(sr::StreamingResult)
             sr._transaction_info = get(body, "transaction", nothing)
             return
         elseif etype == "Error"
-            _handle_stream_error(event)
+            _handle_stream_error(event, sr._tx_context)
         elseif event isa JSON.Object{String,Any} && haskey(event, "errors")
             # Plain-JSON error document: the server refused the request before it
             # ever streamed (e.g. HTTP 4xx/5xx + {"errors":[…]}). Fail loud instead
             # of returning a silent empty iterator — an LLM consumer reads zero rows
-            # as "no data" and answers wrong (P14a). Mirror `_handle_stream_error`'s
-            # construction; Task 5 unifies both with the non-streaming classifier.
+            # as "no data" and answers wrong (P14a). Same classifier as the
+            # non-streaming path, so stream(tx, …) detects tx expiry too (F-11).
             errs = _extract_errors(event)
-            if !isempty(errs)
-                err = first(errs)
-                throw(Neo4jQueryError(string(get(err, "code", "")),
-                    string(get(err, "message", ""))))
-            end
+            isempty(errs) || _throw_query_error(errs; tx_context=sr._tx_context)
             push!(garbage, line)
         else
             push!(garbage, line)
@@ -226,7 +227,7 @@ function Base.iterate(sr::StreamingResult, state=nothing)
             return nothing
         elseif etype == "Error"
             sr._done = true
-            _handle_stream_error(event)
+            _handle_stream_error(event, sr._tx_context)
         end
     end
 
@@ -237,12 +238,10 @@ end
 Base.IteratorSize(::Type{StreamingResult}) = Base.SizeUnknown()
 Base.eltype(::Type{StreamingResult}) = NamedTuple
 
-function _handle_stream_error(event)
+function _handle_stream_error(event, tx_context::Bool)
     body = event["_body"]
     if body isa AbstractVector && !isempty(body)
-        err = first(body)
-        throw(Neo4jQueryError(string(get(err, "code", "")),
-            string(get(err, "message", ""))))
+        _throw_query_error(body; tx_context)
     end
     throw(Neo4jQueryError("Neo.ClientError.Statement.ExecutionFailed",
         "Unknown streaming error"))

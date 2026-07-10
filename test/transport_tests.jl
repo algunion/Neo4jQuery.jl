@@ -136,3 +136,115 @@ end
         @test occursin("unexpected", err.message)    # snippet non-empty (garbage line)
     end
 end
+
+# Task 5 (F-11): TransactionExpiredError used to be classified by message sniffing
+# ("timed out" / "was not found") on ANY error body — so a plain-query lock timeout
+# surfaced as a bogus TransactionExpiredError, telling an agentic consumer to reopen
+# a transaction it never had. Classification is now (a) scoped to requests that
+# reference an existing explicit transaction (tx_context) and (b) keyed on error
+# CODES (_TX_GONE_CODES), with the message sniff kept only for the documented
+# expired-tx shape `Neo.ClientError.Request.Invalid` + "was not found" — and only
+# inside tx context.
+@testset "tx-expiry classification (F-11)" begin
+    lock_timeout = "{\"errors\":[{\"code\":\"Neo.TransientError.Transaction.LockAcquisitionTimeout\",\"message\":\"Unable to acquire lock: timed out\"}]}"
+    # The documented expired-tx body: generic code, telltale message (note it contains
+    # BOTH sniff strings — the strongest possible bait for the old classifier).
+    expired_invalid = "{\"errors\":[{\"code\":\"Neo.ClientError.Request.Invalid\",\"message\":\"Transaction with Id lyU was not found. It might have timed out and was rolled back, or it was explicitly rolled back.\"}]}"
+    tx_timed_out = "{\"errors\":[{\"code\":\"Neo.ClientError.Transaction.TransactionTimedOut\",\"message\":\"The transaction has not completed within the specified timeout (dbms.transaction.timeout).\"}]}"
+
+    # Plain query: a lock timeout is a query error, NEVER a transaction expiry.
+    HttpHarness.scripted_server(202, lock_timeout) do conn
+        err = try query(conn, "RETURN 1"); nothing catch e; e end
+        @test err isa Neo4jQueryError                # ← FAILS pre-fix (TransactionExpiredError)
+        @test !(err isa TransactionExpiredError)
+        @test err.code == "Neo.TransientError.Transaction.LockAcquisitionTimeout"
+    end
+
+    # Plain query: even the EXACT documented expired-tx body must not classify
+    # outside a transaction context (tx_context=false blocks the sniff).
+    HttpHarness.scripted_server(202, expired_invalid) do conn
+        err = try query(conn, "RETURN 1"); nothing catch e; e end
+        @test err isa Neo4jQueryError                # ← FAILS pre-fix
+        @test !(err isa TransactionExpiredError)
+        @test err.code == "Neo.ClientError.Request.Invalid"
+    end
+
+    # query(tx, …): expired-tx by CODE → TransactionExpiredError (the code-based
+    # branch; the message deliberately avoids both sniff strings).
+    HttpHarness.scripted_server(202, tx_timed_out) do conn
+        tx = Transaction(conn, "lyU", "2026-07-10T00:00:00Z", nothing, false, false)
+        @test_throws TransactionExpiredError query(tx, "RETURN 1")   # ← FAILS pre-fix
+    end
+
+    # query(tx, …): the documented Request.Invalid + "was not found" shape → same.
+    HttpHarness.scripted_server(202, expired_invalid) do conn
+        tx = Transaction(conn, "lyU", "2026-07-10T00:00:00Z", nothing, false, false)
+        @test_throws TransactionExpiredError query(tx, "RETURN 1")
+    end
+
+    # commit!(tx) references the tx as well → classified.
+    HttpHarness.scripted_server(202, tx_timed_out) do conn
+        tx = Transaction(conn, "lyU", "2026-07-10T00:00:00Z", nothing, false, false)
+        @test_throws TransactionExpiredError commit!(tx)             # ← FAILS pre-fix
+    end
+
+    # begin_transaction references NO existing transaction: even a "was not found"
+    # error there must stay a Neo4jQueryError (pins the tx_context=false plumb).
+    HttpHarness.scripted_server(202, expired_invalid) do conn
+        err = try begin_transaction(conn); nothing catch e; e end
+        @test err isa Neo4jQueryError
+        @test !(err isa TransactionExpiredError)
+    end
+
+    # Inside a tx, an ORDINARY error (syntax) stays a Neo4jQueryError — tx_context
+    # alone must not classify (kills the "everything in a tx is expiry" mutant).
+    syntax_err = "{\"errors\":[{\"code\":\"Neo.ClientError.Statement.SyntaxError\",\"message\":\"Invalid input\"}]}"
+    HttpHarness.scripted_server(202, syntax_err) do conn
+        tx = Transaction(conn, "lyU", "2026-07-10T00:00:00Z", nothing, false, false)
+        err = try query(tx, "RETRN 1"); nothing catch e; e end
+        @test err isa Neo4jQueryError
+        @test !(err isa TransactionExpiredError)
+    end
+
+    # Inside a tx, Request.Invalid WITHOUT "was not found" (e.g. a malformed
+    # payload — exactly what the F-01 null-envelope bug produced) is NOT expiry.
+    invalid_payload = "{\"errors\":[{\"code\":\"Neo.ClientError.Request.Invalid\",\"message\":\"Failed to deserialize request: missing _value\"}]}"
+    HttpHarness.scripted_server(202, invalid_payload) do conn
+        tx = Transaction(conn, "lyU", "2026-07-10T00:00:00Z", nothing, false, false)
+        err = try query(tx, "RETURN 1"); nothing catch e; e end
+        @test err isa Neo4jQueryError
+        @test !(err isa TransactionExpiredError)
+    end
+end
+
+@testset "tx-expiry classification — streaming path (F-11)" begin
+    tx_not_found = "{\"errors\":[{\"code\":\"Neo.ClientError.Transaction.TransactionNotFound\",\"message\":\"Transaction not found.\"}]}"
+
+    # stream(tx, …) refused pre-Header with an expired-tx errors[] document (the
+    # Task-4 declared blind spot): must classify exactly like the non-streaming
+    # tx path, via the shared _throw_query_error.
+    HttpHarness.scripted_server(404, tx_not_found) do conn
+        tx = Transaction(conn, "lyU", "2026-07-10T00:00:00Z", nothing, false, false)
+        err = try stream(tx, "RETURN 1"); nothing catch e; e end
+        @test err isa TransactionExpiredError        # ← FAILS pre-fix (Neo4jQueryError)
+    end
+
+    # Same body through a PLAIN stream(conn, …): no tx context → Neo4jQueryError.
+    HttpHarness.scripted_server(404, tx_not_found) do conn
+        err = try stream(conn, "RETURN 1"); nothing catch e; e end
+        @test err isa Neo4jQueryError
+        @test !(err isa TransactionExpiredError)
+        @test err.code == "Neo.ClientError.Transaction.TransactionNotFound"
+    end
+
+    # Mid-stream $event:Error inside stream(tx, …) — the tx died between Header
+    # and rows — goes through the same classifier (tx_context rides on the
+    # StreamingResult, so iterate-time errors classify too).
+    jsonl = "{\"\$event\":\"Header\",\"_body\":{\"fields\":[\"x\"]}}\n" *
+            "{\"\$event\":\"Error\",\"_body\":[{\"code\":\"Neo.ClientError.Transaction.TransactionTimedOut\",\"message\":\"The transaction has not completed within the specified timeout (dbms.transaction.timeout).\"}]}\n"
+    HttpHarness.scripted_server(202, jsonl; ctype=HttpHarness.TYPED_JSONL_MEDIA) do conn
+        tx = Transaction(conn, "lyU", "2026-07-10T00:00:00Z", nothing, false, false)
+        sr = stream(tx, "RETURN 1")
+        @test_throws TransactionExpiredError collect(sr)             # ← FAILS pre-fix
+    end
+end

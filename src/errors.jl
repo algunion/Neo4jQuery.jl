@@ -39,8 +39,17 @@ end
 """
     TransactionExpiredError <: Neo4jError
 
-Raised when a request targets a transaction that has already expired or been
-rolled back on the server side.
+Raised when a request that references an existing explicit transaction
+(`query(tx, …)`, `commit!`, `stream(tx, …)`) fails because the server no
+longer has that transaction — it expired, timed out, or was rolled back
+server-side.
+
+Classified by error code (`Neo.ClientError.Transaction.TransactionNotFound`,
+`…TransactionTimedOut`, `…TransactionTimedOutClientConfiguration`) plus the
+documented expired-tx shape `Neo.ClientError.Request.Invalid` with a
+"was not found" message. Errors outside a transaction context — e.g. a plain
+query hitting a lock-acquisition timeout — are never classified as this; they
+raise [`Neo4jQueryError`](@ref) with the server's code instead.
 """
 struct TransactionExpiredError <: Neo4jError
     message::String

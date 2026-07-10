@@ -56,6 +56,8 @@ function begin_transaction(conn::Neo4jConnection;
         Dict{String,Any}()
     end
 
+    # tx_context stays false: a begin references no existing transaction, so its
+    # errors can never mean "that transaction is gone".
     parsed, resp = _neo4j_request(_tx_url(conn), :POST, body; auth=conn.auth)
 
     tx_meta = parsed["transaction"]
@@ -84,7 +86,8 @@ function query(tx::Transaction, statement::AbstractString;
 
     parsed, resp = _neo4j_request(url, :POST, body;
         auth=tx.conn.auth,
-        cluster_affinity=tx.cluster_affinity)
+        cluster_affinity=tx.cluster_affinity,
+        tx_context=true)
 
     # Update transaction metadata
     if haskey(parsed, "transaction")
@@ -134,7 +137,8 @@ function commit!(tx::Transaction;
 
     parsed, _ = _neo4j_request(url, :POST, body;
         auth=tx.conn.auth,
-        cluster_affinity=tx.cluster_affinity)
+        cluster_affinity=tx.cluster_affinity,
+        tx_context=true)
     tx.committed = true
     return String[string(b) for b in get(parsed, "bookmarks", [])]
 end
