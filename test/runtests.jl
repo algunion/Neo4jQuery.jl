@@ -25,6 +25,15 @@ include("cypher_dsl_tests.jl")
 include("readonly_tests.jl")
 include("retry_tests.jl")
 include("transport_tests.jl")
+
+# Concurrency stress (Task 37): query + streaming isolation under true parallelism,
+# plus a live read-only leny01 fan-out. Blocking IO yields, so the tasks interleave
+# even single-threaded — but true-parallel coverage needs JULIA_NUM_THREADS>1, so
+# warn (the gate's own workers usually run single-threaded).
+Threads.nthreads() == 1 &&
+    @warn "concurrency tests running single-threaded (set JULIA_NUM_THREADS>1 for true-parallel coverage)"
+include("concurrency_tests.jl")
+
 include("agentic_api_tests.jl")
 include("typed_roundtrip_tests.jl")
 include("json_contract_tests.jl")
