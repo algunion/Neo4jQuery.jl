@@ -28,6 +28,26 @@ using Test
     @test _classify_cypher("MATCH (n) RETURN n ; CREATE (x)") === :write  # 2nd statement
     @test _classify_cypher("LOAD CSV FROM 'f.csv' AS row CREATE (:X)") === :write
     @test _classify_cypher("MATCH (n) CALL { WITH n CREATE (:Y) } RETURN n") === :write
+    # admin/DDL commands (fail-fast layer; server-enforced :read is the real boundary)
+    @test _classify_cypher("ALTER DATABASE foo SET ACCESS READ ONLY") === :write
+    @test _classify_cypher("GRANT TRAVERSE ON GRAPH * TO role") === :write
+    @test _classify_cypher("DENY READ {*} ON GRAPH * TO role") === :write
+    @test _classify_cypher("REVOKE TRAVERSE ON GRAPH * FROM role") === :write
+    @test _classify_cypher("RENAME ROLE a TO b") === :write
+    @test _classify_cypher("STOP DATABASE foo") === :write
+    @test _classify_cypher("START DATABASE foo") === :write
+    @test _classify_cypher("TERMINATE TRANSACTIONS 'x'") === :write
+    @test _classify_cypher("ENABLE SERVER 'srv-1'") === :write
+    @test _classify_cypher("DEALLOCATE DATABASES FROM SERVER 'srv-1'") === :write
+    @test _classify_cypher("REALLOCATE DATABASES") === :write
+    # …and reads that must NOT trip:
+    @test _classify_cypher("SHOW GRANTS") === :read                       # GRANT\b ≠ GRANTS
+    @test _classify_cypher("MATCH (n) RETURN n.granted") === :read         # lookbehind + \b
+    @test _classify_cypher("MATCH (n) RETURN n.alter") === :read           # property access, lookbehind (new kw)
+    @test _classify_cypher("MATCH (n) RETURN realALTER") === :read         # identifier prefix, lookbehind (new kw)
+    @test _classify_cypher("MATCH (n) RETURN n.id AS start") === :read     # bare START ≠ START DATABASE
+    @test _classify_cypher("MATCH (n) RETURN n.id AS enable") === :read    # bare ENABLE ≠ ENABLE SERVER
+    @test _classify_cypher("MATCH (n) WHERE n.s = 'STOP DATABASE x' RETURN n") === :read  # literal stripped
 end
 
 @testset "classifier documented lexical limitations (characterization)" begin
@@ -41,6 +61,10 @@ end
     @test _classify_cypher("MATCH (n) RETURN n.id AS create") === :write
     @test _classify_cypher("MATCH (n) RETURN n.id AS set") === :write
     @test _classify_cypher("MATCH (n) RETURN n.id AS remove") === :write
+    # A single-word admin/DDL keyword inherits the same alias FP; the multi-word
+    # forms (START/STOP DATABASE, ENABLE SERVER) do NOT — pinned in the classifier
+    # testset above (`AS start`, `AS enable` stay :read).
+    @test _classify_cypher("MATCH (n) RETURN n.id AS grant") === :write
     # Control: the `\b` boundary means a longer identifier does NOT trip it.
     @test _classify_cypher("MATCH (n) RETURN n.id AS created") === :read
 

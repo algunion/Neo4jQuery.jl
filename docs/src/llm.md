@@ -378,6 +378,101 @@ All subtype `Neo4jError <: Exception`. Fields: `code::String`, `message::String`
 
 ---
 
+## Pre-flight Validation (text-to-Cypher loops)
+
+`validate_cypher` is the recommended pre-flight for LLM-generated Cypher: it runs `EXPLAIN <stmt>` under `access_mode=:read`, so the server plans the statement but **never executes** it. A leading `PROFILE` (which would execute) is stripped; a leading `EXPLAIN` is not doubled. Works on a `ReadOnlyConnection` too — even for write statements — because `EXPLAIN` never executes.
+
+```julia
+roc = ReadOnlyConnection(conn)
+stmt, params = llm_generate(prompt)                 # your text-to-Cypher step
+v = validate_cypher(roc, stmt; parameters=params)   # zero-execution server check
+if v.valid
+    result = read_query(roc, stmt; parameters=params)
+else
+    # v.error.message carries the server's line/column — feed it back to the LLM
+    stmt = llm_repair(prompt, stmt, v.error.message)
+end
+```
+
+Returns `(valid::Bool, error::Union{Neo4jQueryError,Nothing}, plan)`; `plan` is the parsed `queryPlan` object. Only genuine Cypher errors become `valid=false` — transport/auth failures are rethrown.
+
+---
+
+## Schema Grounding (ground your system prompt)
+
+`schema_prompt` renders the **live** database schema as a compact, deterministic block for a text-to-Cypher system prompt — one source of truth, so the prompt can never drift from the graph. Don't hand-roll schema text; read it from the server.
+
+```julia
+roc = ReadOnlyConnection(conn)
+system_prompt = """
+You translate natural-language questions into Neo4j Cypher.
+Use ONLY the labels, relationships, and indexes below.
+
+$(schema_prompt(roc))
+"""
+```
+
+`graph_schema(conn_or_roc) -> GraphSchema` issues four read queries (`db.schema.nodeTypeProperties()`, `db.schema.relTypeProperties()`, a sampled connectivity `MATCH ... LIMIT 1000`, and `SHOW INDEXES`), all under `access_mode=:read`. It is safe on a `ReadOnlyConnection` to a production database — the reads are provably side-effect-free. The returned `GraphSchema` has typed fields `labels::Vector{LabelInfo}`, `reltypes::Vector{RelTypeInfo}`, `indexes::Vector{IndexInfo}` for programmatic use.
+
+`schema_prompt(s::GraphSchema; max_labels=50)` — or the `schema_prompt(conn_or_roc; kwargs...)` convenience that reads live first — renders:
+
+- `(:Label {prop: Type, optional?: Type})` — one line per label; mandatory properties plain, optional ones suffixed `?`, multiple observed types joined with `|`.
+- `(:A)-[:T]->(:B)` — one line per observed connection.
+- `` VECTOR index `name` on :Label(prop), 384-dim cosine `` — one line per vector index; the `N-dim <similarity>` suffix comes from `options.indexConfig` when present. Non-semantic index kinds are omitted.
+
+Labels beyond `max_labels` are reported with an explicit `… and N more labels` marker — never silently dropped.
+
+---
+
+## GraphRAG — Vector Search
+
+`vector_search` is the retrieval half of a GraphRAG loop: k-nearest-neighbour search over a Neo4j vector index.
+
+```julia
+roc = ReadOnlyConnection(conn)
+hits = vector_search(roc, "chunk_vec", query_embedding; k=5)   # query_embedding::Vector{<:Real}
+for h in hits
+    println(h.score, "  ", h.properties["text"])
+end
+```
+
+```julia
+vector_search(conn_or_roc, index::AbstractString, embedding::AbstractVector{<:Real};
+              k::Int=5, return_node::Bool=false) -> QueryResult
+```
+
+Runs the parameterized
+
+```cypher
+CALL db.index.vector.queryNodes($idx, $k, $vec) YIELD node, score
+RETURN elementId(node) AS id, labels(node) AS labels, properties(node) AS properties, score
+```
+
+- Rows are ordered by descending similarity `score::Float64`; the `id` column is `elementId(node)` (a stable String).
+- `return_node=true` switches the projection to `node, score` (the raw `Node`).
+- `index`, `k`, and `embedding` are sent as **parameters** (`$idx`, `$k`, `$vec`) — never string-interpolated. A hostile or write-looking index name can neither inject Cypher nor bypass the read-only guard (it is not part of the statement text). `embedding` is coerced to `Vector{Float64}`.
+- On a `ReadOnlyConnection` it funnels through `read_query` (server-enforced `accessMode=Read`) — safe against a production read replica.
+- **Validation (fail loud):** `ArgumentError` if `k < 1`, `embedding` is empty, or `index` is empty — before any request.
+
+> **Deprecation:** Neo4j 2026.04 deprecates `db.index.vector.queryNodes` in favour of the Cypher-25 `SEARCH` clause. The helper will migrate to `SEARCH` transparently; the signature above is the stable contract.
+
+### `create_vector_index`
+
+```julia
+create_vector_index(conn, name, label, property;
+                    dimensions::Int, similarity::Symbol=:cosine) -> QueryResult
+```
+
+Creates a vector index idempotently (`CREATE VECTOR INDEX … IF NOT EXISTS … OPTIONS {indexConfig: …}`). `similarity` is `:cosine` (default) or `:euclidean`.
+
+```julia
+create_vector_index(conn, "chunk_vec", "Chunk", "embedding"; dimensions=384, similarity=:cosine)
+```
+
+**Validation (fail loud):** `ArgumentError` if `dimensions < 1`, `similarity ∉ (:cosine, :euclidean)`, or if `name`/`label`/`property` is empty or contains a backtick, quote, whitespace, or control character. Cypher DDL cannot be parameterized, so these identifiers are interpolated (and backtick-wrapped); the sanitizer makes that interpolation un-injectable.
+
+---
+
 ## DSL — Schema System
 
 ### `@node`

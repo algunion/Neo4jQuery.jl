@@ -16,10 +16,12 @@ Base.showerror(io::IO, e::ReadOnlyViolationError) = print(io,
     "ReadOnlyViolationError: refused write clause '", e.matched,
     "' on a read-only connection.\n  statement: ", e.statement)
 
-# Write clauses. (?<![.\w]) blocks property access (`.set`) and identifiers
-# (`xcreate`); \b closes the right side. Case-insensitive.
+# Write + admin/DDL clauses. (?<![.\w]) blocks property access (`.set`) and
+# identifiers (`xcreate`); \b closes the right side. Case-insensitive. Multi-word
+# admin forms (START/STOP DATABASE, ENABLE SERVER) only trip on the full phrase,
+# so a bare `START`/`STOP`/`ENABLE` alias does not over-refuse.
 const _WRITE_CLAUSE_RE =
-    r"(?i)(?<![.\w])(?:CREATE|MERGE|DELETE|SET|REMOVE|DROP|FOREACH|LOAD\s+CSV|IN\s+TRANSACTIONS)\b"
+    r"(?i)(?<![.\w])(?:CREATE|MERGE|DELETE|SET|REMOVE|DROP|FOREACH|LOAD\s+CSV|IN\s+TRANSACTIONS|ALTER|GRANT|DENY|REVOKE|RENAME|TERMINATE|(?:START|STOP)\s+DATABASE|ENABLE\s+SERVER|DEALLOCATE|REALLOCATE)\b"
 
 """
     _strip_cypher_literals_and_comments(s) -> String
@@ -60,6 +62,15 @@ end
 
 `:write` if `statement` contains any write clause (after stripping comments and
 literals), else `:read`. Conservative / fail-closed.
+
+Guarded clauses: `CREATE`, `MERGE`, `DELETE`, `SET`, `REMOVE`, `DROP`, `FOREACH`,
+`LOAD CSV`, `IN TRANSACTIONS`, plus the admin/DDL commands `ALTER`, `GRANT`,
+`DENY`, `REVOKE`, `RENAME`, `TERMINATE`, `START`/`STOP DATABASE`, `ENABLE SERVER`,
+`DEALLOCATE`, `REALLOCATE`. The admin/DDL keywords are a fail-fast convenience
+only — a [`ReadOnlyConnection`](@ref) already forces `access_mode=:read`, so the
+server rejects them regardless. `SET` remains the noisiest false-positive source;
+the admin keywords add negligible extra FP risk (they are rare as bare aliases,
+and the multi-word forms above only match the full phrase).
 
 Because it scans for keywords lexically (it is not a Cypher parser), it has two
 known, opposite inaccuracies:
@@ -146,3 +157,18 @@ function read_stream(roc::ReadOnlyConnection, statement::AbstractString;
     _assert_read(statement)
     return stream(roc.conn, statement; parameters, access_mode=:read, kwargs...)
 end
+
+function read_stream(roc::ReadOnlyConnection, q::CypherQuery;
+    parameters::Dict{String,<:Any}=Dict{String,Any}(), kwargs...)
+    _assert_read(q.statement)
+    return read_stream(roc, q.statement; parameters=merge(q.parameters, parameters), kwargs...)
+end
+
+# ── Guard the unguarded write API ─────────────────────────────────────────────
+# `query`/`stream` reach the server without the read-only classifier. Invoking
+# them on a ReadOnlyConnection is a mistake that would otherwise surface as a bare
+# MethodError; redirect to the guarded read_query/read_stream with a loud hint.
+query(::ReadOnlyConnection, args...; kwargs...) =
+    throw(ArgumentError("use read_query/read_stream on a ReadOnlyConnection (query() bypasses the guard)"))
+stream(::ReadOnlyConnection, args...; kwargs...) =
+    throw(ArgumentError("use read_stream on a ReadOnlyConnection (stream() bypasses the guard)"))

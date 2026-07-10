@@ -5,6 +5,7 @@
 ### Breaking
 - Streaming raises typed errors (`Neo4jQueryError`/`Neo4jHTTPError`) on HTTP error responses and header-less bodies instead of yielding a silent empty result.
 - `TransactionExpiredError` is raised only for requests made inside an explicit transaction, classified by error code where possible; plain-query lock timeouts now surface as `Neo4jQueryError`.
+- `query`/`stream` on a `ReadOnlyConnection` now throw an informative `ArgumentError` instead of a `MethodError`.
 
 ### Fixed
 - `nothing` parameters serialize as the full Typed JSON `Null` envelope (`{"$type":"Null","_value":null}`); the server rejected the previous truncated form.
