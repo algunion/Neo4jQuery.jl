@@ -122,6 +122,22 @@ _sent_statement(captured::Vector{String}) = JSON.parse(captured[end])["statement
     HttpHarness.scripted_server(502, "<html>502 Bad Gateway</html>") do conn
         @test_throws Neo4jHTTPError validate_cypher(conn, "MATCH (n) RETURN n")
     end
+
+    # (8) `parameters` forward to the wire as typed envelopes — conn and roc
+    #     overloads. If forwarding were dropped, "parameters" would be absent
+    #     from the captured body and these lookups would fail.
+    _capture_validate_server(202, okbody) do conn, captured
+        validate_cypher(conn, "MATCH (n) WHERE n.x = \$x RETURN n";
+            parameters=Dict{String,Any}("x" => 1))
+        p = JSON.parse(captured[end])["parameters"]
+        @test p["x"]["\$type"] == "Integer"
+        @test p["x"]["_value"] == "1"
+        validate_cypher(ReadOnlyConnection(conn), "MATCH (n) WHERE n.x = \$x RETURN n";
+            parameters=Dict{String,Any}("x" => 2))
+        rp = JSON.parse(captured[end])["parameters"]
+        @test rp["x"]["\$type"] == "Integer"
+        @test rp["x"]["_value"] == "2"
+    end
 end
 
 # Live falsifier — THE core safety proof of this task (see task-23 report): an

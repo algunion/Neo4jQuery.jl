@@ -378,6 +378,26 @@ All subtype `Neo4jError <: Exception`. Fields: `code::String`, `message::String`
 
 ---
 
+## Pre-flight Validation (text-to-Cypher loops)
+
+`validate_cypher` is the recommended pre-flight for LLM-generated Cypher: it runs `EXPLAIN <stmt>` under `access_mode=:read`, so the server plans the statement but **never executes** it. A leading `PROFILE` (which would execute) is stripped; a leading `EXPLAIN` is not doubled. Works on a `ReadOnlyConnection` too — even for write statements — because `EXPLAIN` never executes.
+
+```julia
+roc = ReadOnlyConnection(conn)
+stmt, params = llm_generate(prompt)                 # your text-to-Cypher step
+v = validate_cypher(roc, stmt; parameters=params)   # zero-execution server check
+if v.valid
+    result = read_query(roc, stmt; parameters=params)
+else
+    # v.error.message carries the server's line/column — feed it back to the LLM
+    stmt = llm_repair(prompt, stmt, v.error.message)
+end
+```
+
+Returns `(valid::Bool, error::Union{Neo4jQueryError,Nothing}, plan)`; `plan` is the parsed `queryPlan` object. Only genuine Cypher errors become `valid=false` — transport/auth failures are rethrown.
+
+---
+
 ## DSL — Schema System
 
 ### `@node`
