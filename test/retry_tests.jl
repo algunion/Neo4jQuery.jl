@@ -126,6 +126,20 @@ end
         end
     end
 
+    @testset "read retries EXACTLY once — a 2nd consecutive transient surfaces" begin
+        # The documented contract is ONE retry (query/readonly/streaming docstrings
+        # + guide/agentic.md). HTTP.jl's default retries=4 would silently absorb up
+        # to four consecutive transients (G5 source finding, 2026-07-10) — this pins
+        # the explicit retries=1: two failures in a row must SURFACE after exactly
+        # one retry, i.e. exactly two requests on the wire.
+        with_flaky_server(; fail_first_n=2) do conn, request_count
+            @test_throws HTTP.Exceptions.RequestError query(
+                conn, "MATCH (n) RETURN 1 AS n"; access_mode=:read)
+            @info "single-retry cap test: server saw $(request_count[]) request(s)"
+            @test request_count[] == 2   # original + exactly one retry, then surface
+        end
+    end
+
     @testset "read_stream retries past a transient failure and succeeds" begin
         with_flaky_server(; fail_first_n=1, ok_body=_OK_STREAM_BODY,
             ok_content_type=_OK_STREAM_CONTENT_TYPE) do conn, request_count
