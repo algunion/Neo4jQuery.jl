@@ -47,3 +47,34 @@ end
     # fallback and return false — pins that the fallback assumes neither field.
     @test !is_transient(ReadOnlyViolationError("CREATE (n)", "CREATE"))
 end
+
+@testset "auth show redaction (F-19)" begin
+    # Default struct `show` prints every field, so a `println(auth)` / REPL echo
+    # leaks the secret into agent traces & logs. Pre-fix these three occursins
+    # were all TRUE (recorded RED). Redacted `show` drives them to false.
+    basic = BasicAuth("neo4j", "hunter2")
+    bearer = BearerAuth("tok_secret")
+
+    # Brief's three assertions: 2-arg show for both, plus the 3-arg
+    # MIME"text/plain" path (non-container types fall back to 2-arg — verified,
+    # not assumed: this line FAILS pre-fix, so it actually exercises the path).
+    @test !occursin("hunter2", sprint(show, basic))
+    @test !occursin("tok_secret", sprint(show, bearer))
+    @test !occursin("hunter2", sprint(show, MIME"text/plain"(), basic))
+
+    # repr composes 2-arg show — same guarantee, pinned explicitly.
+    @test !occursin("hunter2", repr(basic))
+    @test !occursin("tok_secret", repr(bearer))
+
+    # Positive control: redaction must NOT hide the non-secret username, else a
+    # diagnostic `show` becomes useless (guards against over-redaction).
+    @test occursin("neo4j", sprint(show, basic))
+
+    # Connection show is the most likely real leak (`println(conn)` in traces).
+    # Neo4jConnection's own show already omits `auth`; pin it so a future edit
+    # that recurses into the auth field cannot reintroduce the password leak.
+    # (192.0.2.1 = TEST-NET-1, never dialed — no network in this path.)
+    conn = Neo4jConnection("http://192.0.2.1:7474", "neo4j", basic, 3, 3)
+    @test !occursin("hunter2", sprint(show, conn))
+    @test !occursin("hunter2", sprint(show, MIME"text/plain"(), conn))
+end

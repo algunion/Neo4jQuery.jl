@@ -38,6 +38,16 @@ struct BearerAuth <: AbstractAuth
     token::String
 end
 
+# Redacted display (F-19). The default struct `show` prints every field
+# verbatim, so a `println(auth)`, `@show conn`, or REPL echo leaks the password
+# or token into agent traces and logs. Print a redacted but still-recognizable
+# form. `repr` and the 3-arg `MIME"text/plain"` show both compose this 2-arg
+# method (non-container types fall back to it), so overriding here closes those
+# paths too; `Neo4jConnection`'s own `show` omits `auth` entirely (see
+# connection.jl). The username is not secret and stays visible for diagnostics.
+Base.show(io::IO, a::BasicAuth) = print(io, "BasicAuth(", repr(a.username), ", ****)")
+Base.show(io::IO, ::BearerAuth) = print(io, "BearerAuth(****)")
+
 """
     auth_header(auth::AbstractAuth) -> Pair{String,String}
 
