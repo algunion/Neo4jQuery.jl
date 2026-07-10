@@ -52,6 +52,9 @@ export ReadOnlyConnection, read_query, read_stream, ReadOnlyViolationError
 # Introspection (server-truth validation)
 export validate_cypher
 
+# Schema introspection (grounding text-to-Cypher)
+export graph_schema, schema_prompt, GraphSchema
+
 # Transactions
 export Transaction, begin_transaction, commit!, rollback!, transaction
 

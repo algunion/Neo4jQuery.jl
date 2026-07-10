@@ -160,3 +160,140 @@ isdefined(@__MODULE__, :load_readwrite_test01) ||
         @info "validate_cypher live falsifier" before after
     end
 end
+
+# ── Task 34: graph_schema + schema_prompt (F-30) ──────────────────────────────
+# Every text-to-Cypher consumer hand-rolls schema description; F-30 centralizes
+# it. Offline coverage = the PURE renderer + the PURE assembly helpers (no HTTP
+# fixture server — graph_schema needs four distinct responses, so integration is
+# left to the live-gated leny01 test). The GUARD-lane risk (do these four read
+# queries survive the widened write-guard regex?) is pinned as a regression test.
+
+@testset "GraphSchema type shapes (F-30)" begin
+    pi = Neo4jQuery.PropertyInfo("text", ["String"], true)
+    @test pi.name == "text" && pi.types == ["String"] && pi.mandatory === true
+    li = Neo4jQuery.LabelInfo("Chunk", [pi])
+    @test li.label == "Chunk" && li.properties == [pi]
+    ri = Neo4jQuery.RelTypeInfo("PART_OF", Neo4jQuery.PropertyInfo[], [("Chunk", "Document")])
+    @test ri.reltype == "PART_OF" && ri.connections == [("Chunk", "Document")]
+    @test ri.connections isa Vector{Tuple{String,String}}
+    opts = JSON.Object{String,Any}("indexConfig" => JSON.Object{String,Any}(
+        "vector.dimensions" => 384, "vector.similarity_function" => "cosine"))
+    ii = Neo4jQuery.IndexInfo("vector", "VECTOR", "Chunk", ["embedding"], opts)
+    @test ii.options !== nothing
+    ii2 = Neo4jQuery.IndexInfo("vector", "VECTOR", "Chunk", ["embedding"], nothing)
+    @test ii2.options === nothing
+    gs = Neo4jQuery.GraphSchema([li], [ri], [ii2])
+    @test gs isa Neo4jQuery.GraphSchema && gs.labels == [li] && gs.reltypes == [ri]
+end
+
+@testset "schema_prompt rendering (F-30)" begin
+    s = Neo4jQuery.GraphSchema(
+        [Neo4jQuery.LabelInfo("Chunk", [Neo4jQuery.PropertyInfo("text", ["String"], true),
+                                        Neo4jQuery.PropertyInfo("embedding", ["List"], false)])],
+        [Neo4jQuery.RelTypeInfo("PART_OF", Neo4jQuery.PropertyInfo[], [("Chunk", "Document")])],
+        [Neo4jQuery.IndexInfo("vector", "VECTOR", "Chunk", ["embedding"], nothing)])
+    p = schema_prompt(s)
+    @test occursin("(:Chunk {text: String, embedding?: List})", p)   # mandatory plain, optional gets ?
+    @test occursin("(:Chunk)-[:PART_OF]->(:Document)", p)
+    @test occursin("VECTOR index `vector` on :Chunk(embedding)", p)  # options nothing → no dim/sim suffix
+end
+
+@testset "schema_prompt vector index dims/similarity (F-30)" begin
+    # options.indexConfig present → the "384-dim cosine" suffix. Server casing
+    # ("COSINE") is normalized to lowercase so the rendering is deterministic.
+    opts = JSON.Object{String,Any}("indexConfig" => JSON.Object{String,Any}(
+        "vector.dimensions" => 384, "vector.similarity_function" => "COSINE"))
+    s = Neo4jQuery.GraphSchema(Neo4jQuery.LabelInfo[], Neo4jQuery.RelTypeInfo[],
+        [Neo4jQuery.IndexInfo("chunk_vec", "VECTOR", "Chunk", ["embedding"], opts)])
+    @test occursin("VECTOR index `chunk_vec` on :Chunk(embedding), 384-dim cosine", schema_prompt(s))
+end
+
+@testset "schema_prompt truncation marker — no silent truncation (F-30)" begin
+    labels = [Neo4jQuery.LabelInfo("L$i", [Neo4jQuery.PropertyInfo("p", ["String"], true)]) for i in 1:5]
+    s = Neo4jQuery.GraphSchema(labels, Neo4jQuery.RelTypeInfo[], Neo4jQuery.IndexInfo[])
+    p = schema_prompt(s; max_labels=2)
+    @test occursin("(:L1 {p: String})", p)
+    @test occursin("(:L2 {p: String})", p)
+    @test !occursin("(:L3", p)                       # capped — L3..L5 not emitted
+    @test occursin("… and 3 more labels", p)         # EXPLICIT marker with correct count
+end
+
+@testset "schema_prompt empty schema renders, does not error (F-30)" begin
+    s = Neo4jQuery.GraphSchema(Neo4jQuery.LabelInfo[], Neo4jQuery.RelTypeInfo[], Neo4jQuery.IndexInfo[])
+    p = schema_prompt(s)
+    @test p isa String && !isempty(p)                # sensible output, not a crash
+end
+
+@testset "schema assembly helpers (F-30)" begin
+    # Feed hand-built rows (the shape read_query yields) through the pure
+    # assemblers — covers row→struct logic without a 4-response fixture server.
+    node_rows = NamedTuple[
+        (nodeLabels=["Chunk"],    propertyName="text",      propertyTypes=["String"], mandatory=true),
+        (nodeLabels=["Chunk"],    propertyName="embedding", propertyTypes=["List"],   mandatory=false),
+        (nodeLabels=["Document"], propertyName="title",     propertyTypes=["String"], mandatory=true),
+        (nodeLabels=["A", "B"],   propertyName="p",         propertyTypes=["String"], mandatory=true),
+        (nodeLabels=["Solo"],     propertyName=nothing,     propertyTypes=nothing,    mandatory=false),
+    ]
+    labels = Neo4jQuery._schema_labels(node_rows)
+    chunk = labels[findfirst(l -> l.label == "Chunk", labels)]
+    @test [p.name for p in chunk.properties] == ["text", "embedding"]
+    @test chunk.properties[1].mandatory === true && chunk.properties[2].mandatory === false
+    @test any(l -> l.label == "A", labels) && any(l -> l.label == "B", labels)   # multi-label contributes to each
+    solo = labels[findfirst(l -> l.label == "Solo", labels)]
+    @test isempty(solo.properties)                                                # label-only node (null property)
+
+    rel_rows  = NamedTuple[(relType=":`PART_OF`", propertyName=nothing, propertyTypes=nothing, mandatory=false)]
+    conn_rows = NamedTuple[(la=["Chunk"], t="PART_OF", lb=["Document"]),
+                           (la=["Chunk"], t="PART_OF", lb=["Document"])]          # duplicate → deduped
+    rts = Neo4jQuery._schema_reltypes(rel_rows, conn_rows)
+    @test length(rts) == 1
+    @test rts[1].reltype == "PART_OF"                                             # `:`…`` normalized away
+    @test rts[1].connections == [("Chunk", "Document")]
+
+    opts = JSON.Object{String,Any}("indexConfig" => JSON.Object{String,Any}(
+        "vector.dimensions" => 384, "vector.similarity_function" => "cosine"))
+    idx_rows = NamedTuple[
+        (name="chunk_vec", type="VECTOR", entityType="NODE", labelsOrTypes=["Chunk"],    properties=["embedding"], options=opts),
+        (name="idx_range", type="RANGE",  entityType="NODE", labelsOrTypes=["Document"], properties=["title"],     options=nothing),
+    ]
+    idxs = Neo4jQuery._schema_indexes(idx_rows)
+    @test length(idxs) == 2
+    @test idxs[1].kind == "VECTOR" && idxs[1].entity == "Chunk" && idxs[1].properties == ["embedding"]
+    @test idxs[1].options !== nothing
+
+    p = schema_prompt(Neo4jQuery.GraphSchema(labels, rts, idxs))
+    @test occursin("(:Chunk {text: String, embedding?: List})", p)
+    @test occursin("(:Chunk)-[:PART_OF]->(:Document)", p)
+    @test occursin("VECTOR index `chunk_vec` on :Chunk(embedding), 384-dim cosine", p)
+    @test !occursin("idx_range", p)                                              # non-semantic index omitted
+end
+
+@testset "introspection queries stay read-classified (GUARD lane, F-30)" begin
+    # The Task-34 read queries MUST survive the widened write-guard regex, or
+    # graph_schema's read_query path would throw ReadOnlyViolationError. Pin it.
+    for q in (Neo4jQuery._SCHEMA_NODE_PROPS_Q, Neo4jQuery._SCHEMA_REL_PROPS_Q,
+              Neo4jQuery._SCHEMA_CONNECT_Q, Neo4jQuery._SCHEMA_INDEXES_Q)
+        @test Neo4jQuery._classify_cypher(q) === :read
+    end
+end
+
+# Live-gated (leny01, READ-ONLY): full graph_schema over the real instance. SKIPs
+# without credentials. Uses the READONLY loader — the guard + access_mode=:read
+# make every introspection query provably side-effect-free.
+isdefined(@__MODULE__, :load_readonly_leny01) ||
+    include(joinpath(@__DIR__, "live", "credentials.jl"))
+
+@testset "graph_schema live falsifier (leny01 read-only, F-30)" begin
+    roc = load_readonly_leny01()
+    if roc === nothing
+        @warn "Skipping graph_schema live — leny01 credentials absent or unreachable"
+    else
+        sch = graph_schema(roc)
+        @test sch isa Neo4jQuery.GraphSchema
+        @test any(l -> l.label == "Chunk", sch.labels)
+        p = schema_prompt(roc)
+        @test occursin("Chunk", p)
+        @test occursin("384-dim", p)     # the all-MiniLM-L6-v2 / 384-dim vector index line
+        @info "graph_schema live" nlabels = length(sch.labels) nreltypes = length(sch.reltypes) nindexes = length(sch.indexes)
+    end
+end

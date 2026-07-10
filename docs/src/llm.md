@@ -398,6 +398,32 @@ Returns `(valid::Bool, error::Union{Neo4jQueryError,Nothing}, plan)`; `plan` is 
 
 ---
 
+## Schema Grounding (ground your system prompt)
+
+`schema_prompt` renders the **live** database schema as a compact, deterministic block for a text-to-Cypher system prompt — one source of truth, so the prompt can never drift from the graph. Don't hand-roll schema text; read it from the server.
+
+```julia
+roc = ReadOnlyConnection(conn)
+system_prompt = """
+You translate natural-language questions into Neo4j Cypher.
+Use ONLY the labels, relationships, and indexes below.
+
+$(schema_prompt(roc))
+"""
+```
+
+`graph_schema(conn_or_roc) -> GraphSchema` issues four read queries (`db.schema.nodeTypeProperties()`, `db.schema.relTypeProperties()`, a sampled connectivity `MATCH ... LIMIT 1000`, and `SHOW INDEXES`), all under `access_mode=:read`. It is safe on a `ReadOnlyConnection` to a production database — the reads are provably side-effect-free. The returned `GraphSchema` has typed fields `labels::Vector{LabelInfo}`, `reltypes::Vector{RelTypeInfo}`, `indexes::Vector{IndexInfo}` for programmatic use.
+
+`schema_prompt(s::GraphSchema; max_labels=50)` — or the `schema_prompt(conn_or_roc; kwargs...)` convenience that reads live first — renders:
+
+- `(:Label {prop: Type, optional?: Type})` — one line per label; mandatory properties plain, optional ones suffixed `?`, multiple observed types joined with `|`.
+- `(:A)-[:T]->(:B)` — one line per observed connection.
+- `` VECTOR index `name` on :Label(prop), 384-dim cosine `` — one line per vector index; the `N-dim <similarity>` suffix comes from `options.indexConfig` when present. Non-semantic index kinds are omitted.
+
+Labels beyond `max_labels` are reported with an explicit `… and N more labels` marker — never silently dropped.
+
+---
+
 ## DSL — Schema System
 
 ### `@node`

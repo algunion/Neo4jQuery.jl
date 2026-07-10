@@ -63,6 +63,9 @@ ReadOnlyViolationError
 
 ```@docs
 validate_cypher
+graph_schema
+schema_prompt
+GraphSchema
 ```
 
 ## Result Types
