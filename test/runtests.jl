@@ -25,6 +25,7 @@ include("cypher_dsl_tests.jl")
 include("readonly_tests.jl")
 include("retry_tests.jl")
 include("transport_tests.jl")
+include("agentic_api_tests.jl")
 include("json_contract_tests.jl")
 include("typed_datetime_tests.jl")
 
