@@ -146,3 +146,18 @@ function read_stream(roc::ReadOnlyConnection, statement::AbstractString;
     _assert_read(statement)
     return stream(roc.conn, statement; parameters, access_mode=:read, kwargs...)
 end
+
+function read_stream(roc::ReadOnlyConnection, q::CypherQuery;
+    parameters::Dict{String,<:Any}=Dict{String,Any}(), kwargs...)
+    _assert_read(q.statement)
+    return read_stream(roc, q.statement; parameters=merge(q.parameters, parameters), kwargs...)
+end
+
+# ── Guard the unguarded write API ─────────────────────────────────────────────
+# `query`/`stream` reach the server without the read-only classifier. Invoking
+# them on a ReadOnlyConnection is a mistake that would otherwise surface as a bare
+# MethodError; redirect to the guarded read_query/read_stream with a loud hint.
+query(::ReadOnlyConnection, args...; kwargs...) =
+    throw(ArgumentError("use read_query/read_stream on a ReadOnlyConnection (query() bypasses the guard)"))
+stream(::ReadOnlyConnection, args...; kwargs...) =
+    throw(ArgumentError("use read_stream on a ReadOnlyConnection (stream() bypasses the guard)"))
