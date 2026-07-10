@@ -17,6 +17,10 @@ Carries the client-side timeouts applied to every request (F-10):
   bounding connect by `readtimeout` when `readtimeout > 0`, so a fully unbounded
   connect requires BOTH `connect_timeout = 0` and `readtimeout = 0`.
 
+Both timeouts must be `>= 0`; the constructor (and therefore [`connect`](@ref)/
+[`connect_from_env`](@ref)) throws `ArgumentError` for negative values —
+negative sentinels are internal to the request layer and must never enter here.
+
 The 3-argument constructor keeps the documented defaults (120s / 10s):
 `Neo4jConnection(base_url, database, auth)`.
 """
@@ -26,6 +30,29 @@ struct Neo4jConnection
     auth::AbstractAuth
     readtimeout::Int      # seconds; 0 = no read timeout
     connect_timeout::Int  # seconds; 0 = no explicit connect bound (see docstring)
+
+    function Neo4jConnection(base_url::AbstractString, database::AbstractString,
+        auth::AbstractAuth, readtimeout::Int, connect_timeout::Int)
+        _validate_timeouts(readtimeout, connect_timeout)
+        return new(base_url, database, auth, readtimeout, connect_timeout)
+    end
+end
+
+"""
+    _validate_timeouts(readtimeout, connect_timeout)
+
+Public-boundary domain check (F-10): both timeouts must be `>= 0`. `-1` is a
+purely internal `_request_core` sentinel ("unset" → HTTP.jl's 30s connect
+default); if a negative value entered via the API, `_discover` (which forwards
+the connection's values verbatim) would silently diverge from the query path
+(which omits on the sentinel) for the very same field. Reject loudly instead.
+"""
+function _validate_timeouts(readtimeout::Int, connect_timeout::Int)
+    readtimeout >= 0 || throw(ArgumentError(
+        "readtimeout must be >= 0 seconds (0 = no read timeout); got $readtimeout"))
+    connect_timeout >= 0 || throw(ArgumentError(
+        "connect_timeout must be >= 0 seconds (0 = no explicit connect bound); got $connect_timeout"))
+    return nothing
 end
 
 # 3-arg convenience: keeps every existing call site compiling and pins the
@@ -40,10 +67,11 @@ Neo4jConnection(base_url::AbstractString, database::AbstractString, auth::Abstra
 Establish a connection to a Neo4j instance.  Validates connectivity by hitting
 the discovery endpoint (`GET /`).
 
-`readtimeout`/`connect_timeout` (seconds) bound every subsequent request; see
-[`Neo4jConnection`](@ref) for their exact semantics (`0` = no read timeout /
-no explicit connect bound). A fired read timeout surfaces as a
-[`Neo4jHTTPError`](@ref) rather than hanging the caller.
+`readtimeout`/`connect_timeout` (seconds) bound every subsequent request — and
+the discovery request itself; see [`Neo4jConnection`](@ref) for their exact
+semantics (`0` = no read timeout / no explicit connect bound; negative values
+throw `ArgumentError`). A fired read timeout — including during discovery —
+surfaces as a [`Neo4jHTTPError`](@ref) rather than hanging the caller.
 
 # Example
 ```julia
@@ -79,6 +107,10 @@ function _discover(conn::Neo4jConnection)
             error("Discovery endpoint returned HTTP $(resp.status)")
         end
     catch e
+        # A discovery-phase read stall must surface exactly like the query path:
+        # typed and actionable — never a bare HTTP.Exceptions.TimeoutError (F-10).
+        _is_timeout(e) && throw(Neo4jHTTPError(0,
+            "connection discovery timed out after $(conn.readtimeout)s (readtimeout): GET $(conn.base_url)/"))
         if e isa HTTP.Exceptions.ConnectError
             error("Cannot connect to Neo4j at $(conn.base_url): $(sprint(showerror, e))")
         end

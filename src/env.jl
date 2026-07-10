@@ -74,9 +74,14 @@ conn = connect_from_env(path="prod.env")     # different file
 
 `readtimeout`/`connect_timeout` (seconds) set the client-side timeouts on the
 returned connection; see [`Neo4jConnection`](@ref) for their semantics (F-10).
+Negative values throw `ArgumentError` — validated up front, before any
+`.env`/`ENV` access.
 """
 function connect_from_env(; path::AbstractString=".env", prefix::AbstractString="NEO4J_",
     readtimeout::Int=120, connect_timeout::Int=10)
+    # Fail fast on a bad timeout domain BEFORE reading .env/ENV, so the error is
+    # deterministic and no ENV mutation happens on an invalid call (F-10).
+    _validate_timeouts(readtimeout, connect_timeout)
     if isfile(path)
         dotenv(path)
     end

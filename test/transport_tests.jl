@@ -390,3 +390,50 @@ end
         @test r[1].x == 1
     end
 end
+
+@testset "discovery timeout is typed (F-10)" begin
+    # connect() is itself an agentic entry point: a server that ACCEPTS the TCP
+    # connection but stalls the discovery GET must fire the connection's
+    # readtimeout as the same typed Neo4jHTTPError the query path raises —
+    # never the bare HTTP.Exceptions.TimeoutError (the invariant pinned above).
+    server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+        read(http)
+        sleep(5.0)
+        HTTP.setstatus(http, 200)
+        HTTP.startwrite(http)
+        write(http, "{}")
+    end
+    try
+        t0 = time()
+        err = try
+            connect("127.0.0.1", "neo4j"; port=Int(HTTP.port(server)),
+                auth=BasicAuth("u", "p"), readtimeout=1, connect_timeout=5)
+            nothing
+        catch e
+            e
+        end
+        @test err isa Neo4jHTTPError       # ← RED pre-fix: bare HTTP.Exceptions.TimeoutError
+        @test err.status == 0
+        @test occursin("timed out", err.message)
+        @test time() - t0 < 4.0
+    finally
+        close(server)
+    end
+end
+
+@testset "timeout domain validation (F-10)" begin
+    # -1 is a purely INTERNAL _request_core sentinel ("unset" → HTTP.jl's 30s
+    # connect default). The public boundary rejects negative timeouts, otherwise
+    # a user-reachable -1 makes _discover (forwards verbatim → unbounded) diverge
+    # from the query path (omit → 30s) for the same connection value.
+    auth = BasicAuth("u", "p")
+    @test_throws ArgumentError Neo4jConnection("http://127.0.0.1:1", "neo4j", auth, -1, 10)
+    @test_throws ArgumentError Neo4jConnection("http://127.0.0.1:1", "neo4j", auth, 120, -1)
+    # connect() throws before any network I/O (constructor runs pre-discovery).
+    @test_throws ArgumentError connect("127.0.0.1", "neo4j"; auth, readtimeout=-1)
+    @test_throws ArgumentError connect("127.0.0.1", "neo4j"; auth, connect_timeout=-1)
+    # connect_from_env validates its kwargs up front — before reading .env/ENV —
+    # so the error is deterministic regardless of ambient credentials.
+    @test_throws ArgumentError connect_from_env(path="no-such-file.env", readtimeout=-1)
+    @test_throws ArgumentError connect_from_env(path="no-such-file.env", connect_timeout=-1)
+end
