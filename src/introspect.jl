@@ -19,7 +19,11 @@ Server-truth validation for (LLM-generated) Cypher **without executing it**: run
   statement (`plan` is the parsed `queryPlan` object, or `nothing` if the server
   returned none).
 - `valid=false, error=<Neo4jQueryError>, plan=nothing` on any syntax/semantic
-  error — `error.message` carries the server's line/column position.
+  error — `error.message` carries the server's line/column position. Positions
+  refer to **your** statement: the injected `EXPLAIN ` prefix is stripped from
+  the message and line-1 columns/offsets shifted back before the error is
+  returned, so a caret or repair loop aligned to the caller's text is correct
+  as-is.
 
 Only a genuine `Neo4jQueryError` means "the Cypher is wrong". Any *other* failure
 (transport/proxy, timeout, auth) is **rethrown**, never folded into `valid=false`.
@@ -57,9 +61,44 @@ function validate_cypher(conn::Neo4jConnection, statement::AbstractString;
         r = query(conn, stmt; parameters, access_mode=:read)
         return (valid=true, error=nothing, plan=r.query_plan)
     catch e
-        e isa Neo4jQueryError && return (valid=false, error=e, plan=nothing)
+        e isa Neo4jQueryError && return (valid=false, error=_deexplain_error(e), plan=nothing)
         rethrow()
     end
+end
+
+# The wire statement is `"EXPLAIN " * <caller statement>`, so server error positions
+# are wire positions: every absolute offset — and line-1 columns — sit 8 characters
+# past where the caller's statement has them, and the quoted statement echo (plus its
+# caret line) carries an `EXPLAIN` the caller never wrote. An error consumer (usually
+# an LLM repair loop) must see positions on ITS statement, so map them back (G4).
+const _EXPLAIN_PREFIX_LEN = ncodeunits("EXPLAIN ")
+const _POSITION_RE = r"\(line (\d+), column (\d+)(?: \(offset: (\d+)\))?\)"
+function _deexplain_error(e::Neo4jQueryError)
+    n = _EXPLAIN_PREFIX_LEN
+    msg = replace(e.message, _POSITION_RE => function (s)
+        # `s` IS a match of _POSITION_RE, so re-matching cannot fail and the two
+        # non-optional groups are always present — pinned for JET.
+        m = match(_POSITION_RE, s)::RegexMatch
+        line = parse(Int, m.captures[1]::AbstractString)
+        col = parse(Int, m.captures[2]::AbstractString)
+        line == 1 && col > n && (col -= n)
+        cap3 = m.captures[3]
+        cap3 === nothing && return "(line $(line), column $(col))"
+        off = parse(Int, cap3::AbstractString)
+        off >= n && (off -= n)
+        return "(line $(line), column $(col) (offset: $(off)))"
+    end)
+    lines = split(msg, '\n')
+    for i in eachindex(lines)
+        startswith(lines[i], "\"EXPLAIN ") || continue
+        lines[i] = "\"" * chopprefix(lines[i], "\"EXPLAIN ")
+        # dedent the caret line the server aligned under the (longer) wire echo
+        if i < lastindex(lines) && occursin(r"^\s*\^\s*$", lines[i+1]) &&
+           startswith(lines[i+1], " "^n)
+            lines[i+1] = chopprefix(lines[i+1], " "^n)
+        end
+    end
+    return Neo4jQueryError(e.code, join(lines, '\n'))
 end
 
 """

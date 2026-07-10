@@ -96,6 +96,17 @@ Two safety properties matter for untrusted input:
   *write* statement is provably side-effect-free. That lets you tell the model
   "this would have been a write" before it ever runs.
 
+!!! note "What pre-flight validation can and cannot buy you"
+    For a **read-only** repair loop, validating before executing does not save
+    turns or tokens: an invalid statement fails at plan time either way, and a
+    valid one executes either way — the error an agent sees is the same.
+    Pre-flight pays off when the statement could **write** (validate without
+    running it, then refuse) or when execution itself is expensive. It cannot
+    catch *silent* mistakes: a wrong property name returns `null`s, not an
+    error (properties are schema-optional), so no validation sees it — ground
+    the model with [`graph_schema`](@ref)/[`schema_prompt`](@ref) instead of
+    relying on validation to catch vocabulary drift.
+
 ## Error messages as LLM feedback
 
 When `valid=false`, `error.message` carries the server's `(line, column)`
