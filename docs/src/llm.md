@@ -940,6 +940,13 @@ These Cypher features are **not supported** by the DSL:
 
 Neo4j Query API uses Typed JSON envelopes: `{"$type": "Integer", "_value": "42"}`.
 
+Neo4j `Integer` is 64-bit signed: out-of-range Julia integers (`BigInt`, `Int128`,
+large `UInt64`) are rejected client-side with a loud `ArgumentError` before any
+request. Julia `Float32` values (e.g. embedding vectors) widen to `Float64` on the
+wire: round-trips are exact at Float32 precision (`Float32.(returned) == sent`)
+but **not** bit-equal under Float64 comparison — do not assert exact Float64
+equality on embeddings.
+
 | Neo4j Type       | Julia Type       |
 | ---------------- | ---------------- |
 | `Null`           | `nothing`        |

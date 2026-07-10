@@ -337,7 +337,17 @@ raises `ErrorException` rather than being silently passed through.
 """
 to_typed_json(::Nothing) = Dict{String,Any}("\$type" => "Null", "_value" => nothing)
 to_typed_json(v::Bool) = Dict{String,Any}("\$type" => "Boolean", "_value" => v)
-to_typed_json(v::Integer) = Dict{String,Any}("\$type" => "Integer", "_value" => string(v))
+function to_typed_json(v::Integer)
+    # Neo4j's Integer is 64-bit signed. BigInt/Int128/UInt64 are <: Integer, so
+    # without this guard an out-of-range value ships as a syntactically valid
+    # envelope and dies server-side with a terse "Bad Request" (G3) — enforce the
+    # wire contract loudly at the client boundary instead. In-range foreign
+    # Integer types serialize by value.
+    typemin(Int64) <= v <= typemax(Int64) || throw(ArgumentError(
+        "Neo4j Integer is 64-bit signed; got $(typeof(v)) $(v) outside Int64 range — " *
+        "convert to Int64, store as Float64, or serialize as a string"))
+    return Dict{String,Any}("\$type" => "Integer", "_value" => string(v))
+end
 to_typed_json(v::AbstractFloat) = Dict{String,Any}("\$type" => "Float", "_value" => _float_str(v))
 to_typed_json(v::AbstractString) = Dict{String,Any}("\$type" => "String", "_value" => v)
 
