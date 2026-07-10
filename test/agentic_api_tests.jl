@@ -303,3 +303,78 @@ isdefined(@__MODULE__, :load_readwrite_test01) ||
         @test isempty(gone.rows)
     end
 end
+
+# ── Task 33 (F-24): $param capture in RETURN/WITH/ORDER BY + CASE branches ─────
+# Pre-fix, compile.jl's projection compilers discarded parameters: the CASE arm
+# of _expr_to_cypher created a THROWAWAY `params = Symbol[]` (comment: "CASE in
+# RETURN doesn't capture params"), and there was NO `:$` arm at all — so a bare
+# `$param` in ret/with/order threw "Cannot compile to Cypher expression". Net
+# effect: a `$param` referenced ONLY in a projection emitted `$param` into Cypher
+# but was never BOUND, so the server rejected the query at runtime with
+# "Expected parameter(s): param" (F-24). The fix threads the SHARED
+# (param_syms, param_seen) — the same collections WHERE already uses — through
+# _return_/_return_item_/_expr_/_with_/_orderby_to_cypher and delegates CASE to
+# _case_to_cypher(expr, params, seen). Invariant: emitted Cypher is BYTE-IDENTICAL
+# (params are a side-channel; only the binding set grows).
+@testset "RETURN/WITH/ORDER BY \$param capture (F-24)" begin
+    compile33(src) = _compile_cypher_block(_parse_cypher_block(Meta.parse(src)))
+
+    # ── HEADLINE (the exact F-24 failure): a $param used ONLY in ret() — nowhere
+    # else in the query — MUST bind. Pre-fix this THREW at compile time; even had
+    # it compiled, param_syms would be empty and the server would reject the run.
+    cy, params = compile33("begin\n p::Person\n ret(\$cutoff => :c, p.name)\nend")
+    @test occursin("RETURN \$cutoff AS c", cy)      # $cutoff reaches the Cypher…
+    @test :cutoff in params                          # …AND is bound (F-24 fixed)
+
+    # ── CASE in ret() captures BOTH branch params, string UNCHANGED (byte-exact
+    # against the pre-fix expansion — pure additive capture).
+    cy2, params2 = compile33("begin\n p::Person\n ret(p.name => :name, " *
+        "(if p.age > \$threshold; \$label; else; \"junior\"; end) => :seniority)\nend")
+    @test cy2 == "MATCH (p:Person) RETURN p.name AS name, " *
+                 "CASE WHEN p.age > \$threshold THEN \$label ELSE 'junior' END AS seniority"
+    @test :threshold in params2
+    @test :label in params2
+
+    # ── bare $param alias in ret() (brief Step 1, second shape).
+    cy3, params3 = compile33("begin\n p::Person\n ret(\$threshold => :cutoff, p.name)\nend")
+    @test occursin("RETURN \$threshold AS cutoff, p.name", cy3)
+    @test :threshold in params3
+
+    # ── WITH-clause capture.
+    cy4, params4 = compile33("begin\n p::Person\n with(\$threshold => :t, p)\n ret(p.name)\nend")
+    @test occursin("WITH \$threshold AS t, p", cy4)
+    @test :threshold in params4
+
+    # ── ORDER BY capture (the orderby site is threaded too).
+    cy5, params5 = compile33("begin\n p::Person\n ret(p.name)\n order(\$threshold)\nend")
+    @test occursin("ORDER BY \$threshold", cy5)
+    @test :threshold in params5
+
+    # ── DEDUP: the SAME $param in where() AND ret() binds EXACTLY once (shared
+    # param_seen threaded through both arms — count assertion à la Task 31).
+    cy6, params6 = compile33("begin\n p::Person\n where(p.age > \$threshold)\n " *
+        "ret(\$threshold => :t, p.name)\nend")
+    @test count(==(:threshold), params6) == 1
+
+    # ── End-to-end via @macroexpand: the runtime binding pair is emitted into the
+    # __params Dict (brief Step 1). Pre-fix the first pair is ABSENT (unbound).
+    threshold = 30
+    label = "senior"
+    ex = @macroexpand @cypher conn begin
+        p::Person
+        ret(p.name => :name, (if p.age > $threshold; $label; else; "junior"; end) => :seniority)
+    end
+    s = string(ex)
+    @test occursin("\"threshold\" => threshold", s)   # ← FAILS pre-fix (param unbound)
+    @test occursin("\"label\" => label", s)
+    ex2 = @macroexpand @cypher conn begin
+        p::Person
+        ret($threshold => :cutoff, p.name)
+    end
+    # NB: string(::Expr) escapes `$` inside the emitted query LITERAL (renders it
+    # as `\$`), so match the alias fragment starting AT the `$` (the raw Cypher is
+    # asserted byte-exact on cy3 above). The load-bearing check is the next line:
+    # the runtime binding pair, ABSENT pre-fix — this bare $param is bound now.
+    @test occursin("\$threshold AS cutoff", string(ex2))
+    @test occursin("\"threshold\" => threshold", string(ex2))
+end

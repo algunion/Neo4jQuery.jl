@@ -821,10 +821,12 @@ function _compile_cypher_block_into!(clauses::Vector{Tuple{Symbol,Vector{Any}}},
             if !isempty(args) && args[1] === :distinct
                 items = args[2:end]
                 ret_expr = length(items) == 1 ? items[1] : Expr(:tuple, items...)
-                push!(cypher_parts, "RETURN DISTINCT " * _return_to_cypher(ret_expr))
+                push!(cypher_parts, "RETURN DISTINCT " *
+                                    _return_to_cypher(ret_expr, param_syms, param_seen))
             else
                 ret_expr = length(args) == 1 ? args[1] : Expr(:tuple, args...)
-                push!(cypher_parts, "RETURN " * _return_to_cypher(ret_expr))
+                push!(cypher_parts, "RETURN " *
+                                    _return_to_cypher(ret_expr, param_syms, param_seen))
             end
 
         elseif kind == :with
@@ -832,10 +834,12 @@ function _compile_cypher_block_into!(clauses::Vector{Tuple{Symbol,Vector{Any}}},
             if !isempty(args) && args[1] === :distinct
                 items = args[2:end]
                 w_expr = length(items) == 1 ? items[1] : Expr(:tuple, items...)
-                push!(cypher_parts, "WITH DISTINCT " * _with_to_cypher(w_expr))
+                push!(cypher_parts, "WITH DISTINCT " *
+                                    _with_to_cypher(w_expr, param_syms, param_seen))
             else
                 w_expr = length(args) == 1 ? args[1] : Expr(:tuple, args...)
-                push!(cypher_parts, "WITH " * _with_to_cypher(w_expr))
+                push!(cypher_parts, "WITH " *
+                                    _with_to_cypher(w_expr, param_syms, param_seen))
             end
 
         elseif kind == :unwind
@@ -872,7 +876,7 @@ function _compile_cypher_block_into!(clauses::Vector{Tuple{Symbol,Vector{Any}}},
 
         elseif kind == :orderby
             _flush_set!()
-            push!(cypher_parts, "ORDER BY " * _orderby_to_cypher(args))
+            push!(cypher_parts, "ORDER BY " * _orderby_to_cypher(args, param_syms, param_seen))
 
         elseif kind == :skip
             _flush_set!()
@@ -1026,7 +1030,7 @@ function _compile_cypher_comprehension(comp_expr::Expr)
     end
 
     # RETURN
-    push!(cypher_parts, "RETURN " * _return_to_cypher(body))
+    push!(cypher_parts, "RETURN " * _return_to_cypher(body, param_syms, param_seen))
 
     return join(cypher_parts, " "), param_syms
 end
