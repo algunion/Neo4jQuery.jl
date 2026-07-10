@@ -269,13 +269,25 @@ function _read_header!(sr::StreamingResult)
             # Plain-JSON error document: the server refused the request before it
             # ever streamed (e.g. HTTP 4xx/5xx + {"errors":[…]}). Fail loud instead
             # of returning a silent empty iterator — an LLM consumer reads zero rows
-            # as "no data" and answers wrong (P14a). Same classifier as the
-            # non-streaming path, so stream(tx, …) detects tx expiry too (F-11). The
-            # writer task returned this body on a non-401 response (a 401 is consumed
-            # and re-raised inside _request_core, so it never lands here), so classify
-            # it directly rather than awaiting the task.
+            # as "no data" and answers wrong (P14a).
+            #
+            # Await the writer task FIRST: it and this consumer are two concurrent
+            # readers of one buffer, so which of them sees a 401 body's errors[]
+            # line is a scheduling race under nthreads>1. The task's outcome is
+            # authoritative — a 401 throws AuthenticationError inside _request_core
+            # and _await re-raises it here, deterministically, whoever won the race.
+            # Only a task that RETURNED (non-401 error status; status_exception=false
+            # keeps those non-throwing) falls through to classify the document via
+            # the same classifier as the non-streaming path, so stream(tx, …)
+            # detects tx expiry too (F-11). Bounded wait: a pathological server that
+            # emits an errors[] line on a 2xx and then stalls holds this _await
+            # until it finishes or readtimeout's whole-transfer deadline fires.
             errs = _extract_errors(event)
-            isempty(errs) || _throw_query_error(errs; tx_context=sr._tx_context)
+            if !isempty(errs)
+                resp = _await(sr._task)::HTTP.Response
+                sr._response = resp
+                _throw_query_error(errs; tx_context=sr._tx_context)
+            end
             push!(garbage, line)
         else
             push!(garbage, line)

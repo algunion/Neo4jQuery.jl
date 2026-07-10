@@ -487,6 +487,28 @@ end
     end
 end
 
+# Task 8 review fix (F-08 × 401 race): the writer task and the consumer are two
+# concurrent readers of one BufferStream. Under nthreads>1 the consumer's readline
+# can win the race and consume the 401 body's {"errors":[…]} line before the task's
+# 401 branch sees it — the old errors[] branch then classified it directly as a
+# Neo4jQueryError, the WRONG exception type for `e isa AuthenticationError` callers.
+# The classification must be deterministic regardless of scheduling: the consumer's
+# pre-Header errors[] branch awaits the writer task FIRST and lets ITS exception
+# win; only a task that returned normally (non-401 error response) classifies the
+# errors[] document. Pinned deterministically (no race needed): a task that has
+# ALREADY failed with AuthenticationError + the raw errors[] line in the stream.
+@testset "401 beats errors[] classification — task-first await (F-08)" begin
+    auth_err = AuthenticationError("Neo.ClientError.Security.Unauthorized", "Invalid credentials.")
+    t = Threads.@spawn throw(auth_err)
+    @test timedwait(() -> istaskdone(t), 5.0) === :ok
+    io = IOBuffer("{\"errors\":[{\"code\":\"Neo.ClientError.Security.Unauthorized\",\"message\":\"Invalid credentials.\"}]}\n")
+    sr = Neo4jQuery.StreamingResult(String[], (), nothing, io, t, nothing, false, nothing, false)
+    err = try Neo4jQuery._read_header!(sr); nothing catch e; e end
+    @test err isa AuthenticationError          # ← RED pre-fix: Neo4jQueryError
+    @test !(err isa Neo4jQueryError)
+    @test err.message == "Invalid credentials." # the task's exception, verbatim
+end
+
 # Task 8 (F-08 × close): a consumer that abandons a stream mid-flight calls close(sr)
 # to release it. iterate must then return nothing (no hang), a second close must be a
 # no-op, and once the server finishes the writer task must finish too (no leaked task

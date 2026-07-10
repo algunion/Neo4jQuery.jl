@@ -4,6 +4,8 @@ For large result sets, streaming avoids loading all rows into memory at once. Re
 
 Streaming is genuinely incremental: `stream` issues the HTTP request on a background task that drains the response body into a buffer as bytes arrive, and each `iterate` reads the next row as soon as it lands — a consumer can process the first row long before the server has sent the last. (The request itself is bounded by the connection's read timeout, which covers the whole transfer, not idle time; see [Connections](@ref connections).)
 
+One honest caveat: the internal buffer is unbounded, so if you consume rows slower than the server sends them, the undrained tail of the response still accumulates in memory. Incremental streaming buys first-row latency, not bounded-memory backpressure.
+
 ```@setup stream
 using Neo4jQuery
 import Neo4jQuery: summary

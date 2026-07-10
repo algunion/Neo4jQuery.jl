@@ -119,15 +119,26 @@ function _request_core(url::AbstractString, method::Symbol, body;
     if resp.status == 401
         # In the streaming path `resp.body` is the caller's still-open response_stream
         # (a Base.BufferStream), so reading it to EOF via String(resp.body) would block
-        # forever. HTTP.jl has already written the full 401 body into it (MessageRequest
-        # copies context[:response_body] into any non-byte response body before
-        # returning), so read exactly what is buffered. Consuming it also empties the
-        # buffer, so the streaming reader hits EOF and re-raises this error via _await
-        # instead of re-classifying the errors[] line as a generic Neo4jQueryError.
+        # forever. Worse, the stream has TWO concurrent readers — this task and the
+        # consumer — so reading the buffered bytes here races the consumer under
+        # nthreads>1. HTTP.jl stashes every error-status body in
+        # `context[:response_body]` (StreamRequest.readbody!) before MessageRequest
+        # copies it into the response_stream, and `reset!` only deletes it between
+        # retries (we throw immediately), so read THAT race-free copy instead: the
+        # AuthenticationError carries the real code/message in every schedule. The
+        # bytesavailable read is a fallback for a hypothetical missing context entry —
+        # bounded, never blocking. Whichever reader wins the stream bytes, the
+        # consumer classifies deterministically: its pre-Header errors[] branch and
+        # EOF path both await this task first (`_await` in streaming.jl).
         rb = resp.body
         resp_body = if rb isa Base.BufferStream
-            n = bytesavailable(rb)
-            _parse_body_str(n > 0 ? String(read(rb, n)) : "")
+            ctx_body = get(resp.request.context, :response_body, nothing)
+            if ctx_body isa Vector{UInt8}
+                _parse_body_str(String(copy(ctx_body)))
+            else
+                n = bytesavailable(rb)
+                _parse_body_str(n > 0 ? String(read(rb, n)) : "")
+            end
         else
             _parse_body(resp)
         end
