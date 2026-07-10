@@ -11,6 +11,12 @@ Property access is supported via both indexing and dot syntax:
 node["name"]   # indexing
 node.name      # dot syntax
 ```
+
+Two `Node`s are equal (and hash equal) when they share the same `element_id`, matching
+the official Neo4j drivers — a `Node` denotes a graph element, not a snapshot of its
+properties. NOTE: element ids are only guaranteed stable within a transaction, so equal
+ids read from different snapshots may carry different property values yet still compare
+`==`. This is deliberate and lets `Node`s dedup in a `Set`/`Dict` (result handling, F-17).
 """
 struct Node
     element_id::String
@@ -28,6 +34,9 @@ a type string, and a property map.
 rel["since"]   # indexing
 rel.since      # dot syntax
 ```
+
+Equality and hashing follow the same `element_id` identity rule as [`Node`](@ref): two
+`Relationship`s with the same `element_id` are equal regardless of property snapshot.
 """
 struct Relationship
     element_id::String
@@ -42,6 +51,9 @@ end
 
 A Neo4j graph path—an alternating sequence of [`Node`](@ref) and
 [`Relationship`](@ref) objects.
+
+Two `Path`s are equal (and hash equal) when their `elements` are equal in the same
+order, element-wise by the [`Node`](@ref)/[`Relationship`](@ref) element-id identity.
 """
 struct Path
     elements::Vector{Union{Node,Relationship}}
@@ -52,6 +64,8 @@ end
 
 A Cypher spatial point value.  Stored as an SRID integer and a coordinate vector.
 Serialised on the wire as a WKT string, e.g. `"SRID=7203;POINT (1.2 3.4)"`.
+
+Two points are equal (and hash equal) when their `srid` and `coordinates` match.
 """
 struct CypherPoint
     srid::Int
@@ -63,6 +77,8 @@ end
 
 A Cypher duration value.  Stored as the original ISO-8601 string
 (e.g. `"P14DT16H12M"`).
+
+Equality (and hashing) compares the stored ISO-8601 string.
 """
 struct CypherDuration
     value::String
@@ -72,6 +88,8 @@ end
     CypherVector
 
 A Neo4j vector value (Enterprise Edition).
+
+Equality (and hashing) compares `coordinates_type` and `coordinates`.
 """
 struct CypherVector
     coordinates_type::String
@@ -190,6 +208,37 @@ Base.:(==)(a::CypherTime, b::CypherTime) =
         getfield(a, :timezone).offset == getfield(b, :timezone).offset
 Base.hash(t::CypherTime, h::UInt) =
     hash(getfield(t, :timezone).offset, hash(getfield(t, :time), hash(:CypherTime, h)))
+
+# ── Equality & hashing (F-17) ────────────────────────────────────────────────
+# Without these, `==` falls through to the `===` default, which egal-compares each
+# struct's heap-allocated containers (labels vector, property `JSON.Object`, coordinate
+# vector). Two content-identical values built from *separate* parses therefore compared
+# unequal, so `Set`/`Dict` dedup of query results silently kept duplicates (F-17). Every
+# custom `==` here obeys the `==`/`hash` law (a == b ⟹ hash(a) == hash(b)), so each pairs
+# with a matching `hash` (mandatory — a lone `==` breaks the type in hashed collections).
+# `getfield` is used for Node/Relationship/Path: Node/Relationship override `getproperty`
+# for dot-access to *properties*, so `a.element_id` would route through that machinery.
+
+# Graph entities take identity from the element id, matching the official Neo4j drivers:
+# two references to the same graph element are equal. NOTE: element ids are only
+# guaranteed stable within a transaction, so equal ids read from different snapshots may
+# carry different property values yet still compare `==` — the deliberate driver-parity
+# semantics, documented on the type docstrings.
+Base.:(==)(a::Node, b::Node) = getfield(a, :element_id) == getfield(b, :element_id)
+Base.hash(n::Node, h::UInt) = hash(getfield(n, :element_id), hash(:Neo4jNode, h))
+Base.:(==)(a::Relationship, b::Relationship) = getfield(a, :element_id) == getfield(b, :element_id)
+Base.hash(r::Relationship, h::UInt) = hash(getfield(r, :element_id), hash(:Neo4jRelationship, h))
+
+# Value types compare by content (order-sensitive for the Path element sequence).
+Base.:(==)(a::Path, b::Path) = getfield(a, :elements) == getfield(b, :elements)
+Base.hash(p::Path, h::UInt) = hash(getfield(p, :elements), hash(:Neo4jPath, h))
+Base.:(==)(a::CypherPoint, b::CypherPoint) = a.srid == b.srid && a.coordinates == b.coordinates
+Base.hash(p::CypherPoint, h::UInt) = hash((p.srid, p.coordinates), h)
+Base.:(==)(a::CypherDuration, b::CypherDuration) = a.value == b.value
+Base.hash(d::CypherDuration, h::UInt) = hash(d.value, h)
+Base.:(==)(a::CypherVector, b::CypherVector) =
+    a.coordinates_type == b.coordinates_type && a.coordinates == b.coordinates
+Base.hash(v::CypherVector, h::UInt) = hash((v.coordinates_type, v.coordinates), h)
 
 function _props_str(props::JSON.Object{String,Any})
     isempty(props) && return "{}"

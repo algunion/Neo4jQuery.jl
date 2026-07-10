@@ -190,15 +190,14 @@ end
 # marker, so a 3D CypherPoint serialized to 2D-shaped WKT the server would reject. The
 # regex gains an optional `(?:Z\s*)?`; `_to_wkt` emits `Z ` for a 3-coordinate point and
 # now REJECTS any point that is neither 2D nor 3D (a 4-coord point would otherwise emit
-# "POINT Z (1 2 3 4)", nonsense WKT). CypherPoint has no `==` until Task 16 — compare
-# `.srid`/`.coordinates` fields here.
+# "POINT Z (1 2 3 4)", nonsense WKT). Task 16 later gave CypherPoint content `==`, so the
+# read-path checks below compare whole `CypherPoint` values, not `.srid`/`.coordinates`.
 @testset "3D POINT Z (F-07)" begin
     pt(s) = _materialize_typed(JSON.Object{String,Any}("\$type" => "Point", "_value" => s))
 
     # Read path: a 3D point materializes (RED pre-fix: THREW "Cannot parse WKT point").
     p3 = pt("SRID=9157;POINT Z (1.0 2.0 3.0)")
-    @test p3.srid == 9157
-    @test p3.coordinates == [1.0, 2.0, 3.0]
+    @test p3 == CypherPoint(9157, [1.0, 2.0, 3.0])   # Task 16 `==`; was field-wise
 
     # Write path: a 3D CypherPoint emits `Z` (RED pre-fix: "SRID=9157;POINT (1.0 2.0 3.0)").
     @test Neo4jQuery._to_wkt(CypherPoint(9157, [1.0, 2.0, 3.0])) == "SRID=9157;POINT Z (1.0 2.0 3.0)"
@@ -209,16 +208,15 @@ end
     # Full read→write round-trip is byte-identical for both dimensionalities.
     @test Neo4jQuery._to_wkt(p3) == "SRID=9157;POINT Z (1.0 2.0 3.0)"
     p2 = pt("SRID=7203;POINT (1.2 3.4)")
-    @test p2.coordinates == [1.2, 3.4]
+    @test p2 == CypherPoint(7203, [1.2, 3.4])        # Task 16 `==`; was field-wise
     @test Neo4jQuery._to_wkt(p2) == "SRID=7203;POINT (1.2 3.4)"
 
     # Edge: server may emit `Z` flush against the paren (no space) — `Z\s*` accepts zero spaces.
     z0 = pt("SRID=9157;POINT Z(1 2 3)")
-    @test z0.srid == 9157
-    @test z0.coordinates == [1.0, 2.0, 3.0]
+    @test z0 == CypherPoint(9157, [1.0, 2.0, 3.0])   # Task 16 `==`; was field-wise
 
     # Edge: scientific-notation coordinates parse (`parse(Float64, "1.5e10")`).
-    @test pt("SRID=9157;POINT Z (1.5e10 2.0 3.0)").coordinates == [1.5e10, 2.0, 3.0]
+    @test pt("SRID=9157;POINT Z (1.5e10 2.0 3.0)") == CypherPoint(9157, [1.5e10, 2.0, 3.0])
 
     # Case sensitivity is UNCHANGED by this fix: the regex matches literal `SRID`/`POINT`,
     # so a lowercase WKT string still fails to parse. Documents current behavior — NOT a new
@@ -300,6 +298,78 @@ end
     @test occursin("Symbol", err.msg)          # names the offending Julia type (already-GREEN)
     @test occursin("to_typed_json", err.msg)   # tells the user HOW to extend (already-GREEN)
     @test occursin("Map", err.msg)             # the dict-is-always-a-Map note — RED pre-fix
+end
+
+# Task 16 (F-17): content-identical graph entities compared UNEQUAL because `==` fell
+# through to the `===` default, which egal-compares each struct's heap-allocated
+# containers (labels / property `JSON.Object` / coordinate vector). Two Nodes parsed
+# separately were therefore never equal, so `Set`/`Dict` dedup of query results silently
+# kept duplicates. Graph entities (Node/Relationship) now take identity from the element
+# id (official-driver parity); value types (Path/Point/Duration/Vector) compare by
+# content. Each `==` pairs with a matching `hash` (the a == b ⟹ hash(a) == hash(b) law).
+@testset "graph entity equality (F-17)" begin
+    n1 = Node("4:db:1", ["A"], JSON.parse("{\"x\":1}"))
+    n2 = Node("4:db:1", ["A"], JSON.parse("{\"x\":1}"))
+    @test n1 == n2                                   # ← FAILS pre-fix
+    @test hash(n1) == hash(n2)
+    @test length(Set([n1, n2])) == 1
+    r1 = Relationship("5:db:2", "4:db:1", "4:db:3", "KNOWS", JSON.parse("{}"))
+    r2 = Relationship("5:db:2", "4:db:1", "4:db:3", "KNOWS", JSON.parse("{}"))
+    @test r1 == r2 && hash(r1) == hash(r2)
+    @test Path([n1, r1, Node("4:db:3", String[], JSON.parse("{}"))]) ==
+          Path([n2, r2, Node("4:db:3", String[], JSON.parse("{}"))])
+    p1 = CypherPoint(7203, [1.0, 2.0]); p2 = CypherPoint(7203, [1.0, 2.0])
+    @test p1 == p2 && hash(p1) == hash(p2)
+    v1 = CypherVector("FLOAT32", ["1.0", "2.0"]); v2 = CypherVector("FLOAT32", ["1.0", "2.0"])
+    @test v1 == v2
+end
+
+# Polarity + the `==`/`hash` consistency law, per type. `==` and `hash` must move together:
+# a lone `==` (or a `hash` keying on more than `==` observes) breaks the type in hashed
+# collections, so every equal pair below is also asserted hash-equal, and every unequal
+# case pins the discriminating field.
+@testset "graph entity equality — polarity & hash law (F-17)" begin
+    # Graph entities: element-id identity. Different ids ⇒ unequal …
+    @test Node("4:db:1", ["A"], JSON.parse("{\"x\":1}")) !=
+          Node("4:db:2", ["A"], JSON.parse("{\"x\":1}"))
+    @test Relationship("5:db:2", "4:db:1", "4:db:3", "KNOWS", JSON.parse("{}")) !=
+          Relationship("5:db:9", "4:db:1", "4:db:3", "KNOWS", JSON.parse("{}"))
+
+    # … same id, DIFFERENT labels AND properties ⇒ EQUAL (and hash-equal). This is the
+    # deliberate driver-parity / snapshot semantics documented on the `Node` docstring: a
+    # Node denotes a graph element, not a snapshot of its property values. `hash` keying on
+    # the element id alone is what keeps the law intact for this case.
+    na = Node("4:db:1", ["A"], JSON.parse("{\"x\":1}"))
+    nb = Node("4:db:1", ["B"], JSON.parse("{\"x\":2}"))
+    @test na == nb
+    @test hash(na) == hash(nb)
+
+    # Path is order-sensitive: same nodes, reversed order ⇒ unequal (the two nodes carry
+    # distinct ids, so the element-wise comparison distinguishes the orderings).
+    x = Node("4:db:1", String[], JSON.parse("{}"))
+    y = Node("4:db:2", String[], JSON.parse("{}"))
+    @test Path(Union{Node,Relationship}[x, y]) != Path(Union{Node,Relationship}[y, x])
+    @test Path(Union{Node,Relationship}[x, y]) == Path(Union{Node,Relationship}[x, y])
+    @test hash(Path(Union{Node,Relationship}[x, y])) ==
+          hash(Path(Union{Node,Relationship}[x, y]))
+
+    # CypherPoint: differing srid or coordinates ⇒ unequal; 2D ≠ 3D by coordinate count.
+    @test CypherPoint(7203, [1.0, 2.0]) != CypherPoint(4326, [1.0, 2.0])
+    @test CypherPoint(7203, [1.0, 2.0]) != CypherPoint(7203, [1.0, 9.0])
+    @test CypherPoint(7203, [1.0, 2.0]) != CypherPoint(7203, [1.0, 2.0, 3.0])
+
+    # CypherDuration: CONTENT equality, not string egality. A duration built from a
+    # non-literal string still compares (and hashes) equal to the literal form — the
+    # `===` default would have said false here (fresh String object): the exact F-17 trap.
+    @test CypherDuration("P1D") == CypherDuration(string("P", "1D"))
+    @test hash(CypherDuration("P1D")) == hash(CypherDuration(string("P", "1D")))
+    @test CypherDuration("P1D") != CypherDuration("P2D")
+
+    # CypherVector: differing type or coordinates ⇒ unequal; equal ⇒ hash-equal.
+    @test CypherVector("FLOAT32", ["1.0", "2.0"]) != CypherVector("FLOAT64", ["1.0", "2.0"])
+    @test CypherVector("FLOAT32", ["1.0", "2.0"]) != CypherVector("FLOAT32", ["1.0", "9.0"])
+    @test hash(CypherVector("FLOAT32", ["1.0", "2.0"])) ==
+          hash(CypherVector("FLOAT32", ["1.0", "2.0"]))
 end
 
 # Live-gated (test01): the server itself must agree the round-tripped parameter
