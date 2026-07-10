@@ -107,7 +107,7 @@ function _assert_read(statement::AbstractString)
 end
 
 """
-    read_query(roc, statement; parameters, include_counters, bookmarks, impersonated_user) -> QueryResult
+    read_query(roc, statement; parameters, include_counters, bookmarks, impersonated_user, max_execution_time, tx_metadata, timeout) -> QueryResult
 
 Run a read-only query. Rejects any write statement before contacting the server;
 `access_mode` is always `:read`. Because reads are provably side-effect-free
@@ -116,16 +116,22 @@ a stale pooled connection) is automatically retried once — see [`query`](@ref)
 A read timeout, however, is never retried (HTTP.jl treats it as unrecoverable);
 it surfaces as `Neo4jHTTPError`. `timeout::Union{Int,Nothing}=nothing` overrides
 the connection's `readtimeout` for this call (F-10).
+`max_execution_time::Union{Int,Nothing}` (seconds, `> 0`) and
+`tx_metadata::Union{AbstractDict,Nothing}` are the server-side execution controls
+from [`query`](@ref) (**require Neo4j 2026.04+**; `nothing` omits them).
 """
 function read_query(roc::ReadOnlyConnection, statement::AbstractString;
     parameters::Dict{String,<:Any}=Dict{String,Any}(),
     include_counters::Bool=false,
     bookmarks::Vector{String}=String[],
     impersonated_user::Union{String,Nothing}=nothing,
+    max_execution_time::Union{Int,Nothing}=nothing,
+    tx_metadata::Union{AbstractDict,Nothing}=nothing,
     timeout::Union{Int,Nothing}=nothing)
     _assert_read(statement)
     return query(roc.conn, statement; parameters, access_mode=:read,
-        include_counters, bookmarks, impersonated_user, timeout)
+        include_counters, bookmarks, impersonated_user,
+        max_execution_time, tx_metadata, timeout)
 end
 
 function read_query(roc::ReadOnlyConnection, q::CypherQuery;

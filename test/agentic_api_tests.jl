@@ -316,6 +316,44 @@ end
         begin_transaction(conn; max_execution_time=30, tx_metadata=Dict("app" => "qa"))
     end
     @test !occursin("\"statement\"", cap[])
+
+    # 4) read_query (ReadOnlyConnection): the RO wrapper enumerates its kwargs
+    #    explicitly (Task 7 timeout style), so without plumbing the two controls are
+    #    UNREACHABLE on exactly the connection type agents use — while read_stream
+    #    (kwargs...) forwards them. Pre-fix RED: MethodError on the kwargs.
+    cap = Ref{String}("")
+    capture(cap) do conn
+        r = read_query(ReadOnlyConnection(conn), "RETURN 1";
+            max_execution_time=30, tx_metadata=Dict("app" => "qa"))
+        @test r isa QueryResult
+    end
+    @test occursin("\"maxExecutionTime\":30", cap[])
+    @test occursin("\"txMetadata\"", cap[])
+    @test occursin("\"\$type\":\"String\"", cap[])
+    @test occursin("\"_value\":\"qa\"", cap[])
+    @test occursin("\"accessMode\":\"Read\"", cap[])   # RO path still routes as Read
+
+    # …and the CypherQuery overload forwards too (rides kwargs... into the String one).
+    cap = Ref{String}("")
+    capture(cap) do conn
+        read_query(ReadOnlyConnection(conn), cypher"RETURN 1"; max_execution_time=30)
+    end
+    @test occursin("\"maxExecutionTime\":30", cap[])
+
+    # 5) NESTED tx_metadata value: a Dict value serializes as a Map envelope whose
+    #    entries are themselves typed envelopes (nested Integer). Pins the recursive
+    #    typed-envelope choice — the one assumption the live probe will settle. All
+    #    pins are adjacent key:value pairs, immune to Dict iteration order.
+    cap = Ref{String}("")
+    capture(cap) do conn
+        query(conn, "RETURN 1"; tx_metadata=Dict("ctx" => Dict("id" => 5)))
+    end
+    @test occursin("\"txMetadata\"", cap[])
+    @test occursin("\"ctx\"", cap[])
+    @test occursin("\"\$type\":\"Map\"", cap[])        # outer envelope for the Dict value
+    @test occursin("\"id\"", cap[])
+    @test occursin("\"\$type\":\"Integer\"", cap[])    # nested envelope …
+    @test occursin("\"_value\":\"5\"", cap[])          # … Integer _value stringified
 end
 
 @testset "maxExecutionTime / txMetadata builder contract (F-10 server half)" begin
