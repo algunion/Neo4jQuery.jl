@@ -114,6 +114,14 @@ function _build_query_body(statement::AbstractString,
     include_counters::Bool=false,
     bookmarks::Vector{String}=String[],
     impersonated_user::Union{String,Nothing}=nothing)
+    # Single chokepoint for every body (query, stream, DSL): reject an invalid
+    # access_mode loudly. Without this a typo like :reed or wrong case :READ silently
+    # fell through the `access_mode == :read` check below and routed as :write —
+    # dropping read-routing AND the read-only retry with no error (F-14). The tx paths
+    # never pass access_mode (always the valid default :write), so this is a no-op for
+    # them.
+    access_mode in (:read, :write) ||
+        throw(ArgumentError("access_mode must be :read or :write, got $(repr(access_mode))"))
     prepared = _prepare_statement(statement, parameters)
     body = Dict{String,Any}("statement" => prepared)
 
