@@ -387,6 +387,7 @@ const _MUTATION_CLAUSES = Set{Symbol}([
     :create, :merge_clause, :set, :remove,
     :delete, :detach_delete, :on_create_set, :on_match_set,
     :create_index, :drop_index, :create_constraint, :drop_constraint,
+    :create_vector_index, :create_fulltext_index,  # F-29 DDL (schema writes)
     :foreach,  # FOREACH body always contains mutations
 ])
 
@@ -448,6 +449,8 @@ const _CYPHER_CLAUSE_FUNCTIONS = Dict{Symbol,Symbol}(
     :drop_index => :drop_index,
     :create_constraint => :create_constraint,
     :drop_constraint => :drop_constraint,
+    :create_vector_index => :create_vector_index,
+    :create_fulltext_index => :create_fulltext_index,
 )
 
 # ── Path selector functions (SHORTEST, ALL SHORTEST, ANY, etc.) ──────────────
@@ -941,6 +944,12 @@ function _compile_cypher_block_into!(clauses::Vector{Tuple{Symbol,Vector{Any}}},
 
         elseif kind == :drop_constraint
             push!(cypher_parts, _constraint_to_cypher(:drop, args))
+
+        elseif kind == :create_vector_index
+            push!(cypher_parts, _vector_index_to_cypher(args))
+
+        elseif kind == :create_fulltext_index
+            push!(cypher_parts, _fulltext_index_to_cypher(args))
 
         else
             error("Unknown clause kind in @cypher: $kind")

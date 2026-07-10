@@ -905,22 +905,49 @@ end
 # ── Index / Constraint compilation ───────────────────────────────────────────
 
 """
+    _split_if_not_exists(args) -> (suffix::String, remaining::Vector)
+
+Detect an optional trailing `:if_not_exists` flag on a `create_index` /
+`create_constraint` clause (F-29). Returns `(" IF NOT EXISTS", args[1:end-1])`
+when the last argument is `:if_not_exists`, else `("", args)`.
+
+Stripping the flag *before* positional parsing keeps the flag-absent emission
+BYTE-IDENTICAL to prior releases. Caveat: because the token is reserved as a
+trailing flag, a DDL object literally named `:if_not_exists` (pathological)
+would be consumed as the flag rather than as its name.
+"""
+function _split_if_not_exists(args::Vector)::Tuple{String,Vector}
+    if !isempty(args)
+        last = args[end]
+        if (last isa QuoteNode && last.value === :if_not_exists) || last === :if_not_exists
+            return (" IF NOT EXISTS", args[1:end-1])
+        end
+    end
+    return ("", args)
+end
+
+"""
     _index_to_cypher(action, args) -> String
 
 Compile index creation/dropping.
 - `@create_index :Label :property` → `CREATE INDEX FOR (n:Label) ON (n.property)`
 - `@drop_index :index_name` → `DROP INDEX index_name`
+
+An optional trailing `:if_not_exists` on the create form emits `IF NOT EXISTS`
+(F-29). Names/labels/properties are interpolated **raw** (a Symbol carrying
+backtick-hostile characters is emitted verbatim — the caller's responsibility).
 """
 function _index_to_cypher(action::Symbol, args::Vector)::String
     if action == :create
+        ine, args = _split_if_not_exists(args)
         length(args) >= 2 || error("@create_index expects :Label :property")
         label = _get_symbol(args[1])
         prop = _get_symbol(args[2])
         if length(args) >= 3
             index_name = _get_symbol(args[3])
-            return "CREATE INDEX $(index_name) FOR (n:$(label)) ON (n.$(prop))"
+            return "CREATE INDEX $(index_name)$(ine) FOR (n:$(label)) ON (n.$(prop))"
         end
-        return "CREATE INDEX FOR (n:$(label)) ON (n.$(prop))"
+        return "CREATE INDEX$(ine) FOR (n:$(label)) ON (n.$(prop))"
     else
         length(args) >= 1 || error("@drop_index expects :index_name")
         index_name = _get_symbol(args[1])
@@ -934,9 +961,13 @@ end
 Compile constraint creation/dropping.
 - `@create_constraint :Label :property :unique` → `CREATE CONSTRAINT FOR (n:Label) REQUIRE n.property IS UNIQUE`
 - `@drop_constraint :constraint_name` → `DROP CONSTRAINT constraint_name IF EXISTS`
+
+An optional trailing `:if_not_exists` on the create form emits `IF NOT EXISTS`
+(F-29). Names/labels/properties are interpolated **raw** (see `_index_to_cypher`).
 """
 function _constraint_to_cypher(action::Symbol, args::Vector)::String
     if action == :create
+        ine, args = _split_if_not_exists(args)
         length(args) >= 3 || error("@create_constraint expects :Label :property :constraint_type")
         label = _get_symbol(args[1])
         prop = _get_symbol(args[2])
@@ -944,15 +975,15 @@ function _constraint_to_cypher(action::Symbol, args::Vector)::String
         if constraint_type == :unique
             if length(args) >= 4
                 cname = _get_symbol(args[4])
-                return "CREATE CONSTRAINT $(cname) FOR (n:$(label)) REQUIRE n.$(prop) IS UNIQUE"
+                return "CREATE CONSTRAINT $(cname)$(ine) FOR (n:$(label)) REQUIRE n.$(prop) IS UNIQUE"
             end
-            return "CREATE CONSTRAINT FOR (n:$(label)) REQUIRE n.$(prop) IS UNIQUE"
+            return "CREATE CONSTRAINT$(ine) FOR (n:$(label)) REQUIRE n.$(prop) IS UNIQUE"
         elseif constraint_type == :not_null || constraint_type == :notnull
             if length(args) >= 4
                 cname = _get_symbol(args[4])
-                return "CREATE CONSTRAINT $(cname) FOR (n:$(label)) REQUIRE n.$(prop) IS NOT NULL"
+                return "CREATE CONSTRAINT $(cname)$(ine) FOR (n:$(label)) REQUIRE n.$(prop) IS NOT NULL"
             end
-            return "CREATE CONSTRAINT FOR (n:$(label)) REQUIRE n.$(prop) IS NOT NULL"
+            return "CREATE CONSTRAINT$(ine) FOR (n:$(label)) REQUIRE n.$(prop) IS NOT NULL"
         else
             error("Unsupported constraint type: $constraint_type. Expected :unique or :not_null")
         end
@@ -961,6 +992,53 @@ function _constraint_to_cypher(action::Symbol, args::Vector)::String
         cname = _get_symbol(args[1])
         return "DROP CONSTRAINT $(cname) IF EXISTS"
     end
+end
+
+"""
+    _vector_index_to_cypher(args) -> String
+
+Compile `create_vector_index(:name, :Label, :property, dims::Int, :sim)` into
+Neo4j vector-index DDL:
+
+    CREATE VECTOR INDEX name IF NOT EXISTS FOR (n:Label) ON n.property
+    OPTIONS {indexConfig: {`vector.dimensions`: dims, `vector.similarity_function`: 'sim'}}
+
+`dims` must be a **positive integer literal** — index DDL cannot be parameterized,
+so a runtime variable is rejected at expansion. `sim ∈ (:cosine, :euclidean)`.
+Name/label/property are interpolated **raw** (see `_index_to_cypher`).
+"""
+function _vector_index_to_cypher(args::Vector)::String
+    length(args) == 5 ||
+        error("create_vector_index expects (:name, :Label, :property, dimensions::Int, " *
+              ":cosine|:euclidean), got $(length(args)) argument(s)")
+    name = _get_symbol(args[1]); label = _get_symbol(args[2]); prop = _get_symbol(args[3])
+    dims = args[4]
+    dims isa Integer && dims > 0 ||
+        error("create_vector_index dimensions must be a positive Int literal " *
+              "(index DDL cannot be parameterized), got $(repr(dims))")
+    sim = _get_symbol(args[5])
+    sim in (:cosine, :euclidean) ||
+        error("create_vector_index similarity must be :cosine or :euclidean, got $(repr(sim))")
+    return "CREATE VECTOR INDEX $(name) IF NOT EXISTS FOR (n:$(label)) ON n.$(prop) " *
+           "OPTIONS {indexConfig: {`vector.dimensions`: $(dims), `vector.similarity_function`: '$(sim)'}}"
+end
+
+"""
+    _fulltext_index_to_cypher(args) -> String
+
+Compile `create_fulltext_index(:name, :Label, :prop...)` into:
+
+    CREATE FULLTEXT INDEX name IF NOT EXISTS FOR (n:Label) ON EACH [n.p1, n.p2, ...]
+
+At least one property is required. Name/label/properties interpolated **raw**.
+"""
+function _fulltext_index_to_cypher(args::Vector)::String
+    length(args) >= 3 ||
+        error("create_fulltext_index expects (:name, :Label, :property...) with at least " *
+              "one property, got $(length(args)) argument(s)")
+    name = _get_symbol(args[1]); label = _get_symbol(args[2])
+    props = join(["n.$(_get_symbol(p))" for p in args[3:end]], ", ")
+    return "CREATE FULLTEXT INDEX $(name) IF NOT EXISTS FOR (n:$(label)) ON EACH [$(props)]"
 end
 
 """Extract a Symbol from a QuoteNode or Symbol."""
