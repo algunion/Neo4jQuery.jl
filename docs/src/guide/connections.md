@@ -48,7 +48,7 @@ result = query(conn, "MATCH (n) RETURN count(n) AS c"; timeout=5)
 A timed-out request is **not** retried, even for a read: the underlying HTTP layer treats a timeout as unrecoverable, so it surfaces immediately as the typed error rather than doubling the wall-clock wait.
 
 !!! note "Client vs. server timeouts"
-    These are **client-side** timeouts — they abort the client's wait, but do not tell Neo4j to stop executing. Bounding *server-side* execution (the Query API's `max_execution_time`, so the database itself stops a pathological query) is tracked separately and documented when that support lands.
+    These are **client-side** timeouts — they abort the client's wait, but do not tell Neo4j to stop executing. To bound *server-side* execution, pass `max_execution_time` (seconds) to [`query`](@ref)/[`stream`](@ref)/[`begin_transaction`](@ref): the database itself aborts a pathological query after that budget and returns a Cypher error (**requires Neo4j 2026.04+**; older servers reject the unknown field — that server error is the intended signal). Set the client `timeout` **larger** than `max_execution_time` so the server's own abort wins and surfaces as a clean error, instead of the client giving up first and leaving the query running. The companion `tx_metadata` keyword stamps arbitrary metadata on the transaction (visible in `SHOW TRANSACTIONS` / the query log).
 
 ## `connect_from_env`
 

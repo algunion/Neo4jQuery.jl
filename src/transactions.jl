@@ -25,7 +25,7 @@ end
 # ── Open ─────────────────────────────────────────────────────────────────────
 
 """
-    begin_transaction(conn; statement=nothing, parameters=Dict{String,Any}(), bookmarks=String[]) -> Transaction
+    begin_transaction(conn; statement=nothing, parameters=Dict{String,Any}(), bookmarks=String[], max_execution_time=nothing, tx_metadata=nothing) -> Transaction
 
 Open a new explicit transaction, optionally executing an initial statement.
 
@@ -36,6 +36,12 @@ The `statement` keyword accepts a plain `String`, a [`CypherQuery`](@ref)
 return value of a prior [`commit!`](@ref)): the new transaction is guaranteed to
 observe every write acknowledged by those bookmarks. An empty vector (the
 default) omits the key entirely, so unbookmarked transactions are unaffected.
+
+`max_execution_time::Union{Int,Nothing}` (seconds, `> 0`) and
+`tx_metadata::Union{AbstractDict,Nothing}` set the whole transaction's server-side
+execution budget and metadata — see [`query`](@ref) for the semantics. Both
+**require Neo4j 2026.04+** (older servers reject the unknown fields); `nothing`
+(the default) omits them, and they carry on all three `statement` branches.
 
 # Examples
 ```julia
@@ -56,16 +62,21 @@ tx2 = begin_transaction(conn; bookmarks=bookmarks)
 function begin_transaction(conn::Neo4jConnection;
     statement::Union{AbstractString,CypherQuery,Nothing}=nothing,
     parameters::Dict{String,<:Any}=Dict{String,Any}(),
-    bookmarks::Vector{String}=String[])
+    bookmarks::Vector{String}=String[],
+    max_execution_time::Union{Int,Nothing}=nothing,
+    tx_metadata::Union{AbstractDict,Nothing}=nothing)
     body = if statement isa CypherQuery
         merged = merge(statement.parameters, parameters)
-        _build_query_body(statement.statement, merged; bookmarks)
+        _build_query_body(statement.statement, merged; bookmarks, max_execution_time, tx_metadata)
     elseif statement !== nothing
-        _build_query_body(statement, parameters; bookmarks)
+        _build_query_body(statement, parameters; bookmarks, max_execution_time, tx_metadata)
     else
+        # No-statement branch bypasses _build_query_body, so apply both bookmarks and
+        # the execution controls explicitly — otherwise a bare
+        # begin_transaction(conn; max_execution_time=…) would silently drop them.
         b = Dict{String,Any}()
         isempty(bookmarks) || (b["bookmarks"] = bookmarks)
-        b
+        _apply_execution_controls!(b; max_execution_time, tx_metadata)
     end
 
     # tx_context stays false: a begin references no existing transaction, so its

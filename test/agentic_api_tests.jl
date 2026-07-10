@@ -239,3 +239,135 @@ isdefined(@__MODULE__, :load_readwrite_test01) ||
         end
     end
 end
+
+# ── Task 28: max_execution_time / tx_metadata pass-through (F-10 server half) ──
+# Neo4j 2026.04+ added two request fields: `maxExecutionTime` (seconds — the server
+# aborts a query past that wall-clock budget) and `txMetadata` (arbitrary metadata
+# stamped on the transaction, visible in SHOW TRANSACTIONS / the query log). This is
+# the SERVER half of F-10 (the client `timeout` is the client half). Pre-fix RED:
+# query/stream/begin_transaction have no such kwargs → MethodError. These tests pin
+# the wire body across every path, the typed-envelope choice for txMetadata values,
+# empty→key-absent polarity, Symbol-key coercion, and fail-loud on a non-positive
+# budget. Older servers reject the unknown fields — that server error is the intended
+# signal (recorded by the live probe below), so there is no client-side version gate.
+
+@testset "maxExecutionTime + txMetadata wire body (F-10 server half; Neo4j 2026.04+)" begin
+    # Capture the raw request body; reply with a fixed success envelope. `ctype`/`reply`
+    # let the same helper serve the JSON query/begin path and the JSONL stream path
+    # (which needs a Header event so _read_header! returns instead of failing loud).
+    function capture(f, cap::Ref{String}; ctype=HttpHarness.TYPED_MEDIA, reply="{}")
+        server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+            cap[] = String(read(http))
+            HTTP.setstatus(http, 202)
+            HTTP.setheader(http, "Content-Type" => ctype)
+            HTTP.startwrite(http)
+            write(http, reply)
+        end
+        try
+            f(Neo4jConnection("http://127.0.0.1:$(HTTP.port(server))", "neo4j", BasicAuth("u", "p")))
+        finally
+            close(server)
+        end
+    end
+    HEADER = "{\"\$event\":\"Header\",\"_body\":{\"fields\":[]}}\n"
+    BEGIN = "{\"transaction\":{\"id\":\"tx-1\",\"expires\":\"2026-01-01T00:00:00Z\"}}"
+
+    # 1) query implicit path: both fields on the wire; txMetadata value is a TYPED
+    #    envelope ("$type"/"_value"), not plain JSON — the pinned Query-API contract.
+    cap = Ref{String}("")
+    capture(cap) do conn
+        query(conn, "RETURN 1"; max_execution_time=30, tx_metadata=Dict("app" => "qa"))  # MethodError pre-fix
+    end
+    @test occursin("\"maxExecutionTime\":30", cap[])
+    @test occursin("\"txMetadata\"", cap[])
+    @test occursin("\"app\"", cap[])
+    @test occursin("\"\$type\":\"String\"", cap[])   # value is a typed envelope, not bare "qa"
+    @test occursin("\"_value\":\"qa\"", cap[])
+
+    # 2) stream path: independent serializer (_start_stream), same body contract.
+    cap = Ref{String}("")
+    capture(cap; ctype=HttpHarness.TYPED_JSONL_MEDIA, reply=HEADER) do conn
+        sr = stream(conn, "RETURN 1"; max_execution_time=30, tx_metadata=Dict("app" => "qa"))
+        close(sr)
+    end
+    @test occursin("\"maxExecutionTime\":30", cap[])
+    @test occursin("\"app\"", cap[])
+    @test occursin("\"\$type\":\"String\"", cap[])
+
+    # 3) begin_transaction — all three statement branches carry both fields, including
+    #    the no-statement branch (which builds its body outside _build_query_body and
+    #    so needs explicit plumbing, like Task 27's bookmarks).
+    for mk in (
+        conn -> begin_transaction(conn; max_execution_time=30, tx_metadata=Dict("app" => "qa")),
+        conn -> begin_transaction(conn; statement="RETURN 1", max_execution_time=30, tx_metadata=Dict("app" => "qa")),
+        conn -> begin_transaction(conn; statement=cypher"RETURN 1", max_execution_time=30, tx_metadata=Dict("app" => "qa")),
+    )
+        cap = Ref{String}("")
+        capture(cap; reply=BEGIN) do conn
+            @test mk(conn) isa Transaction
+        end
+        @test occursin("\"maxExecutionTime\":30", cap[])
+        @test occursin("\"txMetadata\"", cap[])
+        @test occursin("\"app\"", cap[])
+    end
+    # The no-statement begin carries NO "statement" key (it is a bare tx-open + controls).
+    cap = Ref{String}("")
+    capture(cap; reply=BEGIN) do conn
+        begin_transaction(conn; max_execution_time=30, tx_metadata=Dict("app" => "qa"))
+    end
+    @test !occursin("\"statement\"", cap[])
+end
+
+@testset "maxExecutionTime / txMetadata builder contract (F-10 server half)" begin
+    # Polarity: omitted → keys ABSENT (no empty-field noise added to every request).
+    body = Neo4jQuery._build_query_body("RETURN 1", Dict{String,Any}())
+    @test !haskey(body, "maxExecutionTime")
+    @test !haskey(body, "txMetadata")
+
+    # Present when supplied; maxExecutionTime is the raw Int seconds (not stringified),
+    # txMetadata value is the typed String envelope.
+    body2 = Neo4jQuery._build_query_body("RETURN 1", Dict{String,Any}();
+        max_execution_time=30, tx_metadata=Dict("app" => "qa"))
+    @test body2["maxExecutionTime"] === 30
+    @test body2["txMetadata"]["app"] == Dict{String,Any}("\$type" => "String", "_value" => "qa")
+
+    # Non-String (Symbol) keys coerce to String — agents routinely pass Dict(:app=>…).
+    body3 = Neo4jQuery._build_query_body("RETURN 1", Dict{String,Any}(); tx_metadata=Dict(:app => "qa"))
+    @test haskey(body3["txMetadata"], "app")
+    @test body3["txMetadata"]["app"]["\$type"] == "String"
+
+    # A non-positive budget fails loud with ArgumentError BEFORE any request — at the
+    # shared chokepoint AND through the public query/stream/begin API (proves the kwarg
+    # is plumbed: pre-fix these throw MethodError, not ArgumentError). 192.0.2.1 =
+    # TEST-NET-1 (RFC 5737), never dialed — validation precedes the request.
+    @test_throws ArgumentError Neo4jQuery._build_query_body("RETURN 1", Dict{String,Any}(); max_execution_time=0)
+    @test_throws ArgumentError Neo4jQuery._build_query_body("RETURN 1", Dict{String,Any}(); max_execution_time=-5)
+    conn = Neo4jConnection("http://192.0.2.1:7474", "neo4j", BasicAuth("x", "y"), 3, 3)
+    @test_throws ArgumentError query(conn, "RETURN 1"; max_execution_time=0)
+    @test_throws ArgumentError stream(conn, "RETURN 1"; max_execution_time=-1)
+    @test_throws ArgumentError begin_transaction(conn; max_execution_time=0)                     # none-branch
+    @test_throws ArgumentError begin_transaction(conn; statement="RETURN 1", max_execution_time=0)  # statement-branch
+end
+
+# Live-gated probe (F-10 server half, Step 4): SKIPPED offline (no credentials/).
+# RECORDS — does not assert — which outcome the deployed Aura version gives: a clean
+# result if ≥ 2026.04 (fields accepted), or a clean typed Neo4jError if older (unknown
+# field rejected). Either is acceptable; the point is that BOTH surface as a typed
+# Julia value/exception, never a hang or a silent-empty result.
+@testset "F-10 server-half live probe (test01)" begin
+    conn = load_readwrite_test01()
+    if conn === nothing
+        @info "F-10 server-half live probe skipped — test01 credentials absent/unreachable"
+        @test_skip false
+    else
+        try
+            r = query(conn, "RETURN 1 AS one"; access_mode=:read,
+                max_execution_time=30, tx_metadata=Dict("app" => "neo4jquery-f10-probe"))
+            @info "F-10 probe: test01 ACCEPTED maxExecutionTime/txMetadata (Aura ≥ 2026.04)" rows = length(r)
+            @test r[1].one == 1
+        catch e
+            @info "F-10 probe: test01 REJECTED the fields (Aura < 2026.04?) — clean typed error" exception = e
+            @test e isa Neo4jError
+        end
+    end
+end

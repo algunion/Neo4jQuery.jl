@@ -1,7 +1,7 @@
 # ── Query (implicit transactions) ────────────────────────────────────────────
 
 """
-    query(conn, statement; parameters, access_mode, include_counters, bookmarks, impersonated_user) -> QueryResult
+    query(conn, statement; parameters, access_mode, include_counters, bookmarks, impersonated_user, max_execution_time, tx_metadata, timeout) -> QueryResult
 
 Execute a Cypher `statement` against the database using an implicit transaction.
 
@@ -21,6 +21,18 @@ Execute a Cypher `statement` against the database using an implicit transaction.
 - `include_counters::Bool=false` — whether to request query counters.
 - `bookmarks::Vector{String}=String[]` — bookmarks for causal consistency.
 - `impersonated_user::Union{String,Nothing}=nothing` — run as another user.
+- `max_execution_time::Union{Int,Nothing}=nothing` — server-side execution budget
+  in seconds (**requires Neo4j 2026.04+**). When set (must be `> 0`), the database
+  itself aborts the query after this wall-clock time and returns a Cypher error.
+  This is the *server* half of F-10; the client-side `timeout` is the *client*
+  half. Set the client `timeout` **larger** than `max_execution_time` so the
+  server's own abort wins and surfaces as a clean error, rather than the client
+  giving up first and leaving the query running. Older servers reject the unknown
+  field — that server error is the intended signal. `nothing` omits it.
+- `tx_metadata::Union{AbstractDict,Nothing}=nothing` — metadata stamped on the
+  transaction (visible in `SHOW TRANSACTIONS` and the query log), e.g.
+  `Dict("app" => "qa")` (**requires Neo4j 2026.04+**). Keys are coerced to
+  `String`; values are serialized as typed-JSON. `nothing` omits it.
 - `timeout::Union{Int,Nothing}=nothing` — per-call read-timeout override in
   seconds (F-10). `nothing` uses the connection's `readtimeout`; an integer
   overrides it for this call only (`0` = wait indefinitely). A fired timeout
@@ -50,10 +62,13 @@ function query(conn::Neo4jConnection, statement::AbstractString;
     include_counters::Bool=false,
     bookmarks::Vector{String}=String[],
     impersonated_user::Union{String,Nothing}=nothing,
+    max_execution_time::Union{Int,Nothing}=nothing,
+    tx_metadata::Union{AbstractDict,Nothing}=nothing,
     timeout::Union{Int,Nothing}=nothing)
 
     body = _build_query_body(statement, parameters;
-        access_mode, include_counters, bookmarks, impersonated_user)
+        access_mode, include_counters, bookmarks, impersonated_user,
+        max_execution_time, tx_metadata)
 
     readtimeout = timeout === nothing ? conn.readtimeout : timeout
     parsed, _ = _neo4j_request(_query_url(conn), :POST, body;
@@ -113,7 +128,9 @@ function _build_query_body(statement::AbstractString,
     access_mode::Symbol=:write,
     include_counters::Bool=false,
     bookmarks::Vector{String}=String[],
-    impersonated_user::Union{String,Nothing}=nothing)
+    impersonated_user::Union{String,Nothing}=nothing,
+    max_execution_time::Union{Int,Nothing}=nothing,
+    tx_metadata::Union{AbstractDict,Nothing}=nothing)
     # Single chokepoint for every body (query, stream, DSL): reject an invalid
     # access_mode loudly. Without this a typo like :reed or wrong case :READ silently
     # fell through the `access_mode == :read` check below and routed as :write —
@@ -145,5 +162,41 @@ function _build_query_body(statement::AbstractString,
         body["impersonatedUser"] = impersonated_user
     end
 
+    _apply_execution_controls!(body; max_execution_time, tx_metadata)
+
+    return body
+end
+
+"""
+    _apply_execution_controls!(body; max_execution_time, tx_metadata) -> body
+
+Attach the optional server-side execution controls to a request `body`, in place,
+and return it. A single validation/serialization chokepoint shared by
+`_build_query_body` (query/stream and the statement-bearing `begin_transaction`
+branches) and `begin_transaction`'s no-statement branch — which builds its body
+outside `_build_query_body` and would otherwise drift.
+
+- `max_execution_time` (seconds, must be `> 0`) → `body["maxExecutionTime"]`: the
+  server itself aborts the query after this wall-clock budget.
+- `tx_metadata` → `body["txMetadata"]`: metadata stamped on the transaction. Keys
+  are coerced to `String`; values are serialized as typed-JSON envelopes (the
+  Query-API contract for this field, per the 2026.04 fact sheet).
+
+Requires Neo4j **2026.04+**. Older servers reject the unknown fields — that server
+error is the intended signal, not a client-side version check. `nothing` (the
+default for both) omits the corresponding key entirely.
+"""
+function _apply_execution_controls!(body::Dict{String,Any};
+    max_execution_time::Union{Int,Nothing}=nothing,
+    tx_metadata::Union{AbstractDict,Nothing}=nothing)
+    if max_execution_time !== nothing
+        max_execution_time > 0 ||
+            throw(ArgumentError("max_execution_time must be positive seconds, got $max_execution_time"))
+        body["maxExecutionTime"] = max_execution_time      # seconds; server ≥ 2026.04
+    end
+    if tx_metadata !== nothing
+        body["txMetadata"] =
+            Dict{String,Any}(String(k) => to_typed_json(v) for (k, v) in tx_metadata)
+    end
     return body
 end
