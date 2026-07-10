@@ -25,12 +25,17 @@ end
 # ── Open ─────────────────────────────────────────────────────────────────────
 
 """
-    begin_transaction(conn; statement=nothing, parameters=Dict{String,Any}()) -> Transaction
+    begin_transaction(conn; statement=nothing, parameters=Dict{String,Any}(), bookmarks=String[]) -> Transaction
 
 Open a new explicit transaction, optionally executing an initial statement.
 
 The `statement` keyword accepts a plain `String`, a [`CypherQuery`](@ref)
 (from `cypher"..."`), or `nothing`.
+
+`bookmarks::Vector{String}` supplies causal-consistency bookmarks (typically the
+return value of a prior [`commit!`](@ref)): the new transaction is guaranteed to
+observe every write acknowledged by those bookmarks. An empty vector (the
+default) omits the key entirely, so unbookmarked transactions are unaffected.
 
 # Examples
 ```julia
@@ -42,18 +47,25 @@ commit!(tx)
 name = "Alice"
 tx = begin_transaction(conn; statement=cypher"CREATE (n:Person {name: \$name}) RETURN n")
 commit!(tx)
+
+# Causal chaining: tx2 sees everything tx1 committed
+bookmarks = commit!(tx1)
+tx2 = begin_transaction(conn; bookmarks=bookmarks)
 ```
 """
 function begin_transaction(conn::Neo4jConnection;
     statement::Union{AbstractString,CypherQuery,Nothing}=nothing,
-    parameters::Dict{String,<:Any}=Dict{String,Any}())
+    parameters::Dict{String,<:Any}=Dict{String,Any}(),
+    bookmarks::Vector{String}=String[])
     body = if statement isa CypherQuery
         merged = merge(statement.parameters, parameters)
-        _build_query_body(statement.statement, merged)
+        _build_query_body(statement.statement, merged; bookmarks)
     elseif statement !== nothing
-        _build_query_body(statement, parameters)
+        _build_query_body(statement, parameters; bookmarks)
     else
-        Dict{String,Any}()
+        b = Dict{String,Any}()
+        isempty(bookmarks) || (b["bookmarks"] = bookmarks)
+        b
     end
 
     # tx_context stays false: a begin references no existing transaction, so its

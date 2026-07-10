@@ -115,3 +115,127 @@ end
     @test_throws ErrorException Neo4jQuery._parse_neo4j_uri("http://host:7687")
     @test_throws ErrorException Neo4jQuery._parse_neo4j_uri("https://host:7687")
 end
+
+# ── Task 27: bookmarks on begin_transaction (F-21) ───────────────────────────
+# F-21: causal chaining across explicit transactions needs `bookmarks` forwarded
+# into the begin-tx request body. Pre-fix RED: begin_transaction has no `bookmarks`
+# kwarg, so the three calls that pass it throw MethodError. These capture-server
+# tests pin the wire body for all three statement branches (none/String/CypherQuery),
+# assert empty→key-absent, guard the SHARED _build_query_body chokepoint (a plain
+# query body must carry NO bookmarks — 8 non-tx callers), and pin commit! surfacing
+# the server's bookmarks (the other half of causal chaining: you can't chain without
+# the returned bookmark). Server replies 202 — only 200/202 are success statuses
+# (src/request.jl); real Neo4j status is irrelevant, we assert the REQUEST body.
+
+@testset "begin_transaction bookmarks wire body (F-21)" begin
+    BM = ["FB:kcwQ4a2f"]
+    # Local capture server: records the begin-tx request body, replies with a minimal
+    # valid begin envelope. One request per begin_transaction, so a fixed reply suffices.
+    function capture_begin(f, captured::Ref{String})
+        server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+            captured[] = String(read(http))
+            HTTP.setstatus(http, 202)
+            HTTP.setheader(http, "Content-Type" => HttpHarness.TYPED_MEDIA)
+            HTTP.startwrite(http)
+            write(http, "{\"transaction\":{\"id\":\"tx-1\",\"expires\":\"2026-01-01T00:00:00Z\"}}")
+        end
+        try
+            f(Neo4jConnection("http://127.0.0.1:$(HTTP.port(server))", "neo4j", BasicAuth("u", "p")))
+        finally
+            close(server)
+        end
+    end
+
+    # 1) none branch (no statement): body is just {"bookmarks":[...]}, no "statement".
+    cap = Ref{String}("")
+    capture_begin(cap) do conn
+        tx = begin_transaction(conn; bookmarks=BM)     # ← MethodError pre-fix (RED)
+        @test tx isa Transaction
+    end
+    @test occursin("\"bookmarks\":[\"FB:kcwQ4a2f\"]", cap[])
+    @test !occursin("\"statement\"", cap[])
+
+    # 2) String branch: bookmarks forwarded alongside the statement body.
+    cap = Ref{String}("")
+    capture_begin(cap) do conn
+        begin_transaction(conn; statement="RETURN 1", bookmarks=BM)
+    end
+    @test occursin("\"bookmarks\":[\"FB:kcwQ4a2f\"]", cap[])
+    @test occursin("\"statement\"", cap[])
+
+    # 3) CypherQuery branch: same, via cypher"...".
+    cap = Ref{String}("")
+    capture_begin(cap) do conn
+        begin_transaction(conn; statement=cypher"RETURN 1", bookmarks=BM)
+    end
+    @test occursin("\"bookmarks\":[\"FB:kcwQ4a2f\"]", cap[])
+    @test occursin("\"statement\"", cap[])
+
+    # 4) empty bookmarks (default): key ABSENT from the wire body (no empty-array noise).
+    cap = Ref{String}("")
+    capture_begin(cap) do conn
+        begin_transaction(conn)
+    end
+    @test !occursin("bookmarks", cap[])
+end
+
+@testset "bookmarks kwarg default-neutral on shared body builder (F-21 scope guard)" begin
+    # _build_query_body is the query/stream/tx chokepoint. A plain query with no
+    # bookmarks must carry NO "bookmarks" key — zero behavioral change for the non-tx
+    # callers. Direct assertion on the built body: the exact contract query() relies on.
+    body = Neo4jQuery._build_query_body("RETURN 1", Dict{String,Any}())
+    @test !haskey(body, "bookmarks")
+    # And when supplied it IS present (guards against an over-narrow guard that drops it).
+    body2 = Neo4jQuery._build_query_body("RETURN 1", Dict{String,Any}(); bookmarks=["FB:x"])
+    @test body2["bookmarks"] == ["FB:x"]
+end
+
+@testset "commit! returns server bookmarks (F-21 causal-chain half)" begin
+    # The Query API returns a `bookmarks` array in the commit response; commit! must
+    # surface it verbatim. Scripted commit response with bookmarks → commit! returns them.
+    HttpHarness.scripted_server(202, "{\"bookmarks\":[\"FB:commit-1\",\"FB:commit-2\"]}") do conn
+        tx = Transaction(conn, "tx-1", "2026-01-01T00:00:00Z", nothing, false, false)
+        bm = commit!(tx)
+        @test bm isa Vector{String}
+        @test bm == ["FB:commit-1", "FB:commit-2"]
+        @test tx.committed
+    end
+    # Absent bookmarks in the commit response → empty vector, not an error.
+    HttpHarness.scripted_server(202, "{}") do conn
+        tx = Transaction(conn, "tx-2", "2026-01-01T00:00:00Z", nothing, false, false)
+        @test commit!(tx) == String[]
+    end
+end
+
+# Live-gated causal chain (F-21): SKIPPED offline (no credentials/); runs at
+# integration. Proves the round trip: a write committed in tx1 yields a bookmark
+# that, passed to begin_transaction for tx2, makes the write visible to tx2's read.
+isdefined(@__MODULE__, :load_readwrite_test01) ||
+    include(joinpath(@__DIR__, "live", "credentials.jl"))
+
+@testset "F-21 causal chain across transactions (live, test01)" begin
+    conn = load_readwrite_test01()
+    if conn === nothing
+        @info "F-21 live causal-chain test skipped — test01 credentials absent/unreachable"
+        @test_skip false
+    else
+        marker = "F21-" * string(time_ns())
+        try
+            tx1 = begin_transaction(conn)
+            query(tx1, "CREATE (n:_F21Chain {marker: {{m}}})";
+                parameters=Dict{String,Any}("m" => marker))
+            bm = commit!(tx1)
+            @test bm isa Vector{String}
+            @test !isempty(bm)   # a committed write must yield at least one bookmark
+            tx2 = begin_transaction(conn; bookmarks=bm)
+            rows = query(tx2, "MATCH (n:_F21Chain {marker: {{m}}}) RETURN n.marker AS m";
+                parameters=Dict{String,Any}("m" => marker))
+            commit!(tx2)
+            @test length(rows) == 1
+            @test rows[1].m == marker
+        finally
+            query(conn, "MATCH (n:_F21Chain {marker: {{m}}}) DETACH DELETE n";
+                parameters=Dict{String,Any}("m" => marker))
+        end
+    end
+end
