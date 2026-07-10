@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Breaking
+- `BearerAuth` now base64-wraps the token on the wire (`Authorization: Bearer <base64(token)>`) per the Query API authentication spec; it previously sent the token raw. Pass the raw SSO token — anyone pre-encoding must stop, or the token is double-wrapped and rejected.
 - Streaming raises typed errors (`Neo4jQueryError`/`Neo4jHTTPError`) on HTTP error responses and header-less bodies instead of yielding a silent empty result.
 - `TransactionExpiredError` is raised only for requests made inside an explicit transaction, classified by error code where possible; plain-query lock timeouts now surface as `Neo4jQueryError`.
 

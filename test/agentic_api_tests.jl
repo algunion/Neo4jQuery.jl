@@ -4,6 +4,7 @@
 using Neo4jQuery
 using Test
 using HTTP, JSON
+using Base64
 
 isdefined(@__MODULE__, :HttpHarness) ||
     include(joinpath(@__DIR__, "http_harness.jl"))
@@ -546,4 +547,33 @@ end
         r = query(conn, "RETURN 1 AS x"; access_mode=:read, cypher_version=25)
         @test r[1].x == 1
     end
+end
+
+@testset "BearerAuth base64 wire format (F-20)" begin
+    # Query API auth docs, fetched 2026-07-10
+    # (https://neo4j.com/docs/query-api/current/authentication-authorization/):
+    # the header format is "Authorization: Bearer <base64(<token>)>", and the
+    # docs' verbatim example base64-encodes the token `xbhkjnlvianztghqwawxqfe`
+    # into the header "Authorization: Bearer eGJoa2pubHZpYW56dGdocXdhd3hxZmUK".
+    # (That example string decodes to the token plus a trailing '\n' — an
+    # `echo | base64` artifact in the docs; the normative text says the token
+    # is base64-encoded, so we encode the raw token bytes, newline-free.)
+    # Docs: "It is up to your application to generate bearer tokens via your
+    # SSO provider." — callers hand BearerAuth the RAW token; the wrap is ours.
+    h = Neo4jQuery.auth_header(BearerAuth("my-sso-token"))
+    @test h[1] == "Authorization"
+    @test h[2] == "Bearer " * Base64.base64encode("my-sso-token")   # pre-fix: "Bearer my-sso-token"
+
+    # Polarity: the raw token must not ride the wire. '-' is outside the
+    # base64 alphabet, so the raw form cannot collide with any encoding —
+    # occursin false is a real signal, not a lucky miss.
+    @test !occursin("my-sso-token", h[2])
+
+    # Round-trip: the server-side decode recovers the exact raw token.
+    @test String(Base64.base64decode(split(h[2], ' '; limit=2)[2])) == "my-sso-token"
+
+    # Regression pin: BasicAuth (RFC 7617) is untouched by this commit —
+    # same single base64 of "user:password", not double-wrapped.
+    hb = Neo4jQuery.auth_header(BasicAuth("neo4j", "verysecret"))
+    @test hb == ("Authorization" => "Basic " * Base64.base64encode("neo4j:verysecret"))
 end

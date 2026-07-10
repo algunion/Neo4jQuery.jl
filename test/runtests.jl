@@ -63,7 +63,9 @@ end
         bearer = BearerAuth("tok123")
         hdr2 = auth_header(bearer)
         @test hdr2[1] == "Authorization"
-        @test hdr2[2] == "Bearer tok123"
+        # Base64-wrapped per the Query API auth spec (F-20) — previously this
+        # pinned the raw token ("Bearer tok123"), which the spec contradicts.
+        @test hdr2[2] == "Bearer " * Base64.base64encode("tok123")
     end
 
     # ── CypherQuery & @cypher_str ───────────────────────────────────────────

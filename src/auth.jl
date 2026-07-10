@@ -27,11 +27,15 @@ end
     BearerAuth(token::String)
 
 HTTP Bearer-token authentication.  Generates an `Authorization: Bearer …`
-header from the supplied token.
+header in the Query API's wire format `Bearer <base64(token)>` — the token is
+base64-wrapped on the way out, per the Query API authentication spec.
+
+Pass the **raw** SSO token; do not pre-encode it (a pre-encoded token would be
+double-wrapped and rejected by the server).
 
 # Example
 ```julia
-auth = BearerAuth("xbhkjnlvianztghqwawxqfe")
+auth = BearerAuth("xbhkjnlvianztghqwawxqfe")   # raw token, as issued by the SSO provider
 ```
 """
 struct BearerAuth <: AbstractAuth
@@ -58,6 +62,8 @@ function auth_header(auth::BasicAuth)
     return "Authorization" => "Basic $encoded"
 end
 
+# Query API spec (F-20): the Bearer token is base64-wrapped on the wire —
+# `Authorization: Bearer <base64(token)>` — unlike plain RFC 6750 Bearer.
 function auth_header(auth::BearerAuth)
-    return "Authorization" => "Bearer $(auth.token)"
+    return "Authorization" => "Bearer $(Base64.base64encode(auth.token))"
 end
