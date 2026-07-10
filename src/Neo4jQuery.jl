@@ -32,8 +32,8 @@ include("dsl/cypher.jl")
 
 #! format: off
 public auth_header, to_typed_json
-# GraphSchema field types: docs direct users to `Neo4jQuery.PropertyInfo` etc.
-# (see introspect.jl docstrings + llm.md) without exporting them.
+# GraphSchema field types: docstrings direct users to `Neo4jQuery.PropertyInfo`
+# etc. (see introspect.jl) without exporting them.
 public PropertyInfo, LabelInfo, RelTypeInfo, IndexInfo
 #! format: on
 
