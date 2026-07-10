@@ -4,6 +4,24 @@ const _TYPED_JSON_MEDIA = "application/vnd.neo4j.query.v1.1"
 const _TYPED_JSONL_MEDIA = "application/vnd.neo4j.query.v1.1+jsonl"
 
 """
+    _is_timeout(e) -> Bool
+
+`true` iff `e` is (or wraps) an HTTP.jl read-timeout, so `_request_core` can
+rethrow it as a typed [`Neo4jHTTPError`](@ref) instead of leaking a bare
+`HTTP.Exceptions.TimeoutError` (F-10).
+
+Verified against installed HTTP.jl 1.10.19: `readtimeout` raises a **bare**
+`HTTP.Exceptions.TimeoutError` — `TimeoutRequest.jl:31`
+(`e = Exceptions.TimeoutError(readtimeout)`) rethrown un-wrapped by
+`ConnectionRequest.jl:143` (`root_err isa HTTPError || throw(RequestError(...))`),
+and `TimeoutError <: HTTPError` (`Exceptions.jl:53`). The `RequestError` arm is
+forward-defense against a future layering change where the timeout arrives
+wrapped; it costs one `isa` and is unit-pinned in `transport_tests.jl`.
+"""
+_is_timeout(e) = e isa HTTP.Exceptions.TimeoutError ||
+                 (e isa HTTP.Exceptions.RequestError && e.error isa HTTP.Exceptions.TimeoutError)
+
+"""
     _request_core(url, method, body; auth, accept, extra_headers, cluster_affinity,
                   retryable, response_stream, readtimeout, connect_timeout) -> HTTP.Response
 
@@ -28,12 +46,21 @@ the query path calls `String(resp.body)` once).
   query may retry a transient transport failure; writes must not double-apply.
   `status_exception=false` keeps 4xx/5xx as ordinary responses (the body-riding
   `errors[]` contract needs them non-throwing).
-- `response_stream`/`readtimeout`/`connect_timeout` are forwarded for Tasks 7–8.
+- `response_stream`/`readtimeout`/`connect_timeout` bound the request (F-10).
   Verified against HTTP.jl 1.10.19: `readtimeout=0` and `response_stream=nothing`
-  ARE HTTP.jl's own defaults, so forwarding them is behavior-neutral;
-  `connect_timeout=0` is NOT (HTTP.jl's default is 30s and 0 *disables* the connect
-  timeout — Connections.jl `connect_timeout > 0 ? try_with_timeout(...) : …`), so
-  0 is treated as "unset" and simply not forwarded, preserving the pre-refactor 30s.
+  ARE HTTP.jl's own defaults, so forwarding them is behavior-neutral; a fired
+  `readtimeout` is caught here via [`_is_timeout`](@ref) and rethrown as
+  `Neo4jHTTPError(0, "request timed out …")` rather than leaking a bare
+  `HTTP.Exceptions.TimeoutError`.
+- `connect_timeout` uses a **distinct sentinel**: `< 0` means "unset" — NOT
+  forwarded, so HTTP.jl applies its own 30s default (this preserves the behavior
+  of callers that pass nothing, e.g. explicit-transaction requests). `>= 0` is
+  forwarded verbatim, so a user-chosen `connect_timeout = 0` reaches HTTP.jl as
+  "no explicit connect bound" (subject to HTTP.jl's `readtimeout` fallback —
+  Connections.jl `connect_timeout > 0 ? try_with_timeout(...) : …` and
+  ConnectionRequest.jl `connect_timeout == 0 && readtimeout > 0 ? readtimeout : …`).
+  The Task-6 omit-on-`0` sentinel was wrong here: it silently gave a user's
+  `connect_timeout = 0` HTTP's 30s instead of "no limit"; `-1` fixes that seam.
 """
 function _request_core(url::AbstractString, method::Symbol, body;
     auth::AbstractAuth,
@@ -43,7 +70,7 @@ function _request_core(url::AbstractString, method::Symbol, body;
     retryable::Bool=false,
     response_stream::Union{IO,Nothing}=nothing,
     readtimeout::Int=0,
-    connect_timeout::Int=0)::HTTP.Response
+    connect_timeout::Int=-1)::HTTP.Response
     headers = Pair{String,String}[
         "Content-Type"=>_TYPED_JSON_MEDIA,
         "Accept"=>accept,
@@ -62,19 +89,29 @@ function _request_core(url::AbstractString, method::Symbol, body;
         JSON.json(body)
     end
 
-    # connect_timeout=0 is the "unset" sentinel (see docstring): forward it only when
-    # explicitly set, so the default keeps HTTP.jl's 30s connect timeout rather than
-    # disabling it. readtimeout=0 / response_stream=nothing already ARE HTTP.jl's
-    # defaults, so those forward neutrally.
+    # connect_timeout < 0 is the "unset" sentinel (see docstring): don't forward,
+    # so HTTP.jl keeps its 30s connect default. connect_timeout >= 0 is forwarded
+    # verbatim (0 = user-chosen "no explicit connect bound"). readtimeout=0 /
+    # response_stream=nothing already ARE HTTP.jl's defaults, so those forward
+    # neutrally. A fired readtimeout is remapped to a typed Neo4jHTTPError below.
     m = string(method)
-    resp = if connect_timeout == 0
-        HTTP.request(m, url, headers, body_str;
-            status_exception=false, retry_non_idempotent=retryable,
-            readtimeout, response_stream)
-    else
-        HTTP.request(m, url, headers, body_str;
-            status_exception=false, retry_non_idempotent=retryable,
-            readtimeout, response_stream, connect_timeout)
+    resp = try
+        if connect_timeout < 0
+            HTTP.request(m, url, headers, body_str;
+                status_exception=false, retry_non_idempotent=retryable,
+                readtimeout, response_stream)
+        else
+            HTTP.request(m, url, headers, body_str;
+                status_exception=false, retry_non_idempotent=retryable,
+                readtimeout, response_stream, connect_timeout)
+        end
+    catch e
+        # A read timeout must surface as a typed, actionable error — not a bare
+        # HTTP.Exceptions.TimeoutError leaking to an LLM/agentic caller (F-10).
+        # Status 0: there is no HTTP status, the request never completed.
+        _is_timeout(e) && throw(Neo4jHTTPError(0,
+            "request timed out after $(readtimeout)s (readtimeout): $(m) $(url)"))
+        rethrow()
     end
 
     # Authentication errors — surface the real code/message from the 401 body's
@@ -114,15 +151,22 @@ Central HTTP helper for all Neo4j Query API calls.
 - `tx_context::Bool=false` — `true` only for requests that reference an
   EXISTING explicit transaction (`query(tx, …)`, `commit!`). Plain queries and
   `begin_transaction` keep `false`: they cannot mean "that transaction is gone".
+- `readtimeout::Int=0` / `connect_timeout::Int=-1` — forwarded to
+  [`_request_core`](@ref) (F-10). The defaults (no read timeout, unset connect
+  timeout → HTTP.jl's 30s) preserve the explicit-transaction path, which does not
+  plumb a connection; `query`/`stream` pass the connection's configured values.
 """
 function _neo4j_request(url::AbstractString, method::Symbol, body;
     auth::AbstractAuth,
     extra_headers::Vector{Pair{String,String}}=Pair{String,String}[],
     cluster_affinity::Union{String,Nothing}=nothing,
     retryable::Bool=false,
-    tx_context::Bool=false)
+    tx_context::Bool=false,
+    readtimeout::Int=0,
+    connect_timeout::Int=-1)
     resp = _request_core(url, method, body;
-        auth, accept=_TYPED_JSON_MEDIA, extra_headers, cluster_affinity, retryable)
+        auth, accept=_TYPED_JSON_MEDIA, extra_headers, cluster_affinity, retryable,
+        readtimeout, connect_timeout)
 
     # Read the body exactly once: `String(resp.body)` steals the buffer, so we
     # keep `body_str` for both JSON parsing and the fail-loud diagnostic snippet.

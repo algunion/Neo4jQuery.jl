@@ -113,15 +113,19 @@ Run a read-only query. Rejects any write statement before contacting the server;
 `access_mode` is always `:read`. Because reads are provably side-effect-free
 (server-enforced, not just client intent), a transient transport failure (e.g.
 a stale pooled connection) is automatically retried once — see [`query`](@ref).
+A read timeout, however, is never retried (HTTP.jl treats it as unrecoverable);
+it surfaces as `Neo4jHTTPError`. `timeout::Union{Int,Nothing}=nothing` overrides
+the connection's `readtimeout` for this call (F-10).
 """
 function read_query(roc::ReadOnlyConnection, statement::AbstractString;
     parameters::Dict{String,<:Any}=Dict{String,Any}(),
     include_counters::Bool=false,
     bookmarks::Vector{String}=String[],
-    impersonated_user::Union{String,Nothing}=nothing)
+    impersonated_user::Union{String,Nothing}=nothing,
+    timeout::Union{Int,Nothing}=nothing)
     _assert_read(statement)
     return query(roc.conn, statement; parameters, access_mode=:read,
-        include_counters, bookmarks, impersonated_user)
+        include_counters, bookmarks, impersonated_user, timeout)
 end
 
 function read_query(roc::ReadOnlyConnection, q::CypherQuery;
@@ -134,7 +138,8 @@ end
     read_stream(roc, statement; parameters, kwargs...) -> StreamingResult
 
 Streaming variant of [`read_query`](@ref); same read-only guarantee, including
-the auto-retry of a transient transport failure (see [`stream`](@ref)).
+the auto-retry of a transient transport failure (see [`stream`](@ref)). Accepts
+the same per-call `timeout` override (F-10) via `kwargs...`.
 """
 function read_stream(roc::ReadOnlyConnection, statement::AbstractString;
     parameters::Dict{String,<:Any}=Dict{String,Any}(), kwargs...)

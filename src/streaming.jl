@@ -80,7 +80,10 @@ yields `NamedTuple` rows via iteration.
 
 As with [`query`](@ref), `access_mode=:read` auto-retries a transient transport
 failure once (safe: server-enforced read-only), while the `:write` default
-never retries.
+never retries. `timeout::Union{Int,Nothing}=nothing` is a per-call read-timeout
+override in seconds (F-10): `nothing` uses the connection's `readtimeout`, an
+integer overrides it (`0` = wait indefinitely). A stalled server fires the
+timeout as `Neo4jHTTPError` before the Header is read, instead of hanging.
 
 # Example
 ```julia
@@ -94,11 +97,14 @@ function stream(conn::Neo4jConnection, statement::AbstractString;
     access_mode::Symbol=:write,
     include_counters::Bool=false,
     bookmarks::Vector{String}=String[],
-    impersonated_user::Union{String,Nothing}=nothing)
+    impersonated_user::Union{String,Nothing}=nothing,
+    timeout::Union{Int,Nothing}=nothing)
     body = _build_query_body(statement, parameters;
         access_mode, include_counters, bookmarks, impersonated_user)
+    readtimeout = timeout === nothing ? conn.readtimeout : timeout
     return _start_stream(_query_url(conn), body, conn.auth, nothing;
-        retryable=(access_mode === :read))
+        retryable=(access_mode === :read),
+        readtimeout, connect_timeout=conn.connect_timeout)
 end
 
 function stream(conn::Neo4jConnection, q::CypherQuery;
@@ -132,12 +138,15 @@ end
 # ── Internal setup ───────────────────────────────────────────────────────────
 
 function _start_stream(url, body, auth, cluster_affinity;
-    retryable::Bool=false, tx_context::Bool=false)
+    retryable::Bool=false, tx_context::Bool=false,
+    readtimeout::Int=0, connect_timeout::Int=-1)
     # Shares the single HTTP core with the query path (headers, no-omit_null body
-    # encoding, retry gate, 401 handling); the only wire difference is the JSONL
-    # Accept media type.
+    # encoding, retry gate, 401 handling, F-10 timeout mapping); the only wire
+    # difference is the JSONL Accept media type. Defaults (no read timeout, unset
+    # connect timeout) preserve the stream(tx, …) path, which passes neither.
     resp = _request_core(url, :POST, body;
-        auth, accept=_TYPED_JSONL_MEDIA, cluster_affinity, retryable)
+        auth, accept=_TYPED_JSONL_MEDIA, cluster_affinity, retryable,
+        readtimeout, connect_timeout)
 
     # For streaming we read line-by-line from the body
     io = IOBuffer(resp.body)

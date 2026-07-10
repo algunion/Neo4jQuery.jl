@@ -21,6 +21,10 @@ Execute a Cypher `statement` against the database using an implicit transaction.
 - `include_counters::Bool=false` — whether to request query counters.
 - `bookmarks::Vector{String}=String[]` — bookmarks for causal consistency.
 - `impersonated_user::Union{String,Nothing}=nothing` — run as another user.
+- `timeout::Union{Int,Nothing}=nothing` — per-call read-timeout override in
+  seconds (F-10). `nothing` uses the connection's `readtimeout`; an integer
+  overrides it for this call only (`0` = wait indefinitely). A fired timeout
+  raises `Neo4jHTTPError(0, "request timed out …")` instead of hanging.
 
 # Example
 ```julia
@@ -45,13 +49,16 @@ function query(conn::Neo4jConnection, statement::AbstractString;
     access_mode::Symbol=:write,
     include_counters::Bool=false,
     bookmarks::Vector{String}=String[],
-    impersonated_user::Union{String,Nothing}=nothing)
+    impersonated_user::Union{String,Nothing}=nothing,
+    timeout::Union{Int,Nothing}=nothing)
 
     body = _build_query_body(statement, parameters;
         access_mode, include_counters, bookmarks, impersonated_user)
 
+    readtimeout = timeout === nothing ? conn.readtimeout : timeout
     parsed, _ = _neo4j_request(_query_url(conn), :POST, body;
-        auth=conn.auth, retryable=(access_mode === :read))
+        auth=conn.auth, retryable=(access_mode === :read),
+        readtimeout, connect_timeout=conn.connect_timeout)
     return _build_result(parsed)
 end
 

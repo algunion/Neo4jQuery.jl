@@ -71,8 +71,12 @@ The URI scheme is mapped automatically:
 conn = connect_from_env()                    # reads .env, connects
 conn = connect_from_env(path="prod.env")     # different file
 ```
+
+`readtimeout`/`connect_timeout` (seconds) set the client-side timeouts on the
+returned connection; see [`Neo4jConnection`](@ref) for their semantics (F-10).
 """
-function connect_from_env(; path::AbstractString=".env", prefix::AbstractString="NEO4J_")
+function connect_from_env(; path::AbstractString=".env", prefix::AbstractString="NEO4J_",
+    readtimeout::Int=120, connect_timeout::Int=10)
     if isfile(path)
         dotenv(path)
     end
@@ -90,7 +94,7 @@ function connect_from_env(; path::AbstractString=".env", prefix::AbstractString=
     scheme, host, port = _parse_neo4j_uri(uri)
 
     base_url = "$(scheme)://$(host):$(port)"
-    conn = Neo4jConnection(base_url, database, auth)
+    conn = Neo4jConnection(base_url, database, auth, readtimeout, connect_timeout)
     _discover(conn)
     return conn
 end

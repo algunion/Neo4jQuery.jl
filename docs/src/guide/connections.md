@@ -12,20 +12,43 @@ using Neo4jQuery
 conn = connect(host, database;
     port=7474,
     auth=BasicAuth("neo4j", "password"),
-    scheme="http")
+    scheme="http",
+    readtimeout=120,
+    connect_timeout=10)
 ```
 
 On construction the client hits the discovery endpoint (`GET /`) to verify the server is reachable.
 
 **Arguments:**
 
-| Parameter  | Type           | Default  | Description                    |
-| :--------- | :------------- | :------- | :----------------------------- |
-| `host`     | `String`       | required | Hostname or IP                 |
-| `database` | `String`       | required | Database name (e.g. `"neo4j"`) |
-| `port`     | `Int`          | `7474`   | HTTP port                      |
-| `auth`     | `AbstractAuth` | required | Authentication strategy        |
-| `scheme`   | `String`       | `"http"` | `"http"` or `"https"`          |
+| Parameter         | Type           | Default  | Description                          |
+| :---------------- | :------------- | :------- | :----------------------------------- |
+| `host`            | `String`       | required | Hostname or IP                       |
+| `database`        | `String`       | required | Database name (e.g. `"neo4j"`)       |
+| `port`            | `Int`          | `7474`   | HTTP port                            |
+| `auth`            | `AbstractAuth` | required | Authentication strategy              |
+| `scheme`          | `String`       | `"http"` | `"http"` or `"https"`                |
+| `readtimeout`     | `Int`          | `120`    | Seconds to wait for a response (`0` = no limit) |
+| `connect_timeout` | `Int`          | `10`     | Seconds to wait for the connection (`0` = no explicit bound) |
+
+## Client timeouts
+
+Every request is bounded by two client-side timeouts, carried on the connection and settable on [`connect`](@ref)/[`connect_from_env`](@ref):
+
+- **`readtimeout`** (default `120`s) — how long to wait for the server's response. If it fires, the call raises a typed `Neo4jHTTPError` (status `0`, message `"request timed out …"`) instead of hanging the caller indefinitely. `0` disables the read timeout (wait forever).
+- **`connect_timeout`** (default `10`s) — how long to wait for the TCP/TLS connection to be established. `0` removes this explicit bound; the underlying HTTP layer then falls back to bounding connect by `readtimeout` when `readtimeout > 0`, so a *fully* unbounded connect requires setting **both** `connect_timeout = 0` and `readtimeout = 0`.
+
+Override the read timeout for a single call with the `timeout` keyword on [`query`](@ref), [`stream`](@ref), [`read_query`](@ref), and [`read_stream`](@ref) — useful when one query is expected to run longer (or must fail faster) than the connection default:
+
+```julia
+# This call gets 5s; the rest of the connection keeps its 120s default.
+result = query(conn, "MATCH (n) RETURN count(n) AS c"; timeout=5)
+```
+
+A timed-out request is **not** retried, even for a read: the underlying HTTP layer treats a timeout as unrecoverable, so it surfaces immediately as the typed error rather than doubling the wall-clock wait.
+
+!!! note "Client vs. server timeouts"
+    These are **client-side** timeouts — they abort the client's wait, but do not tell Neo4j to stop executing. Bounding *server-side* execution (the Query API's `max_execution_time`, so the database itself stops a pathological query) is tracked separately and documented when that support lands.
 
 ## `connect_from_env`
 

@@ -248,3 +248,145 @@ end
         @test_throws TransactionExpiredError collect(sr)             # ← FAILS pre-fix
     end
 end
+
+# Task 7 (F-10, client half): before this task NOTHING bounded a request — a
+# pathological server stall (e.g. an LLM-generated Cypher that never returns)
+# hung the caller forever. Connection-level `readtimeout`/`connect_timeout` plus
+# a per-call `timeout` override now bound every query/stream; a fired readtimeout
+# surfaces as a typed `Neo4jHTTPError(0, "request timed out …")` — never a hang,
+# never a bare `HTTP.Exceptions.TimeoutError` leaking to the caller. (The server
+# half, `max_execution_time`, is Task 28 — not covered here.)
+#
+# Exception + retry facts pinned below were verified against the installed HTTP
+# 1.10.19 source (ShTJs) AND an empirical probe (see task-7-report.md):
+#   • readtimeout fires a *bare* HTTP.Exceptions.TimeoutError (TimeoutRequest.jl:31),
+#     rethrown un-wrapped by ConnectionRequest.jl:143 because TimeoutError<:HTTPError.
+#   • isrecoverable(::TimeoutError)=false (RetryRequest.jl:79-86) ⇒ a timed-out
+#     request is NEVER retried, even under retry_non_idempotent=true / access_mode=:read.
+@testset "per-call timeout (F-10)" begin
+    HttpHarness.scripted_server(202, "{\"data\":{\"fields\":[],\"values\":[]}}"; sleep_s=5.0) do conn
+        t0 = time()
+        @test_throws Neo4jHTTPError query(conn, "RETURN 1"; timeout=1)
+        @test time() - t0 < 4.0        # did not wait for the 5s server stall
+    end
+end
+
+@testset "per-call timeout beats connection default (F-10)" begin
+    # The connection default readtimeout=120 would block on the 5s stall; the
+    # per-call timeout=1 must win and fire fast, carrying status 0 + a message.
+    HttpHarness.scripted_server(202, "{}"; sleep_s=5.0) do conn
+        @test conn.readtimeout == 120        # 3-arg constructor default
+        @test conn.connect_timeout == 10
+        t0 = time()
+        err = try
+            query(conn, "RETURN 1"; timeout=1)
+            nothing
+        catch e
+            e
+        end
+        @test err isa Neo4jHTTPError
+        @test err.status == 0                # timeout carries no HTTP status
+        @test occursin("timed out", err.message)
+        @test time() - t0 < 4.0
+    end
+end
+
+@testset "streaming per-call timeout (F-10)" begin
+    # The stream path serializes + issues through the same _request_core; a
+    # stalled server must not hang stream(...) either — it fires before the
+    # Header is ever read.
+    HttpHarness.scripted_server(202, ""; ctype=HttpHarness.TYPED_JSONL_MEDIA, sleep_s=5.0) do conn
+        t0 = time()
+        err = try
+            stream(conn, "RETURN 1"; timeout=1)
+            nothing
+        catch e
+            e
+        end
+        @test err isa Neo4jHTTPError
+        @test occursin("timed out", err.message)
+        @test time() - t0 < 4.0
+    end
+end
+
+@testset "read_query / read_stream carry the per-call timeout (F-10)" begin
+    HttpHarness.scripted_server(202, "{}"; sleep_s=5.0) do conn
+        roc = ReadOnlyConnection(conn)
+        t0 = time()
+        @test_throws Neo4jHTTPError read_query(roc, "MATCH (n) RETURN n"; timeout=1)
+        @test time() - t0 < 4.0
+    end
+    HttpHarness.scripted_server(202, ""; ctype=HttpHarness.TYPED_JSONL_MEDIA, sleep_s=5.0) do conn
+        roc = ReadOnlyConnection(conn)
+        t0 = time()
+        @test_throws Neo4jHTTPError read_stream(roc, "MATCH (n) RETURN n"; timeout=1)
+        @test time() - t0 < 4.0
+    end
+end
+
+@testset "timed-out READ is NOT retried (F-10 × read-retry gate)" begin
+    # The read-retry gate (retry a transient transport failure once for a
+    # provably side-effect-free :read) must NOT fire on a timeout: HTTP.jl treats
+    # a TimeoutError as unrecoverable, so a stalled :read surfaces immediately as
+    # the typed error and the server sees exactly ONE request (no double-issue).
+    count = Ref(0)
+    server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+        read(http)
+        count[] += 1
+        sleep(5.0)
+        HTTP.setstatus(http, 202)
+        HTTP.startwrite(http)
+        write(http, "{}")
+    end
+    try
+        conn = Neo4jConnection("http://127.0.0.1:$(HTTP.port(server))", "neo4j", BasicAuth("u", "p"))
+        t0 = time()
+        @test_throws Neo4jHTTPError query(conn, "MATCH (n) RETURN n"; access_mode=:read, timeout=1)
+        @test time() - t0 < 4.0
+        @test count[] == 1        # retryable :read, but a timeout is NOT retried
+    finally
+        close(server)
+    end
+end
+
+@testset "_is_timeout predicate (F-10): bare + RequestError-wrapped" begin
+    # Pins the exact shape classified as a timeout. Live path (1.10.19) only
+    # produces the bare form; the RequestError arm is forward-defense against a
+    # future HTTP.jl layering change — unit-pinned here so it is not dead code.
+    bare = HTTP.Exceptions.TimeoutError(1)
+    @test Neo4jQuery._is_timeout(bare)
+    wrapped = HTTP.Exceptions.RequestError(HTTP.Request("POST", "/"), HTTP.Exceptions.TimeoutError(1))
+    @test Neo4jQuery._is_timeout(wrapped)
+    # A genuine (non-timeout) transport error must NOT be mislabeled a timeout —
+    # otherwise an EOF would be swallowed as a timeout and lose its retry path.
+    @test !Neo4jQuery._is_timeout(EOFError())
+    @test !Neo4jQuery._is_timeout(HTTP.Exceptions.RequestError(HTTP.Request("POST", "/"), EOFError()))
+end
+
+@testset "connection timeout fields + connect_timeout=0 reconciliation (F-10)" begin
+    # 3-arg constructor keeps the documented defaults (readtimeout=120s,
+    # connect_timeout=10s) — every existing 3-arg call site depends on this.
+    c = Neo4jConnection("http://127.0.0.1:1", "neo4j", BasicAuth("u", "p"))
+    @test c.readtimeout == 120
+    @test c.connect_timeout == 10
+
+    # 5-arg explicit form (what connect()/connect_from_env build).
+    c2 = Neo4jConnection("http://127.0.0.1:1", "neo4j", BasicAuth("u", "p"), 5, 3)
+    @test c2.readtimeout == 5
+    @test c2.connect_timeout == 3
+
+    # 0-sentinel resolution: a user-set connect_timeout=0 ("no explicit connect
+    # bound", per the docstring) is FORWARDED to HTTP.jl, not silently dropped.
+    # Behaviourally pinned: a connect_timeout=0 connection still completes a
+    # normal request. The distinct "-1 = unset" sentinel lives inside
+    # _request_core so transaction calls (which pass nothing) keep HTTP.jl's 30s
+    # connect default; that 30s-vs-readtimeout-fallback distinction is not
+    # observable offline (localhost connects instantly) — see task-7-report.md.
+    HttpHarness.scripted_server(202,
+        "{\"data\":{\"fields\":[\"x\"],\"values\":[[{\"\$type\":\"Integer\",\"_value\":\"1\"}]]}}") do base
+        conn0 = Neo4jConnection(base.base_url, base.database, base.auth, 120, 0)
+        @test conn0.connect_timeout == 0
+        r = query(conn0, "RETURN 1 AS x")
+        @test r[1].x == 1
+    end
+end
