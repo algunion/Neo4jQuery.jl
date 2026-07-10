@@ -78,6 +78,29 @@ struct CypherVector
     coordinates::Vector{String}
 end
 
+"""
+    CypherTime
+
+A Cypher `TIME` value: a time-of-day carrying a fixed UTC offset (Neo4j's zoned
+`TIME`, as opposed to the offset-free `LocalTime` which materializes as a bare
+`Dates.Time`). Fields:
+
+- `time::Dates.Time` — nanosecond-resolution time-of-day.
+- `timezone::TimeZones.FixedTimeZone` — the fixed UTC offset.
+
+Round-trips losslessly through Typed JSON `Time`: [`to_typed_json`](@ref) reproduces
+the exact `_value` string the server sent (e.g. `"12:50:35.556+01:00"`), including
+sub-second nanosecond fractions. A zero offset serializes to the canonical `Z`
+suffix (e.g. `"09:00:00Z"`) — the server's UTC emission for zoned `TIME`, which
+gives read/write symmetry with materialization. Two `CypherTime`s compare `==`
+(and `hash`) on their time and UTC *offset*, so the `Z`, `UTC`, and `+00:00`
+spellings of the zero offset are equal.
+"""
+struct CypherTime
+    time::Dates.Time
+    timezone::TimeZones.FixedTimeZone
+end
+
 # ── Property access: getindex ────────────────────────────────────────────────
 
 Base.getindex(n::Node, key::AbstractString) = n.properties[key]
@@ -152,6 +175,22 @@ function Base.show(io::IO, v::CypherVector)
     print(io, "CypherVector(", v.coordinates_type, ", ", length(v.coordinates), "d)")
 end
 
+# `_offset_string` (the ±HH:MM|Z wire renderer, inverse of `_parse_offset`) lives in
+# typed_json.jl next to its parse-side counterpart; it is a module-global resolved at
+# call time, so the forward reference from `show`/`JSON.lower` here is fine.
+Base.show(io::IO, t::CypherTime) =
+    print(io, "CypherTime(", getfield(t, :time), _offset_string(getfield(t, :timezone)), ")")
+
+# `==`/`hash` key on the UTC *offset*, not the `FixedTimeZone` name: `Z`, `UTC`, and
+# `+00:00` all denote the same zoned time and must compare — and hash — equal. A custom
+# `==` overrides Julia's field-wise struct default, so a matching `hash` is mandatory to
+# preserve the `==`/`hash` invariant (else `CypherTime` breaks in `Set`/`Dict`).
+Base.:(==)(a::CypherTime, b::CypherTime) =
+    getfield(a, :time) == getfield(b, :time) &&
+        getfield(a, :timezone).offset == getfield(b, :timezone).offset
+Base.hash(t::CypherTime, h::UInt) =
+    hash(getfield(t, :timezone).offset, hash(getfield(t, :time), hash(:CypherTime, h)))
+
 function _props_str(props::JSON.Object{String,Any})
     isempty(props) && return "{}"
     parts = String[]
@@ -187,3 +226,10 @@ JSON.lower(r::Relationship) = (
     properties=getfield(r, :properties),
 )
 JSON.lower(p::Path) = (elements=getfield(p, :elements),)
+
+# CypherTime lowers to a stable `{time, offset}` pair of strings. NOTE (breaking): this
+# is NOT the pre-CypherTime anonymous NamedTuple's incidental shape — the `timezone` key
+# is now `offset`, and its value is the canonical `±HH:MM`/`Z` wire string rather than a
+# reflected `FixedTimeZone`. This is the declared F-12 row-shape change.
+JSON.lower(t::CypherTime) =
+    (time=string(getfield(t, :time)), offset=_offset_string(getfield(t, :timezone)))

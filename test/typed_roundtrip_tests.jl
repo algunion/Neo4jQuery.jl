@@ -55,6 +55,45 @@ end
     @test v.time == Time(12, 50, 35) + Nanosecond(556123456)
 end
 
+# Task 11 (F-12): zoned TIME now materializes as a typed `CypherTime` (was an anonymous
+# NamedTuple whose `to_typed_json` THREW — no round-trip existed). The write path
+# reproduces the exact `_value` the server sent — sub-second ns fractions (composed from
+# Task 10's `_parse_time_frac`) and the canonical `Z` for a zero offset both included.
+@testset "CypherTime zoned round-trip (F-12)" begin
+    mt(s) = _materialize_typed(JSON.Object{String,Any}("\$type" => "Time", "_value" => s))
+
+    v = mt("12:50:35.556+01:00")
+    @test v isa CypherTime                              # RED pre-fix: was a NamedTuple
+    @test v.time == Time(12, 50, 35, 556)
+    @test v.timezone == TimeZones.FixedTimeZone("+01:00")
+    t = to_typed_json(v)                                # RED pre-fix: THREW (F-12)
+    @test t["\$type"] == "Time"
+    @test t["_value"] == "12:50:35.556+01:00"           # byte-identical round-trip
+
+    # UTC pin: a zero offset canonicalizes to `Z` (the server's UTC emission for zoned
+    # TIME), giving read/write symmetry with `_mat_time`'s `Z` handling — chosen over
+    # "09:00:00+00:00" so the write path mirrors what the server actually sends.
+    utc = mt("09:00:00Z")
+    @test utc isa CypherTime
+    @test to_typed_json(utc)["_value"] == "09:00:00Z"
+
+    # Sub-second ns fraction survives the full loop (proves `_parse_time_frac` composition).
+    ns = mt("12:50:35.556123456+01:00")
+    @test ns.time == Time(12, 50, 35) + Nanosecond(556123456)
+    @test to_typed_json(ns)["_value"] == "12:50:35.556123456+01:00"
+
+    # Negative offset round-trips too.
+    @test to_typed_json(mt("23:59:59.999-05:00"))["_value"] == "23:59:59.999-05:00"
+
+    # `==`/`hash` semantics: equal on time + UTC offset (independent of tz-name spelling
+    # `Z`/`UTC`/`+00:00`); unequal on differing offset; `hash` agrees with `==`.
+    @test mt("09:00:00Z") == mt("09:00:00+00:00")
+    @test hash(mt("09:00:00Z")) == hash(mt("09:00:00+00:00"))
+    @test mt("09:00:00+01:00") != mt("09:00:00+02:00")
+    @test CypherTime(Time(9), TimeZones.FixedTimeZone("+01:00")) ==
+          CypherTime(Time(9), TimeZones.FixedTimeZone("+01:00"))
+end
+
 # Live-gated (test01): the server itself must agree the round-tripped parameter
 # equals the same localdatetime literal — the on-the-wire F1 losslessness check.
 # Skips cleanly when no credentials/ dir is present (loader returns `nothing`).

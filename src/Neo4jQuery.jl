@@ -58,7 +58,7 @@ export stream, StreamingResult, summary
 export QueryResult, QueryCounters, Notification
 
 # Graph types
-export Node, Relationship, Path, CypherPoint, CypherDuration, CypherVector
+export Node, Relationship, Path, CypherPoint, CypherDuration, CypherVector, CypherTime
 
 # Errors
 export Neo4jError, AuthenticationError, Neo4jQueryError, TransactionExpiredError, Neo4jHTTPError

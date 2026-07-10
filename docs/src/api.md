@@ -76,6 +76,7 @@ Path
 CypherPoint
 CypherDuration
 CypherVector
+CypherTime
 ```
 
 ## Errors

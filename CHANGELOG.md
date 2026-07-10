@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Breaking
+- Zoned `TIME` values now materialize as a typed `CypherTime` struct (fields `time`, `timezone`) instead of an anonymous `NamedTuple`, and round-trip losslessly through `to_typed_json` (which previously threw — F-12). The JSON row shape changed accordingly: a `CypherTime` lowers to `{"time","offset"}` (offset a canonical `±HH:MM`/`Z` string), replacing the former `{"time","timezone"}`.
 - Streaming raises typed errors (`Neo4jQueryError`/`Neo4jHTTPError`) on HTTP error responses and header-less bodies instead of yielding a silent empty result.
 - `TransactionExpiredError` is raised only for requests made inside an explicit transaction, classified by error code where possible; plain-query lock timeouts now surface as `Neo4jQueryError`.
 

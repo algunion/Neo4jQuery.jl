@@ -138,8 +138,9 @@ function _mat_time(v)
     # The offset is always the trailing 6-char ±HH:MM (or a single 'Z'); strip it to
     # recover the bare time component.
     time_part = endswith(s, "Z") ? chop(s) : chop(s; tail=6)
-    # F-05: `_parse_time_frac` handles µs/ns fractions that `Dates.Time(::String)` rejects.
-    return (time=_parse_time_frac(time_part), timezone=tz)
+    # F-12: a typed `CypherTime` (was an anonymous NamedTuple whose `to_typed_json`
+    # threw). F-05: `_parse_time_frac` handles µs/ns fractions `Dates.Time(::String)` rejects.
+    return CypherTime(_parse_time_frac(time_part), tz)
 end
 
 # F-05: sub-millisecond LocalTime fractions (µs/ns) parsed losslessly into ns-resolution Time.
@@ -259,6 +260,24 @@ function _parse_offset(s::AbstractString)
     error("Cannot parse timezone offset from: $s")
 end
 
+"""
+    _offset_string(tz::TimeZones.FixedTimeZone) -> String
+
+Render a fixed UTC offset as the Typed JSON `Time` wire suffix: `±HH:MM`, or `Z`
+for a zero offset. Exact inverse of [`_parse_offset`](@ref). A zero offset
+canonicalizes to `Z` (the server's UTC emission for zoned `TIME`), so a value read
+via `_mat_time` re-serializes byte-identically. Verified against the installed
+TimeZones (1.22): `FixedTimeZone`'s `offset::UTCOffset` decomposes into
+`.std + .dst`, both `Dates.Second`, and sums to the total offset.
+"""
+function _offset_string(tz::TimeZones.FixedTimeZone)
+    total = Dates.value(Dates.Second(tz.offset.std + tz.offset.dst))
+    total == 0 && return "Z"
+    sign = total < 0 ? "-" : "+"
+    total = abs(total)
+    return string(sign, lpad(total ÷ 3600, 2, '0'), ":", lpad((total % 3600) ÷ 60, 2, '0'))
+end
+
 # ── Serialization (Julia → request Typed JSON) ─────────────────────────────
 
 """
@@ -280,6 +299,17 @@ to_typed_json(v::Dates.DateTime) = Dict{String,Any}("\$type" => "LocalDateTime",
 function to_typed_json(v::TimeZones.ZonedDateTime)
     Dict{String,Any}("\$type" => "OffsetDateTime", "_value" => string(v))
 end
+
+"""
+    to_typed_json(v::CypherTime)
+
+Serialize a zoned `TIME` back to its Typed JSON `Time` envelope, emitting the same
+`_value` the server sent — `"<time><±HH:MM>"`, or `"<time>Z"` for a zero offset
+(the pinned UTC form, e.g. `"09:00:00Z"`) — for a byte-identical F-12 round-trip.
+`string(::Dates.Time)` preserves nanoseconds, so sub-second fractions survive.
+"""
+to_typed_json(v::CypherTime) =
+    Dict{String,Any}("\$type" => "Time", "_value" => string(v.time, _offset_string(v.timezone)))
 
 to_typed_json(v::CypherDuration) = Dict{String,Any}("\$type" => "Duration", "_value" => v.value)
 to_typed_json(v::CypherPoint) = Dict{String,Any}("\$type" => "Point", "_value" => _to_wkt(v))
