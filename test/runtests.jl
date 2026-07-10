@@ -1254,10 +1254,11 @@ end
         @test scheme6 == "http"
         @test port6 == 7474
 
-        # Explicit port overrides default
-        scheme7, host7, port7 = _parse_neo4j_uri("neo4j+s://myhost.io:7687")
+        # Explicit port overrides default (non-7687 — the Bolt-port 7687 rewrite is
+        # covered by "URI 7687 Bolt-port footgun (F-27)" in agentic_api_tests.jl).
+        scheme7, host7, port7 = _parse_neo4j_uri("neo4j+s://myhost.io:8080")
         @test scheme7 == "https"
-        @test port7 == 7687
+        @test port7 == 8080
 
         # Invalid URI
         @test_throws ErrorException _parse_neo4j_uri("http://not-a-neo4j-uri")

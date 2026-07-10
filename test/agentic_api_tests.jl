@@ -78,3 +78,40 @@ end
     @test !occursin("hunter2", sprint(show, conn))
     @test !occursin("hunter2", sprint(show, MIME"text/plain"(), conn))
 end
+
+@testset "URI 7687 Bolt-port footgun (F-27)" begin
+    # 7687 is the Bolt protocol port; the HTTP Query API never listens there. A
+    # neo4j://·bolt:// URI aimed at 7687 is a copy-paste/protocol-confusion artifact
+    # (default_port here is only ever 443/7474, so 7687 can only arrive as an explicit
+    # port on a neo4j/bolt scheme). _parse_neo4j_uri warns — naming both the problem
+    # (7687 = Bolt) and the escape hatch (pass an explicit HTTP port) — and rewrites to
+    # the real HTTP port for the scheme's security. Pre-fix RED: no warning, port==7687.
+
+    # `@test_logs` returns the wrapped expression's value, so each footgun call asserts
+    # BOTH the warning AND the rewrite in one shot (and no stray warning leaks to stderr).
+
+    # --- insecure schemes rewrite 7687 → 7474 (http), warning names "7687" ---
+    scheme, host, port = @test_logs (:warn, r"7687") Neo4jQuery._parse_neo4j_uri("neo4j://localhost:7687")
+    @test (scheme, host, port) == ("http", "localhost", 7474)   # ← FAILS pre-fix (keeps 7687)
+    @test (@test_logs (:warn, r"7687") Neo4jQuery._parse_neo4j_uri("bolt://localhost:7687")) ==
+          ("http", "localhost", 7474)
+
+    # --- secure (+s/+ssc) schemes rewrite 7687 → 443 (https), same warning ---
+    @test (@test_logs (:warn, r"7687") Neo4jQuery._parse_neo4j_uri("neo4j+s://x.databases.neo4j.io:7687")) ==
+          ("https", "x.databases.neo4j.io", 443)
+    @test (@test_logs (:warn, r"7687") Neo4jQuery._parse_neo4j_uri("bolt+s://host:7687")) ==
+          ("https", "host", 443)
+
+    # --- clean Aura form (no :7687) is unchanged AND must NOT warn (guards over-firing).
+    #     Bare `@test_logs expr` asserts ZERO log records (house convention, no Logging
+    #     dep) — strictly implies no Warn, and still returns the parsed value to compare. ---
+    @test (@test_logs Neo4jQuery._parse_neo4j_uri("neo4j+s://abc.databases.neo4j.io")) ==
+          ("https", "abc.databases.neo4j.io", 443)
+
+    # --- explicit http/https on 7687 is NOT silently rewritten: the scheme regex only
+    #     admits neo4j/bolt, so a deliberate HTTP-on-7687 claim fails loud upstream. We
+    #     rewrite ONLY protocol-confusion artifacts (neo4j/bolt schemes), never an
+    #     explicit http scheme the user deliberately chose (fail-loud > guessing). ---
+    @test_throws ErrorException Neo4jQuery._parse_neo4j_uri("http://host:7687")
+    @test_throws ErrorException Neo4jQuery._parse_neo4j_uri("https://host:7687")
+end
