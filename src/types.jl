@@ -91,7 +91,21 @@ end
 """
     CypherVector
 
-A Neo4j vector value (Enterprise Edition).
+A Neo4j vector value (Enterprise Edition). `coordinates` is a `Vector{String}` and is kept
+as strings **on purpose**: the server's `coordinatesType` spans `FLOAT64`/`FLOAT32` and
+`INT64`/`INT32`/`INT16`/`INT8`, and storing the exact wire tokens is lossless across all of
+them — parsing to one fixed numeric type on read would perturb float digits or overflow the
+narrow ints. Convert explicitly when you need numbers for math:
+
+    length(v)             # dimension (coordinate count)
+    Vector{Float32}(v)    # → Vector{Float32}
+    Vector{Float64}(v)    # → Vector{Float64}
+    Vector{Int8}(v)       # → Vector{Int8}   (any T<:Real)
+
+Conversion parses each coordinate with `parse(T, …)`; a non-numeric coordinate — or an
+integer target over a fractional value (`Vector{Int}` of a `FLOAT32` vector) — throws
+`ArgumentError` (an out-of-range integer throws `OverflowError`). This is deliberate
+fail-loud behavior: no silent `NaN`, zero, or truncation.
 
 Equality (and hashing) compares `coordinates_type` and `coordinates`.
 """
@@ -257,6 +271,16 @@ Base.hash(d::CypherDuration, h::UInt) = hash(d.value, h)
 Base.:(==)(a::CypherVector, b::CypherVector) =
     a.coordinates_type == b.coordinates_type && a.coordinates == b.coordinates
 Base.hash(v::CypherVector, h::UInt) = hash((v.coordinates_type, v.coordinates), h)
+
+# ── CypherVector numeric accessors (F-28) ─────────────────────────────────────
+# `coordinates` is stored as strings for lossless wire fidelity (see the type docstring);
+# these bridge to numeric math on demand. `length` reports the dimension. The `Vector{T}`
+# constructor is a method on Base's `Vector` whose *argument* type `CypherVector` is ours —
+# so it is not type piracy (Aqua confirms), and no Base `Vector{T}` constructor accepts a
+# `CypherVector`, so no ambiguity. Parsing is fail-loud: a non-numeric coordinate (or a
+# fractional value under an integer `T`) throws from `parse`, never a silent fallback.
+Base.length(v::CypherVector) = length(v.coordinates)
+(::Type{Vector{T}})(v::CypherVector) where {T<:Real} = [parse(T, c) for c in v.coordinates]
 
 function _props_str(props::JSON.Object{String,Any})
     isempty(props) && return "{}"

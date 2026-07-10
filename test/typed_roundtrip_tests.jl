@@ -410,6 +410,46 @@ end
           hash(CypherVector("FLOAT32", ["1.0", "2.0"]))
 end
 
+# ── CypherVector numeric accessors (F-28) ─────────────────────────────────────
+# `coordinates::Vector{String}` keeps lossless wire fidelity (see the type docstring), but
+# GraphRAG consumers need numbers: `length` and the `Vector{T}(cv)` parse-conversion bridge
+# to math. Pre-fix both were MethodErrors — no `Base.length`, no `Vector{T}` constructor
+# accepting our type. Edge polarity is the point of this block: an unparseable coordinate
+# MUST throw at parse (fail loud — never a silent NaN/zero), and an integer target over a
+# fractional FLOAT vector MUST throw too (that is `parse(Int,"1.5")` doing its job — no
+# lossy truncation). Both are the correct fail-loud behavior, pinned here so a future
+# "convenience" that swallows them regresses the suite.
+@testset "CypherVector numeric access (F-28)" begin
+    cv = CypherVector("FLOAT32", ["1.5", "-2.0", "3.25"])
+    @test Vector{Float32}(cv) == Float32[1.5, -2.0, 3.25]
+    @test Vector{Float32}(cv) isa Vector{Float32}
+    @test Vector{Float64}(cv) == [1.5, -2.0, 3.25]
+    @test length(cv) == 3
+    iv = CypherVector("INT8", ["1", "-5", "10"])
+    @test Vector{Int8}(iv) == Int8[1, -5, 10]
+    @test Vector{Int8}(iv) isa Vector{Int8}
+
+    # Unparseable coordinate ⇒ parse throws (documented on the type). Fail loud.
+    @test_throws ArgumentError Vector{Float32}(CypherVector("FLOAT32", ["abc"]))
+    # Integer target over a fractional FLOAT vector ⇒ `parse(Int,"1.5")` throws — correct:
+    # no silent truncation. The caller must pick a float target (or a lossless int wire type).
+    @test_throws ArgumentError Vector{Int}(CypherVector("FLOAT32", ["1.5"]))
+
+    # Empty vector: length 0; conversion yields an empty, correctly-typed numeric vector.
+    ev = CypherVector("FLOAT64", String[])
+    @test length(ev) == 0
+    @test Vector{Float64}(ev) == Float64[]
+    @test Vector{Float64}(ev) isa Vector{Float64}
+
+    # Round-trip with Task 16's `==`: separately constructed equal vectors convert to equal
+    # numeric vectors (conversion is a pure function of the `==`-relevant fields).
+    a = CypherVector("FLOAT32", ["1.5", "-2.0"])
+    b = CypherVector("FLOAT32", ["1.5", "-2.0"])
+    @test a == b
+    @test Vector{Float32}(a) == Vector{Float32}(b)
+    @test length(a) == length(b)
+end
+
 # Live-gated (test01): the server itself must agree the round-tripped parameter
 # equals the same localdatetime literal — the on-the-wire F1 losslessness check.
 # Skips cleanly when no credentials/ dir is present (loader returns `nothing`).
