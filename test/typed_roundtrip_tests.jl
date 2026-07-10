@@ -230,6 +230,46 @@ end
     @test_throws ErrorException Neo4jQuery._to_wkt(CypherPoint(9157, [1.0, 2.0, 3.0, 4.0]))
 end
 
+# Task 14 (F-13): an unknown `$type` envelope now FAILS LOUD instead of silently returning
+# its raw `_value`. That silent passthrough was the fail-loud violation that HID F-06 in
+# production — a ZonedDateTime the dispatch didn't recognize fell through to `return value`
+# and surfaced as a raw String, indistinguishable from a genuine String, so the bug went
+# unnoticed. The final fallback of `_materialize_dispatch` now errors, naming the offending
+# type AND echoing the raw value (an agent debugging this needs both) and pointing at a
+# newer-Neo4jQuery / media-type mismatch. `"Unsupported"` stays a passthrough — it is the
+# server's DOCUMENTED escape hatch for values it cannot type — and is pinned so this fix
+# does not turn a normal server response into a crash.
+@testset "unknown \$type fails loud (F-13)" begin
+    ut(t, v) = _materialize_typed(JSON.Object{String,Any}("\$type" => t, "_value" => v))
+
+    # RED pre-fix: silently returned "opaque" (no throw), hiding the unknown type.
+    @test_throws ErrorException ut("SomeFutureType", "opaque")
+
+    # server-declared Unsupported stays a passthrough (documented escape hatch, NOT an error).
+    @test ut("Unsupported", "Type X is not supported.") == "Type X is not supported."
+
+    # Error-message content pins: an agent debugging a wire mismatch needs BOTH the offending
+    # `$type` name and the raw `_value` it refused to materialize — assert both appear verbatim.
+    msg = try
+        ut("SomeFutureType", "opaque")
+    catch e
+        sprint(showerror, e)
+    end
+    @test occursin("SomeFutureType", msg)   # the unknown type name
+    @test occursin("opaque", msg)           # the raw _value it refused to pass silently
+
+    # The error must PROPAGATE out of nested materialization: an unknown envelope buried
+    # inside a List or a Map cannot be silently smuggled through the recursive container walk
+    # either (RED pre-fix: the List materialized to `["opaque"]`, the Map to `{"k"=>"opaque"}`).
+    @test_throws ErrorException _materialize_typed(JSON.Object{String,Any}(
+        "\$type" => "List",
+        "_value" => [JSON.Object{String,Any}("\$type" => "SomeFutureType", "_value" => "opaque")]))
+    @test_throws ErrorException _materialize_typed(JSON.Object{String,Any}(
+        "\$type" => "Map",
+        "_value" => JSON.Object{String,Any}(
+            "k" => JSON.Object{String,Any}("\$type" => "SomeFutureType", "_value" => "opaque"))))
+end
+
 # Live-gated (test01): the server itself must agree the round-tripped parameter
 # equals the same localdatetime literal — the on-the-wire F1 losslessness check.
 # Skips cleanly when no credentials/ dir is present (loader returns `nothing`).

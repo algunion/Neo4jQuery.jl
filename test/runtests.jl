@@ -482,9 +482,12 @@ end
         @test result == "raw_data"
     end
 
-    @testset "_materialize_typed: Unknown type passthrough" begin
-        result = _materialize_typed(JSON.Object("\$type" => "FutureType", "_value" => "some_data"))
-        @test result == "some_data"
+    @testset "_materialize_typed: unknown type fails loud (F-13)" begin
+        # An unknown $type raises, it does NOT silently return its raw _value — that passthrough
+        # hid F-06 (a ZonedDateTime that surfaced as a raw String). The documented "Unsupported"
+        # escape hatch stays a passthrough (asserted in the testset above).
+        @test_throws ErrorException _materialize_typed(
+            JSON.Object("\$type" => "FutureType", "_value" => "some_data"))
     end
 
     @testset "_materialize_typed: plain dict recursion" begin

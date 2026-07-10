@@ -61,9 +61,13 @@ function _materialize_dispatch(type::AbstractString, value)
     type == "Relationship" && return _mat_relationship(value)
     type == "Path" && return _mat_path(value)
     type == "Vector" && return _mat_vector(value)
-    type == "Unsupported" && return value  # pass-through string
-    # Unknown type – return raw
-    return value
+    type == "Unsupported" && return value  # server-declared passthrough (documented escape hatch)
+    # F-13: an unknown $type must NOT silently return its raw _value — that passthrough hid F-06
+    # (a ZonedDateTime that fell through here and surfaced as a raw String, indistinguishable from
+    # a genuine String). Fail loud, naming the offending type AND echoing the raw value so the wire
+    # mismatch is diagnosable at the call site, and point at a version/media-type gap.
+    error("Unknown Neo4j Typed JSON \$type $(repr(type)) — refusing to materialize silently. " *
+          "Raw _value: $(repr(value)). A newer Neo4jQuery (or media-type) version may be required.")
 end
 
 # ── Individual type materialisers ───────────────────────────────────────────
