@@ -270,6 +270,38 @@ end
             "k" => JSON.Object{String,Any}("\$type" => "SomeFutureType", "_value" => "opaque"))))
 end
 
+# Task 15 (F-18): the `to_typed_json(::Any)` fallback carried a dead `haskey(v, "$type")`
+# passthrough branch. It was UNREACHABLE: `to_typed_json(::AbstractDict)` is strictly more
+# specific and shadows the `Any` method for every dict, so no dict ever reached the branch.
+# Every `AbstractDict` is therefore encoded as a Cypher `Map`, TOTALLY — even one shaped like
+# a pre-built envelope. The old docs promised envelope-passthrough; that promise was a lie.
+# This pins the real, going-forward contract (dicts are ALWAYS Maps) so deleting the dead
+# branch is proven non-breaking, and pins the fail-loud fallback message shape.
+@testset "to_typed_json dict wrapping is total; fallback message (F-18)" begin
+    # An envelope-SHAPED dict is still wrapped as a Map: its `$type`/`_value` keys become
+    # ordinary Map ENTRIES (each String-encoded), NOT read back as a pre-built envelope.
+    # Already-GREEN pre-fix (the dead branch never ran) — this pins removal as non-breaking.
+    env = Dict{String,Any}("\$type" => "Duration", "_value" => "P1D")
+    result = to_typed_json(env)
+    @test result["\$type"] == "Map"
+    # Pin the nested re-wrap precisely: both envelope-looking keys survive as Map entry keys
+    # whose values are String envelopes of the original strings (not the envelope itself).
+    @test result["_value"]["\$type"] == Dict{String,Any}("\$type" => "String", "_value" => "Duration")
+    @test result["_value"]["_value"] == Dict{String,Any}("\$type" => "String", "_value" => "P1D")
+
+    # An unsupported type fails loud (no silent passthrough).
+    err = try
+        to_typed_json(:a_symbol)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("Symbol", err.msg)          # names the offending Julia type (already-GREEN)
+    @test occursin("to_typed_json", err.msg)   # tells the user HOW to extend (already-GREEN)
+    @test occursin("Map", err.msg)             # the dict-is-always-a-Map note — RED pre-fix
+end
+
 # Live-gated (test01): the server itself must agree the round-tripped parameter
 # equals the same localdatetime literal — the on-the-wire F1 losslessness check.
 # Skips cleanly when no credentials/ dir is present (loader returns `nothing`).

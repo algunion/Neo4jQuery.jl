@@ -330,7 +330,10 @@ end
     to_typed_json(val) -> Dict{String,Any}
 
 Convert a Julia value into its Neo4j Typed JSON envelope representation for use
-as a query parameter.
+as a query parameter. Every `AbstractDict` is encoded as a Cypher `Map` — there is
+no pre-encoded-envelope passthrough, so an envelope-shaped dict (with `\$type`/`_value`
+keys) is wrapped as a `Map` like any other. A value with no `to_typed_json` method
+raises `ErrorException` rather than being silently passed through.
 """
 to_typed_json(::Nothing) = Dict{String,Any}("\$type" => "Null", "_value" => nothing)
 to_typed_json(v::Bool) = Dict{String,Any}("\$type" => "Boolean", "_value" => v)
@@ -398,14 +401,11 @@ function to_typed_json(v::CypherVector)
             "coordinates" => v.coordinates))
 end
 
-# Fallback: pass through raw values that are already typed-json dicts
+# Fallback: no serializer is defined for this type — fail loud with an extension hint.
 function to_typed_json(v::Any)
-    # If it's already a dict with $type, pass through
-    if v isa AbstractDict && haskey(v, "\$type")
-        return v
-    end
     error("Cannot convert $(typeof(v)) to Neo4j Typed JSON. " *
-          "Define `Neo4jQuery.to_typed_json(::$(typeof(v)))` to add support.")
+          "Define `Neo4jQuery.to_typed_json(::$(typeof(v)))` to add support. " *
+          "Note: AbstractDict values are always encoded as Cypher Map parameters.")
 end
 
 function _float_str(v::AbstractFloat)
