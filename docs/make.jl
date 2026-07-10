@@ -27,6 +27,9 @@ makedocs(;
         edit_link="main",
         assets=String[],
         sidebar_sitename=true,
+        # api.md is deliberately the single full reference; documenting the
+        # `public` unexported symbols pushed it past the default warn threshold.
+        size_threshold_ignore=["api.md"],
     ),
     pages=[
         "Home" => "index.md",
@@ -41,6 +44,11 @@ makedocs(;
             "Biomedical Case Study" => "guide/biomedical_case_study.md",
         ],
         "API Reference" => "api.md",
+        # llm.md is deliberately NOT in the nav: Documenter registers nav-page
+        # headers as global @ref anchor targets, and llm.md's per-symbol headings
+        # (### `connect`, …) collide with the guide's own section slugs, breaking
+        # [`connect`](@ref)-style links manual-wide. As an orphan page it is still
+        # built and deployed (…/llm/); index.md and the README link to it.
     ],
     warnonly=[:missing_docs, :cross_references, :setup_block, :example_block],
 )

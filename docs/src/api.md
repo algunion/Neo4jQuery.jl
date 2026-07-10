@@ -12,10 +12,13 @@ connect_from_env
 
 ## Authentication
 
+`auth_header` is `public` but unexported — call or extend it as `Neo4jQuery.auth_header`.
+
 ```@docs
 AbstractAuth
 BasicAuth
 BearerAuth
+Neo4jQuery.auth_header
 ```
 
 ## Environment
@@ -47,7 +50,8 @@ transaction
 ```@docs
 stream
 StreamingResult
-Neo4jQuery.summary
+Neo4jQuery.summary(::StreamingResult)
+Base.close(::StreamingResult)
 ```
 
 ## Read-Only Guard
@@ -59,13 +63,29 @@ read_stream
 ReadOnlyViolationError
 ```
 
+### Read-only classifier (internal)
+
+[`ReadOnlyConnection`](@ref) documents its refusal semantics in terms of the
+internal lexical classifier — included here so those references resolve:
+
+```@docs
+Neo4jQuery._classify_cypher
+```
+
 ## Introspection
+
+The `GraphSchema` field types are `public` but unexported — reference them as
+`Neo4jQuery.PropertyInfo` etc.
 
 ```@docs
 validate_cypher
 graph_schema
 schema_prompt
 GraphSchema
+Neo4jQuery.PropertyInfo
+Neo4jQuery.LabelInfo
+Neo4jQuery.RelTypeInfo
+Neo4jQuery.IndexInfo
 ```
 
 ## GraphRAG (vector search)
@@ -93,6 +113,14 @@ CypherPoint
 CypherDuration
 CypherVector
 CypherTime
+```
+
+## Wire Format (Typed JSON)
+
+`to_typed_json` is `public` but unexported — call it as `Neo4jQuery.to_typed_json`.
+
+```@docs
+Neo4jQuery.to_typed_json
 ```
 
 ## Errors
