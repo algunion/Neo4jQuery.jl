@@ -86,6 +86,12 @@ end
     s = string(ex)
     @test occursin("CALL (p) { MATCH (p)-[r:KNOWS]->(f:Person) RETURN count(f) AS c }", s)
 
+    # Two-variable scoped form: pins the join order and ", " separator.
+    two = Meta.parse("begin\n match(p::Person, q::Person)\n call(p, q, begin\n" *
+                     " p >> r::KNOWS >> q\n ret(count(r) => :k)\n end)\n ret(k)\nend")
+    tcyph, _ = _compile_cypher_block(_parse_cypher_block(two))
+    @test occursin("CALL (p, q) { MATCH (p)-[r:KNOWS]->(q) RETURN count(r) AS k }", tcyph)
+
     # Nested call() now COMPILES (pre-fix: expansion error).
     nested = @macroexpand @cypher conn begin
         call(begin
@@ -113,6 +119,32 @@ end
                         " where(f.age > \$threshold)\n ret(count(f) => :c)\n end)\n ret(p.name, c)\nend")
     _, params = _compile_cypher_block(_parse_cypher_block(shared))
     @test count(==(:threshold), params) == 1
+
+    # DISCRIMINATING pin (reviewer): the assertion above cannot falsify the
+    # shared-collection mechanism — the outer where() registers :threshold first,
+    # so a mutant recursing with FRESH collections (discarding the subquery's
+    # params) still yields count == 1. The load-bearing direction is a `\$param`
+    # appearing ONLY inside call(): the placeholder is emitted either way, but
+    # only the SHARED collections propagate the BINDING to the outer query — a
+    # fresh-collection regression ships `\$minage` unbound to the server.
+    # Mutation-checked: fresh-collection mutant → binding assertions FAIL,
+    # placeholder assertion still passes (that silence is the bug).
+    subonly = Meta.parse("begin\n p::Person\n call(begin\n f::Friend\n" *
+                         " where(f.age > \$minage)\n ret(count(f) => :c)\n end)\n ret(p.name, c)\nend")
+    socyph, soparams = _compile_cypher_block(_parse_cypher_block(subonly))
+    @test occursin("\$minage", socyph)               # placeholder emitted either way
+    @test count(==(:minage), soparams) == 1          # ← FAILS (0) under fresh-collection mutant
+    # End-to-end: the @cypher expansion must BIND the subquery-only param.
+    soex = @macroexpand @cypher conn begin
+        p::Person
+        call(begin
+            f::Friend
+            where(f.age > $minage)
+            ret(count(f) => :c)
+        end)
+        ret(p.name, c)
+    end
+    @test occursin("\"minage\" => minage", string(soex))  # ← FAILS under fresh-collection mutant
 
     # Task-19 interaction (F-09 × F-25): mode inference must find a mutation inside
     # a SCOPED call. Pre-fix `_has_mutations` read args[1] (the scope Symbol :p),
