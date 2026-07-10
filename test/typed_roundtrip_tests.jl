@@ -183,6 +183,53 @@ end
     @test off == ZonedDateTime(2024, 1, 15, 10, 30, tz"UTC+01:00")
 end
 
+# Task 13 (F-07): 3D points (`POINT Z`) crashed. The server emits cartesian-3d points as
+# "SRID=9157;POINT Z (1.0 2.0 3.0)" (live L8), but `_parse_wkt`'s regex required a bare
+# "POINT (" — the ` Z ` between POINT and the coordinate list never matched, so every 3D
+# point threw "Cannot parse WKT point". Symmetrically `_to_wkt` never emitted the `Z`
+# marker, so a 3D CypherPoint serialized to 2D-shaped WKT the server would reject. The
+# regex gains an optional `(?:Z\s*)?`; `_to_wkt` emits `Z ` for a 3-coordinate point and
+# now REJECTS any point that is neither 2D nor 3D (a 4-coord point would otherwise emit
+# "POINT Z (1 2 3 4)", nonsense WKT). CypherPoint has no `==` until Task 16 — compare
+# `.srid`/`.coordinates` fields here.
+@testset "3D POINT Z (F-07)" begin
+    pt(s) = _materialize_typed(JSON.Object{String,Any}("\$type" => "Point", "_value" => s))
+
+    # Read path: a 3D point materializes (RED pre-fix: THREW "Cannot parse WKT point").
+    p3 = pt("SRID=9157;POINT Z (1.0 2.0 3.0)")
+    @test p3.srid == 9157
+    @test p3.coordinates == [1.0, 2.0, 3.0]
+
+    # Write path: a 3D CypherPoint emits `Z` (RED pre-fix: "SRID=9157;POINT (1.0 2.0 3.0)").
+    @test Neo4jQuery._to_wkt(CypherPoint(9157, [1.0, 2.0, 3.0])) == "SRID=9157;POINT Z (1.0 2.0 3.0)"
+
+    # 2D stays byte-stable — no spurious `Z` (regression guard for the existing 2D path).
+    @test Neo4jQuery._to_wkt(CypherPoint(7203, [1.2, 3.4])) == "SRID=7203;POINT (1.2 3.4)"
+
+    # Full read→write round-trip is byte-identical for both dimensionalities.
+    @test Neo4jQuery._to_wkt(p3) == "SRID=9157;POINT Z (1.0 2.0 3.0)"
+    p2 = pt("SRID=7203;POINT (1.2 3.4)")
+    @test p2.coordinates == [1.2, 3.4]
+    @test Neo4jQuery._to_wkt(p2) == "SRID=7203;POINT (1.2 3.4)"
+
+    # Edge: server may emit `Z` flush against the paren (no space) — `Z\s*` accepts zero spaces.
+    z0 = pt("SRID=9157;POINT Z(1 2 3)")
+    @test z0.srid == 9157
+    @test z0.coordinates == [1.0, 2.0, 3.0]
+
+    # Edge: scientific-notation coordinates parse (`parse(Float64, "1.5e10")`).
+    @test pt("SRID=9157;POINT Z (1.5e10 2.0 3.0)").coordinates == [1.5e10, 2.0, 3.0]
+
+    # Case sensitivity is UNCHANGED by this fix: the regex matches literal `SRID`/`POINT`,
+    # so a lowercase WKT string still fails to parse. Documents current behavior — NOT a new
+    # restriction; flipping to case-insensitive would be a separate, deliberately-tested change.
+    @test_throws ErrorException pt("srid=9157;point z (1 2 3)")
+
+    # `_to_wkt` accepts only 2D/3D: a 4-coordinate point is not a valid WKT point, so error
+    # loudly rather than emit "SRID=9157;POINT Z (1 2 3 4)" the server would reject.
+    @test_throws ErrorException Neo4jQuery._to_wkt(CypherPoint(9157, [1.0, 2.0, 3.0, 4.0]))
+end
+
 # Live-gated (test01): the server itself must agree the round-tripped parameter
 # equals the same localdatetime literal — the on-the-wire F1 losslessness check.
 # Skips cleanly when no credentials/ dir is present (loader returns `nothing`).
@@ -209,5 +256,29 @@ end
         r = query(conn, "RETURN \$z = datetime('2024-01-15T10:30:00[Europe/Paris]') AS eq";
             parameters=Dict("z" => z), access_mode=:read)
         @test r[1].eq === true
+    end
+end
+
+# Live-gated (test01, F-07): both wire directions for a 3D point. L8 — the server emits a
+# cartesian-3d point as "SRID=9157;POINT Z (…)", which must materialize to a CypherPoint
+# (the read path this task un-crashed). L9 — a 3D CypherPoint parameter must serialize to
+# `POINT Z (…)` the server accepts, with the z-coordinate in the right slot: `$p.z` == 3.0
+# is the discriminating check (a dropped/mis-positioned Z would return null or a wrong axis).
+@testset "3D POINT Z live round-trip (test01, F-07)" begin
+    conn = load_readwrite_test01()
+    if conn === nothing
+        @warn "test01 unreachable — skipping live 3D POINT Z round-trip test"
+    else
+        # L8: server-emitted 3D point → CypherPoint (read path).
+        rp = query(conn, "RETURN point({x:1.0, y:2.0, z:3.0}) AS p"; access_mode=:read)
+        p = rp[1].p
+        @test p isa CypherPoint
+        @test p.srid == 9157
+        @test p.coordinates == [1.0, 2.0, 3.0]
+
+        # L9: 3D CypherPoint parameter → server → `.z` access (write path, z-slot correct).
+        rz = query(conn, "RETURN \$p.z AS z";
+            parameters=Dict("p" => CypherPoint(9157, [1.0, 2.0, 3.0])), access_mode=:read)
+        @test rz[1].z == 3.0
     end
 end

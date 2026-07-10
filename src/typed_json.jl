@@ -266,19 +266,29 @@ end
 
 _materialize_properties(::Nothing) = JSON.Object{String,Any}()
 
-"""Parse a WKT‑like string `"SRID=7203;POINT (1.2 3.4)"` into a `CypherPoint`."""
+"""Parse a WKT‑like string `"SRID=7203;POINT (1.2 3.4)"`, or the 3D form
+`"SRID=9157;POINT Z (1.0 2.0 3.0)"`, into a `CypherPoint`. The optional `Z` marker
+(cartesian-3d / wgs-84-3d, which the server emits between `POINT` and the coordinate
+list) carries no data — dimensionality is the coordinate count. Matching is
+case-sensitive on `SRID`/`POINT`/`Z`, mirroring the server's fixed uppercase emission."""
 function _parse_wkt(s::AbstractString)
-    m = match(r"SRID=(\d+);\s*POINT\s*\(([^)]+)\)", s)
+    m = match(r"SRID=(\d+);\s*POINT\s*(?:Z\s*)?\(([^)]+)\)", s)
     m === nothing && error("Cannot parse WKT point: $s")
     srid = parse(Int, m.captures[1])
     coords = [parse(Float64, x) for x in split(strip(m.captures[2]))]
     return CypherPoint(srid, coords)
 end
 
-"""Convert a `CypherPoint` back to WKT."""
+"""Convert a `CypherPoint` back to WKT. A 3D point emits the `POINT Z (…)` marker the
+server requires; 2D stays `POINT (…)`. A WKT point is 2D or 3D only, so any other
+coordinate count errors loudly rather than emit malformed WKT the server would reject."""
 function _to_wkt(pt::CypherPoint)
+    n = length(pt.coordinates)
+    (n == 2 || n == 3) ||
+        error("Cannot serialize CypherPoint to WKT: a point must have 2 or 3 coordinates, got $n: $(pt.coordinates)")
     coords = join(pt.coordinates, " ")
-    return "SRID=$(pt.srid);POINT ($coords)"
+    z = n == 3 ? "Z " : ""
+    return "SRID=$(pt.srid);POINT $(z)($coords)"
 end
 
 """Parse a UTC offset string like `+01:00` or `Z` into a `TimeZones.FixedTimeZone`."""
