@@ -490,6 +490,39 @@ _sent_statement(captured::Vector{String}) = JSON.parse(captured[end])["statement
         @test req["accessMode"] == "Read"
     end
 
+    # (6b) G4 evidence (2026-07-10): the injected "EXPLAIN " prefix leaked into the
+    #      returned error — line-1 column/offset shifted by 8 and the quoted echo
+    #      carried a keyword the caller never wrote, so an LLM fed this error got a
+    #      mis-positioned caret. Positions must map back to the CALLER's statement.
+    let wire_echo = "\"EXPLAIN MATCH (n RETURN n\"",
+        raw_msg = "Invalid input 'RETURN': expected \")\" (line 1, column 18 (offset: 17))\n" *
+                  wire_echo * "\n" * (" "^17) * "^",
+        expected = "Invalid input 'RETURN': expected \")\" (line 1, column 10 (offset: 9))\n" *
+                   "\"MATCH (n RETURN n\"\n" * (" "^9) * "^",
+        body = JSON.json(Dict("errors" => [Dict(
+            "code" => "Neo.ClientError.Statement.SyntaxError", "message" => raw_msg)]))
+
+        HttpHarness.scripted_server(202, body) do conn
+            v = validate_cypher(conn, "MATCH (n RETURN n")
+            @test v.valid === false
+            @test v.error.code == "Neo.ClientError.Statement.SyntaxError"
+            @test v.error.message == expected
+        end
+    end
+
+    #      Line-2 errors: the column is already the caller's (only line 1 carries
+    #      the prefix) but the ABSOLUTE offset still shifts by 8.
+    let body = JSON.json(Dict("errors" => [Dict(
+            "code" => "Neo.ClientError.Statement.SyntaxError",
+            "message" => "Unknown function 'chunk_text' (line 2, column 5 (offset: 30))")]))
+        HttpHarness.scripted_server(202, body) do conn
+            v = validate_cypher(conn, "MATCH (n)\nRET chunk_text(n)")
+            @test v.valid === false
+            @test v.error.message ==
+                  "Unknown function 'chunk_text' (line 2, column 5 (offset: 22))"
+        end
+    end
+
     # (7) a non-Neo4jQueryError (transport/proxy failure) must RETHROW, not be
     #     silently folded into valid=false.
     HttpHarness.scripted_server(502, "<html>502 Bad Gateway</html>") do conn

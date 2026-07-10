@@ -42,8 +42,9 @@ the query path calls `String(resp.body)` once).
 - Body: `""` for `nothing`/empty, else `JSON.json(body)`. No `omit_null`: the Typed
   JSON Null envelope is `{"\$type":"Null","_value":null}` and the server rejects an
   envelope missing `_value` (Neo.ClientError.Request.Invalid) — F-01/F-26.
-- `retryable` → HTTP.jl `retry_non_idempotent`: only a server-enforced `:read`
-  query may retry a transient transport failure; writes must not double-apply.
+- `retryable` → HTTP.jl `retry_non_idempotent`, capped at exactly one retry
+  (`retries=1`): only a server-enforced `:read` query may retry a transient
+  transport failure; writes must not double-apply.
   `status_exception=false` keeps 4xx/5xx as ordinary responses (the body-riding
   `errors[]` contract needs them non-throwing).
 - `response_stream`/`readtimeout`/`connect_timeout` bound the request (F-10).
@@ -98,11 +99,11 @@ function _request_core(url::AbstractString, method::Symbol, body;
     resp = try
         if connect_timeout < 0
             HTTP.request(m, url, headers, body_str;
-                status_exception=false, retry_non_idempotent=retryable,
+                status_exception=false, retries=1, retry_non_idempotent=retryable,
                 readtimeout, response_stream)
         else
             HTTP.request(m, url, headers, body_str;
-                status_exception=false, retry_non_idempotent=retryable,
+                status_exception=false, retries=1, retry_non_idempotent=retryable,
                 readtimeout, response_stream, connect_timeout)
         end
     catch e
@@ -167,7 +168,8 @@ Central HTTP helper for all Neo4j Query API calls.
   `tx_context=true`) `TransactionExpiredError`.
 - `retryable::Bool=false` — when `true`, a transient transport failure (e.g. an
   `EOFError`/`IOError` from a stale pooled keep-alive connection) is retried
-  once via HTTP.jl's `retry_non_idempotent`. This is only safe for requests
+  exactly once (`retries=1` + `retry_non_idempotent`; a second consecutive
+  transient surfaces to the caller). This is only safe for requests
   that are provably side-effect-free — i.e. `access_mode=:read` queries, whose
   read-only-ness is enforced by the server, not just the client. Writes must
   keep the conservative default (`false`): retrying a non-idempotent POST that

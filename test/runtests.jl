@@ -1482,6 +1482,10 @@ TEST_KEY4=no_quotes
     # ── Live read-only suite: leny01 (self-skips if credentials absent) ──────
     include("live/readonly_leny01.jl")
 
+    # ── Live local-container matrix: tzdata / POINT Z / vector index (self-skips
+    #    when no local Neo4j is reachable; prefers credentials/local.txt) ───────
+    include("live/local.jl")
+
     # ════════════════════════════════════════════════════════════════════════
     # Integration tests — live Neo4j (test01, read-write, DISPOSABLE)
     # ════════════════════════════════════════════════════════════════════════

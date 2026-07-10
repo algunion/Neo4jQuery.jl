@@ -405,7 +405,9 @@ All subtype `Neo4jError <: Exception`. Fields: `code::String`, `message::String`
 
 ## Pre-flight Validation (text-to-Cypher loops)
 
-`validate_cypher` is the recommended pre-flight for LLM-generated Cypher: it runs `EXPLAIN <stmt>` under `access_mode=:read`, so the server plans the statement but **never executes** it. A leading `PROFILE` (which would execute) is stripped; a leading `EXPLAIN` is not doubled. Works on a `ReadOnlyConnection` too — even for write statements — because `EXPLAIN` never executes.
+`validate_cypher` checks LLM-generated Cypher against the server **without executing it**: it runs `EXPLAIN <stmt>` under `access_mode=:read`, so the server plans the statement but never runs it. A leading `PROFILE` (which would execute) is stripped; a leading `EXPLAIN` is not doubled. Works on a `ReadOnlyConnection` too — even for write statements — because `EXPLAIN` never executes. Error positions refer to your statement (the internal `EXPLAIN` prefix is stripped and columns/offsets mapped back).
+
+Scope (measured on a read-only repair loop): pre-flight validation does **not** reduce turns or tokens versus just executing — plan-time errors surface identically either way. Use it when the statement could **write** (validate, then refuse without running) or when execution is expensive. It cannot catch silent mistakes: a wrong property name returns `null`s, not an error — ground the model with `graph_schema`/`schema_prompt` for vocabulary.
 
 ```julia
 roc = ReadOnlyConnection(conn)
@@ -939,6 +941,13 @@ These Cypher features are **not supported** by the DSL:
 ## Type Mapping (Typed JSON)
 
 Neo4j Query API uses Typed JSON envelopes: `{"$type": "Integer", "_value": "42"}`.
+
+Neo4j `Integer` is 64-bit signed: out-of-range Julia integers (`BigInt`, `Int128`,
+large `UInt64`) are rejected client-side with a loud `ArgumentError` before any
+request. Julia `Float32` values (e.g. embedding vectors) widen to `Float64` on the
+wire: round-trips are exact at Float32 precision (`Float32.(returned) == sent`)
+but **not** bit-equal under Float64 comparison — do not assert exact Float64
+equality on embeddings.
 
 | Neo4j Type       | Julia Type       |
 | ---------------- | ---------------- |

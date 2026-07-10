@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+Fixes driven by the Phase G falsification experiments (adversarial guard corpus,
+wire fuzz, live retry volume, LLM A/B eval, local-container matrix).
+
+### Fixed
+- Reads retry a transient transport failure **exactly once**, as documented — HTTP.jl's default of up to 4 retries no longer applies; a second consecutive transient surfaces after exactly two wire requests (G5).
+- `validate_cypher` errors are positioned on the **caller's** statement: the injected `EXPLAIN ` prefix no longer leaks into the message, and line-1 columns plus all absolute offsets are mapped back — a caret aligned to your text is now correct (G4).
+- `to_typed_json` rejects out-of-Int64-range integers (`BigInt`, `Int128`, large `UInt64`) client-side with a loud `ArgumentError` naming the type, instead of shipping an envelope the server rejects with a terse Bad Request (G3).
+
+### Added
+- Live local-container test matrix (`test/live/local.jl`): named-IANA-timezone datetime round-trip, 3-D `POINT Z`, vector-index create + KNN — self-skips when no local Neo4j is reachable and never redirects onto Aura (G7).
+
+### Documentation
+- `guide/agentic.md` scopes what pre-flight validation buys an agent loop (measured: no turn/token win for read-only repair; silent wrong-property mistakes are invisible to any validation — use schema grounding).
+- `llm.md` documents the Int64 wire contract and Float32→Float64 embedding widening (exact at Float32 precision, not bit-equal under Float64 comparison).
+
 ## 0.4.0 — 2026-07-10
 
 Agentic-hardening release: fail-loud transport, lossless temporals, validation & grounding APIs. Findings register F-01…F-30.

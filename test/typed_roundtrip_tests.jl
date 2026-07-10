@@ -26,6 +26,20 @@ isdefined(@__MODULE__, :load_readwrite_test01) ||
         "_value" => t["_value"])) == DateTime(2024, 1, 1, 12, 0, 0, 123)
 end
 
+# G3 (2026-07-10): BigInt/Int128 <: Integer serialized silently as "Integer" and
+# died server-side with a terse Bad Request — the 64-bit wire contract was enforced
+# only by the server. Out-of-range integers must fail loud CLIENT-side, naming the
+# offending type; in-range foreign Integer types still serialize by value.
+@testset "Integer wire guard (G3): out-of-Int64-range fails loud" begin
+    @test_throws ArgumentError to_typed_json(BigInt(2)^70)
+    @test_throws ArgumentError to_typed_json(Int128(2)^70)
+    @test_throws ArgumentError to_typed_json(UInt64(typemax(Int64)) + UInt64(1))
+    @test to_typed_json(typemax(Int64))["_value"] == "9223372036854775807"
+    @test to_typed_json(typemin(Int64))["_value"] == "-9223372036854775808"
+    @test to_typed_json(BigInt(5))["_value"] == "5"     # in-range foreign Integer: by value
+    @test to_typed_json(true)["\$type"] == "Boolean"    # Bool keeps its own method
+end
+
 # Task 10 (F-05): LocalTime / zoned Time with sub-millisecond fractions (µs/ns, which
 # Neo4j emits) crashed materialization — `Dates.Time(::String)` throws `ArgumentError`
 # on >3 fractional digits (probe P3). `_parse_time_frac` parses HH:MM[:SS[.f{1,9}]]
