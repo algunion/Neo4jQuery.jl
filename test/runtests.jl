@@ -26,6 +26,7 @@ include("readonly_tests.jl")
 include("retry_tests.jl")
 include("transport_tests.jl")
 include("agentic_api_tests.jl")
+include("typed_roundtrip_tests.jl")
 include("json_contract_tests.jl")
 include("typed_datetime_tests.jl")
 
@@ -198,7 +199,7 @@ end
         @test to_typed_json("hello") == JSON.Object("\$type" => "String", "_value" => "hello")
         @test to_typed_json(Dates.Date(2024, 1, 15)) == JSON.Object("\$type" => "Date", "_value" => "2024-01-15")
         @test to_typed_json(Dates.Time(12, 30)) == JSON.Object("\$type" => "LocalTime", "_value" => "12:30:00")
-        @test to_typed_json(Dates.DateTime(2024, 1, 15, 12, 30)) == JSON.Object("\$type" => "LocalDateTime", "_value" => "2024-01-15T12:30:00")
+        @test to_typed_json(Dates.DateTime(2024, 1, 15, 12, 30)) == JSON.Object("\$type" => "LocalDateTime", "_value" => "2024-01-15T12:30:00.000")
 
         # List
         lst = to_typed_json([1, 2, 3])

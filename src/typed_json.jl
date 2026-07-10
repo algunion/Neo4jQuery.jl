@@ -256,7 +256,7 @@ to_typed_json(v::AbstractString) = Dict{String,Any}("\$type" => "String", "_valu
 
 to_typed_json(v::Dates.Date) = Dict{String,Any}("\$type" => "Date", "_value" => string(v))
 to_typed_json(v::Dates.Time) = Dict{String,Any}("\$type" => "LocalTime", "_value" => string(v))
-to_typed_json(v::Dates.DateTime) = Dict{String,Any}("\$type" => "LocalDateTime", "_value" => Dates.format(v, dateformat"yyyy-mm-ddTHH:MM:SS"))
+to_typed_json(v::Dates.DateTime) = Dict{String,Any}("\$type" => "LocalDateTime", "_value" => Dates.format(v, dateformat"yyyy-mm-ddTHH:MM:SS.sss"))
 
 function to_typed_json(v::TimeZones.ZonedDateTime)
     Dict{String,Any}("\$type" => "OffsetDateTime", "_value" => string(v))
