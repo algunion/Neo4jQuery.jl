@@ -59,6 +59,22 @@ read_stream
 ReadOnlyViolationError
 ```
 
+## Introspection
+
+```@docs
+validate_cypher
+graph_schema
+schema_prompt
+GraphSchema
+```
+
+## GraphRAG (vector search)
+
+```@docs
+vector_search
+create_vector_index
+```
+
 ## Result Types
 
 ```@docs
@@ -76,6 +92,7 @@ Path
 CypherPoint
 CypherDuration
 CypherVector
+CypherTime
 ```
 
 ## Errors
@@ -85,6 +102,8 @@ Neo4jError
 AuthenticationError
 Neo4jQueryError
 TransactionExpiredError
+Neo4jHTTPError
+is_transient
 ```
 
 ## DSL — Schema

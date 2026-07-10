@@ -1,8 +1,8 @@
 using Neo4jQuery
 using Neo4jQuery: _materialize_typed, to_typed_json, _build_result, _build_query_body,
     _prepare_statement, auth_header, _query_url, _tx_url, _parse_neo4j_uri, _parse_wkt,
-    _to_wkt, _parse_offset, _float_str, _materialize_properties, _try_parse,
-    _extract_errors, _props_str, _mat_map
+    _to_wkt, _parse_offset, _float_str, _materialize_properties, _parse_body,
+    _parse_body_str, _extract_errors, _props_str, _mat_map
 using JSON
 using Dates
 using TimeZones
@@ -13,6 +13,9 @@ using Test
 include("test_utils.jl")
 using .TestGraphUtils
 
+# Scripted local-HTTP harness for transport regression tests (Tasks 2–8)
+include("http_harness.jl")
+
 # Live-DB credential loader (parses credentials/*.txt without ambient-ENV shadow)
 include("live/credentials.jl")
 
@@ -21,6 +24,18 @@ include("dsl_tests.jl")
 include("cypher_dsl_tests.jl")
 include("readonly_tests.jl")
 include("retry_tests.jl")
+include("transport_tests.jl")
+
+# Concurrency stress (Task 37): query + streaming isolation under true parallelism,
+# plus a live read-only leny01 fan-out. Blocking IO yields, so the tasks interleave
+# even single-threaded — but true-parallel coverage needs JULIA_NUM_THREADS>1, so
+# warn (the gate's own workers usually run single-threaded).
+Threads.nthreads() == 1 &&
+    @warn "concurrency tests running single-threaded (set JULIA_NUM_THREADS>1 for true-parallel coverage)"
+include("concurrency_tests.jl")
+
+include("agentic_api_tests.jl")
+include("typed_roundtrip_tests.jl")
 include("json_contract_tests.jl")
 include("typed_datetime_tests.jl")
 
@@ -29,14 +44,19 @@ include("aqua_tests.jl")
 
 # JET is only compatible with Julia 1.12.x — install and run conditionally
 if v"1.12" <= VERSION < v"1.13"
-    try
+    jet_loaded = try
         using Pkg
         Pkg.add("JET")
         using JET
-        include("jet_tests.jl")
+        true
     catch e
         @warn "Skipping JET tests (failed to install or load)" VERSION exception = e
+        false
     end
+    # Outside the try: a JET analysis failure must fail the suite, not be
+    # swallowed as a load-failure warning (TestSetException escaped into the
+    # catch above and silently downgraded the gate).
+    jet_loaded && include("jet_tests.jl")
 else
     @warn "Skipping JET tests (only compatible with Julia 1.12)" VERSION
 end
@@ -53,7 +73,9 @@ end
         bearer = BearerAuth("tok123")
         hdr2 = auth_header(bearer)
         @test hdr2[1] == "Authorization"
-        @test hdr2[2] == "Bearer tok123"
+        # Base64-wrapped per the Query API auth spec (F-20) — previously this
+        # pinned the raw token ("Bearer tok123"), which the spec contradicts.
+        @test hdr2[2] == "Bearer " * Base64.base64encode("tok123")
     end
 
     # ── CypherQuery & @cypher_str ───────────────────────────────────────────
@@ -188,7 +210,7 @@ end
         @test to_typed_json("hello") == JSON.Object("\$type" => "String", "_value" => "hello")
         @test to_typed_json(Dates.Date(2024, 1, 15)) == JSON.Object("\$type" => "Date", "_value" => "2024-01-15")
         @test to_typed_json(Dates.Time(12, 30)) == JSON.Object("\$type" => "LocalTime", "_value" => "12:30:00")
-        @test to_typed_json(Dates.DateTime(2024, 1, 15, 12, 30)) == JSON.Object("\$type" => "LocalDateTime", "_value" => "2024-01-15T12:30:00")
+        @test to_typed_json(Dates.DateTime(2024, 1, 15, 12, 30)) == JSON.Object("\$type" => "LocalDateTime", "_value" => "2024-01-15T12:30:00.000")
 
         # List
         lst = to_typed_json([1, 2, 3])
@@ -471,9 +493,12 @@ end
         @test result == "raw_data"
     end
 
-    @testset "_materialize_typed: Unknown type passthrough" begin
-        result = _materialize_typed(JSON.Object("\$type" => "FutureType", "_value" => "some_data"))
-        @test result == "some_data"
+    @testset "_materialize_typed: unknown type fails loud (F-13)" begin
+        # An unknown $type raises, it does NOT silently return its raw _value — that passthrough
+        # hid F-06 (a ZonedDateTime that surfaced as a raw String). The documented "Unsupported"
+        # escape hatch stays a passthrough (asserted in the testset above).
+        @test_throws ErrorException _materialize_typed(
+            JSON.Object("\$type" => "FutureType", "_value" => "some_data"))
     end
 
     @testset "_materialize_typed: plain dict recursion" begin
@@ -525,19 +550,22 @@ end
         @test_throws ErrorException _parse_offset("no-offset-here")
     end
 
-    # ── Zoned Time materialization (was previously broken) ──────────────
-    @testset "_materialize_typed: Time (zoned)" begin
+    # ── Zoned Time materialization → typed CypherTime (F-12) ────────────
+    @testset "_materialize_typed: Time (zoned) → CypherTime" begin
         result = _materialize_typed(JSON.Object("\$type" => "Time", "_value" => "12:50:35.556+01:00"))
+        @test result isa CypherTime          # Task 11: was an anonymous NamedTuple
         @test result.time == Dates.Time(12, 50, 35, 556)
         @test result.timezone == TimeZones.FixedTimeZone("+01:00")
 
         # UTC variant
         result_utc = _materialize_typed(JSON.Object("\$type" => "Time", "_value" => "00:00:00Z"))
+        @test result_utc isa CypherTime
         @test result_utc.time == Dates.Time(0, 0, 0)
         @test result_utc.timezone == TimeZones.FixedTimeZone("UTC")
 
         # Negative offset
         result_neg = _materialize_typed(JSON.Object("\$type" => "Time", "_value" => "23:59:59.999-05:00"))
+        @test result_neg isa CypherTime
         @test result_neg.time == Dates.Time(23, 59, 59, 999)
         @test result_neg.timezone == TimeZones.FixedTimeZone("-05:00")
     end
@@ -1244,10 +1272,11 @@ end
         @test scheme6 == "http"
         @test port6 == 7474
 
-        # Explicit port overrides default
-        scheme7, host7, port7 = _parse_neo4j_uri("neo4j+s://myhost.io:7687")
+        # Explicit port overrides default (non-7687 — the Bolt-port 7687 rewrite is
+        # covered by "URI 7687 Bolt-port footgun (F-27)" in agentic_api_tests.jl).
+        scheme7, host7, port7 = _parse_neo4j_uri("neo4j+s://myhost.io:8080")
         @test scheme7 == "https"
-        @test port7 == 7687
+        @test port7 == 8080
 
         # Invalid URI
         @test_throws ErrorException _parse_neo4j_uri("http://not-a-neo4j-uri")
@@ -1309,9 +1338,11 @@ TEST_KEY4=no_quotes
             (:name, :age),
             HTTP.Response(200),
             IOBuffer(),
+            Threads.@spawn(nothing),   # dummy writer task (not awaited by show)
             nothing,
             false,
             nothing,
+            false,
         )
         buf = IOBuffer()
         show(buf, sr)
@@ -1328,7 +1359,8 @@ TEST_KEY4=no_quotes
 
     @testset "StreamingResult show: empty fields" begin
         sr = Neo4jQuery.StreamingResult(
-            String[], (), HTTP.Response(200), IOBuffer(), nothing, true, nothing,
+            String[], (), HTTP.Response(200), IOBuffer(), Threads.@spawn(nothing),
+            nothing, true, nothing, false,
         )
         buf = IOBuffer()
         show(buf, sr)
@@ -1339,7 +1371,8 @@ TEST_KEY4=no_quotes
 
     @testset "StreamingResult summary: no summary yet" begin
         sr = Neo4jQuery.StreamingResult(
-            String[], (), HTTP.Response(200), IOBuffer(), nothing, false, nothing,
+            String[], (), HTTP.Response(200), IOBuffer(), Threads.@spawn(nothing),
+            nothing, false, nothing, false,
         )
         s = Neo4jQuery.summary(sr)
         @test isempty(s.bookmarks)
@@ -1392,7 +1425,7 @@ TEST_KEY4=no_quotes
     end
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Extended coverage: _extract_errors / _try_parse
+    # Extended coverage: _extract_errors / _parse_body
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "_extract_errors" begin
@@ -1413,15 +1446,31 @@ TEST_KEY4=no_quotes
         @test errs[1]["code"] == "err.code"
     end
 
-    @testset "_try_parse" begin
+    @testset "_parse_body / _parse_body_str" begin
+        # Valid JSON object body → JSON.Object
         resp = HTTP.Response(200; body=Vector{UInt8}("{\"key\": \"value\"}"))
-        result = _try_parse(resp)
+        result = _parse_body(resp)
+        @test result isa JSON.Object{String,Any}
         @test result["key"] == "value"
 
-        # Empty body
+        # Empty body → empty JSON.Object (NOT nothing)
         resp2 = HTTP.Response(200; body=UInt8[])
-        result2 = _try_parse(resp2)
+        result2 = _parse_body(resp2)
+        @test result2 isa JSON.Object{String,Any}
         @test isempty(result2)
+
+        # Empty string → empty JSON.Object
+        @test _parse_body_str("") isa JSON.Object{String,Any}
+        @test isempty(_parse_body_str(""))
+
+        # Object string → JSON.Object
+        @test _parse_body_str("{\"a\":1}")["a"] == 1
+
+        # Non-JSON body (proxy HTML makes JSON.parse throw) → nothing, no throw
+        @test _parse_body_str("<html>Bad Gateway</html>") === nothing
+
+        # Valid JSON that is not an object (top-level array) → nothing
+        @test _parse_body_str("[1,2,3]") === nothing
     end
 
     # ── Live read-only suite: leny01 (self-skips if credentials absent) ──────

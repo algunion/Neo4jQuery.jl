@@ -121,25 +121,22 @@ macro merge(conn, call_expr, rest...)
     on_match_props = Symbol[]
 
     for arg in rest
-        if arg isa Expr && arg.head == :call
-            fn = arg.args[1]
-            if fn == :on_create
-                for kw in arg.args[2:end]
-                    kw isa Expr && kw.head == :kw ||
-                        error("on_create expects keyword arguments")
-                    pname = kw.args[1]::Symbol
-                    push!(on_create_props, pname)
-                    push!(param_pairs, :($(string(pname)) => $(esc(kw.args[2]))))
-                end
-            elseif fn == :on_match
-                for kw in arg.args[2:end]
-                    kw isa Expr && kw.head == :kw ||
-                        error("on_match expects keyword arguments")
-                    pname = kw.args[1]::Symbol
-                    push!(on_match_props, pname)
-                    push!(param_pairs, :($(string(pname)) => $(esc(kw.args[2]))))
-                end
+        if arg isa Expr && arg.head == :call && arg.args[1] in (:on_create, :on_match)
+            fn = arg.args[1]::Symbol
+            target = fn === :on_create ? on_create_props : on_match_props
+            for kw in arg.args[2:end]
+                kw isa Expr && kw.head == :kw ||
+                    error("@merge $(fn) expects keyword arguments (prop=val), got: $(repr(kw))")
+                pname = kw.args[1]::Symbol
+                push!(target, pname)
+                push!(param_pairs, :($(string(pname)) => $(esc(kw.args[2]))))
             end
+        else
+            # F-15: an unrecognized trailing argument (a misspelled clause like
+            # on_creat(...), or non-call garbage like `not_a_clause`) must fail
+            # loudly — silently dropping it hid the mistake and emitted no SET.
+            error("@merge: unrecognized trailing argument $(repr(arg)). " *
+                  "Only on_create(prop=val, ...) and on_match(prop=val, ...) are allowed.")
         end
     end
 

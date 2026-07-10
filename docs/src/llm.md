@@ -27,6 +27,18 @@ AbstractAuth, BasicAuth, BearerAuth
 # Query
 query, @cypher_str, CypherQuery
 
+# Read-only guard
+ReadOnlyConnection, read_query, read_stream, ReadOnlyViolationError
+
+# Introspection — server-truth validation
+validate_cypher
+
+# Schema grounding (text-to-Cypher)
+graph_schema, schema_prompt, GraphSchema
+
+# GraphRAG — vector search + index management
+vector_search, create_vector_index
+
 # Transactions
 Transaction, begin_transaction, commit!, rollback!, transaction
 
@@ -37,10 +49,11 @@ stream, StreamingResult, summary
 QueryResult, QueryCounters, Notification
 
 # Graph types
-Node, Relationship, Path, CypherPoint, CypherDuration, CypherVector
+Node, Relationship, Path, CypherPoint, CypherDuration, CypherVector, CypherTime
 
 # Errors
-Neo4jError, AuthenticationError, Neo4jQueryError, TransactionExpiredError
+Neo4jError, AuthenticationError, Neo4jQueryError, TransactionExpiredError, Neo4jHTTPError
+is_transient
 
 # DSL — Schema
 PropertyDef, NodeSchema, RelSchema, @node, @rel
@@ -288,6 +301,18 @@ v.coordinates_type   # String
 v.coordinates        # Vector{String}
 ```
 
+### CypherTime
+
+A Cypher zoned `TIME` (time-of-day + fixed UTC offset). Round-trips losslessly
+through Typed JSON `Time`, including sub-second nanoseconds.
+
+```julia
+t.time       # Dates.Time — nanosecond-resolution time-of-day
+t.timezone   # TimeZones.FixedTimeZone — the fixed UTC offset
+# Two CypherTimes compare == (and hash) on time + UTC offset,
+# so "Z", "UTC", and "+00:00" spellings of the zero offset are equal.
+```
+
 ---
 
 ## Transactions
@@ -375,6 +400,101 @@ s = summary(sr)
 | `TransactionExpiredError` | Transaction expired or rolled back server-side    |
 
 All subtype `Neo4jError <: Exception`. Fields: `code::String`, `message::String` (except `TransactionExpiredError` which has only `message`).
+
+---
+
+## Pre-flight Validation (text-to-Cypher loops)
+
+`validate_cypher` is the recommended pre-flight for LLM-generated Cypher: it runs `EXPLAIN <stmt>` under `access_mode=:read`, so the server plans the statement but **never executes** it. A leading `PROFILE` (which would execute) is stripped; a leading `EXPLAIN` is not doubled. Works on a `ReadOnlyConnection` too — even for write statements — because `EXPLAIN` never executes.
+
+```julia
+roc = ReadOnlyConnection(conn)
+stmt, params = llm_generate(prompt)                 # your text-to-Cypher step
+v = validate_cypher(roc, stmt; parameters=params)   # zero-execution server check
+if v.valid
+    result = read_query(roc, stmt; parameters=params)
+else
+    # v.error.message carries the server's line/column — feed it back to the LLM
+    stmt = llm_repair(prompt, stmt, v.error.message)
+end
+```
+
+Returns `(valid::Bool, error::Union{Neo4jQueryError,Nothing}, plan)`; `plan` is the parsed `queryPlan` object. Only genuine Cypher errors become `valid=false` — transport/auth failures are rethrown.
+
+---
+
+## Schema Grounding (ground your system prompt)
+
+`schema_prompt` renders the **live** database schema as a compact, deterministic block for a text-to-Cypher system prompt — one source of truth, so the prompt can never drift from the graph. Don't hand-roll schema text; read it from the server.
+
+```julia
+roc = ReadOnlyConnection(conn)
+system_prompt = """
+You translate natural-language questions into Neo4j Cypher.
+Use ONLY the labels, relationships, and indexes below.
+
+$(schema_prompt(roc))
+"""
+```
+
+`graph_schema(conn_or_roc) -> GraphSchema` issues four read queries (`db.schema.nodeTypeProperties()`, `db.schema.relTypeProperties()`, a sampled connectivity `MATCH ... LIMIT 1000`, and `SHOW INDEXES`), all under `access_mode=:read`. It is safe on a `ReadOnlyConnection` to a production database — the reads are provably side-effect-free. The returned `GraphSchema` has typed fields `labels::Vector{LabelInfo}`, `reltypes::Vector{RelTypeInfo}`, `indexes::Vector{IndexInfo}` for programmatic use.
+
+`schema_prompt(s::GraphSchema; max_labels=50)` — or the `schema_prompt(conn_or_roc; kwargs...)` convenience that reads live first — renders:
+
+- `(:Label {prop: Type, optional?: Type})` — one line per label; mandatory properties plain, optional ones suffixed `?`, multiple observed types joined with `|`.
+- `(:A)-[:T]->(:B)` — one line per observed connection.
+- `` VECTOR index `name` on :Label(prop), 384-dim cosine `` — one line per vector index; the `N-dim <similarity>` suffix comes from `options.indexConfig` when present. Non-semantic index kinds are omitted.
+
+Labels beyond `max_labels` are reported with an explicit `… and N more labels` marker — never silently dropped.
+
+---
+
+## GraphRAG — Vector Search
+
+`vector_search` is the retrieval half of a GraphRAG loop: k-nearest-neighbour search over a Neo4j vector index.
+
+```julia
+roc = ReadOnlyConnection(conn)
+hits = vector_search(roc, "chunk_vec", query_embedding; k=5)   # query_embedding::Vector{<:Real}
+for h in hits
+    println(h.score, "  ", h.properties["text"])
+end
+```
+
+```julia
+vector_search(conn_or_roc, index::AbstractString, embedding::AbstractVector{<:Real};
+              k::Int=5, return_node::Bool=false) -> QueryResult
+```
+
+Runs the parameterized
+
+```cypher
+CALL db.index.vector.queryNodes($idx, $k, $vec) YIELD node, score
+RETURN elementId(node) AS id, labels(node) AS labels, properties(node) AS properties, score
+```
+
+- Rows are ordered by descending similarity `score::Float64`; the `id` column is `elementId(node)` (a stable String).
+- `return_node=true` switches the projection to `node, score` (the raw `Node`).
+- `index`, `k`, and `embedding` are sent as **parameters** (`$idx`, `$k`, `$vec`) — never string-interpolated. A hostile or write-looking index name can neither inject Cypher nor bypass the read-only guard (it is not part of the statement text). `embedding` is coerced to `Vector{Float64}`.
+- On a `ReadOnlyConnection` it funnels through `read_query` (server-enforced `accessMode=Read`) — safe against a production read replica.
+- **Validation (fail loud):** `ArgumentError` — before any request — if `k < 1`, `index` is empty, or `embedding` is empty, contains a non-finite value (`NaN`/`Inf`), or is all-zero. The last two mirror the server's contract ("Vector must only contain finite values, and have positive and finite l2-norm"): a zero-norm vector has no direction, so cosine KNN against it is undefined.
+
+> **Deprecation:** Neo4j 2026.04 deprecates `db.index.vector.queryNodes` in favour of the Cypher-25 `SEARCH` clause. The helper will migrate to `SEARCH` transparently; the signature above is the stable contract.
+
+### `create_vector_index`
+
+```julia
+create_vector_index(conn, name, label, property;
+                    dimensions::Int, similarity::Symbol=:cosine) -> QueryResult
+```
+
+Creates a vector index idempotently (`CREATE VECTOR INDEX … IF NOT EXISTS … OPTIONS {indexConfig: …}`). `similarity` is `:cosine` (default) or `:euclidean`.
+
+```julia
+create_vector_index(conn, "chunk_vec", "Chunk", "embedding"; dimensions=384, similarity=:cosine)
+```
+
+**Validation (fail loud):** `ArgumentError` if `dimensions < 1`, `similarity ∉ (:cosine, :euclidean)`, or if `name`/`label`/`property` is empty or contains a backtick, quote, whitespace, or control character. Cypher DDL cannot be parameterized, so these identifiers are interpolated (and backtick-wrapped); the sanitizer makes that interpolation un-injectable.
 
 ---
 
@@ -580,7 +700,10 @@ Bare patterns in a block are implicit MATCH clauses.
 | `foreach(var, :in, expr, begin ... end)`             | `FOREACH (var IN expr \| ...)`                         |
 | `create_index(:Label, :prop)`                        | `CREATE INDEX FOR (n:Label) ON (n.prop)`               |
 | `create_index(:Label, :prop, :name)`                 | named index                                            |
+| `create_index(:Label, :prop, :if_not_exists)`        | trailing `:if_not_exists` → `IF NOT EXISTS` (also on `create_constraint`) |
 | `drop_index(:name)`                                  | `DROP INDEX name IF EXISTS`                            |
+| `create_vector_index(:name, :Label, :prop, dims::Int, :sim)` | `CREATE VECTOR INDEX name IF NOT EXISTS FOR (n:Label) ON n.prop OPTIONS {…}` (`:sim` = `:cosine`/`:euclidean`) |
+| `create_fulltext_index(:name, :Label, :prop...)`     | `CREATE FULLTEXT INDEX name IF NOT EXISTS FOR (n:Label) ON EACH [n.prop, …]` |
 | `create_constraint(:Label, :prop, :unique)`          | uniqueness constraint                                  |
 | `create_constraint(:Label, :prop, :not_null, :name)` | NOT NULL constraint (named) (`:notnull` also accepted) |
 | `drop_constraint(:name)`                             | `DROP CONSTRAINT name IF EXISTS`                       |
@@ -828,9 +951,10 @@ Neo4j Query API uses Typed JSON envelopes: `{"$type": "Integer", "_value": "42"}
 | `List`           | `Vector`         |
 | `Map`            | `JSON.Object`    |
 | `Date`           | `Dates.Date`     |
-| `Time`           | `Dates.Time`     |
+| `Time`           | `CypherTime`     |
 | `LocalTime`      | `Dates.Time`     |
-| `OffsetDateTime` | `ZonedDateTime`  |
+| `OffsetDateTime` | `TimeZones.ZonedDateTime` |
+| `ZonedDateTime`  | `TimeZones.ZonedDateTime` |
 | `LocalDateTime`  | `DateTime`       |
 | `Duration`       | `CypherDuration` |
 | `Point`          | `CypherPoint`    |
@@ -838,6 +962,13 @@ Neo4j Query API uses Typed JSON envelopes: `{"$type": "Integer", "_value": "42"}
 | `Relationship`   | `Relationship`   |
 | `Path`           | `Path`           |
 | `Vector`         | `CypherVector`   |
+
+Temporal notes: Neo4j `Time` (zoned time-of-day) materializes as `CypherTime` (a
+`Dates.Time` + fixed offset), while offset-free `LocalTime` is a bare `Dates.Time`.
+Both `OffsetDateTime` (numeric offset, e.g. `+01:00`) and `ZonedDateTime` (named IANA
+zone, e.g. `Europe/Paris`) materialize as `TimeZones.ZonedDateTime`; on the way out,
+`to_typed_json` lowers a fixed-offset zone back to `OffsetDateTime` and a named zone to
+`ZonedDateTime`.
 
 Julia→Neo4j serialization (`to_typed_json`): Julia values are wrapped in typed envelopes when sent as parameters.
 
@@ -863,8 +994,10 @@ Julia→Neo4j serialization (`to_typed_json`): Julia values are wrapped in typed
 | `src/connection.jl`    | `Neo4jConnection`, `connect`, discovery             |
 | `src/cypher_macro.jl`  | `CypherQuery`, `@cypher_str`                        |
 | `src/env.jl`           | `dotenv`, `connect_from_env`, URI parsing           |
-| `src/errors.jl`        | Error types hierarchy                               |
+| `src/errors.jl`        | Error types hierarchy, `is_transient`               |
+| `src/introspect.jl`    | `validate_cypher`, `graph_schema`/`schema_prompt`, `vector_search`/`create_vector_index` |
 | `src/query.jl`         | `query()` for connections and CypherQuery           |
+| `src/readonly.jl`      | `ReadOnlyConnection`, `read_query`/`read_stream`, write-clause guard |
 | `src/request.jl`       | HTTP helpers, error handling                        |
 | `src/result.jl`        | `QueryResult`, `QueryCounters`, `Notification`      |
 | `src/streaming.jl`     | `stream()`, `StreamingResult`, `summary`            |

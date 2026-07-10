@@ -53,6 +53,7 @@ function _materialize_dispatch(type::AbstractString, value)
     type == "Time" && return _mat_time(value)
     type == "LocalTime" && return _mat_localtime(value)
     type == "OffsetDateTime" && return _mat_offset_datetime(value)
+    type == "ZonedDateTime" && return _mat_zoned_datetime(value)
     type == "LocalDateTime" && return _mat_local_datetime(value)
     type == "Duration" && return _mat_duration(value)
     type == "Point" && return _mat_point(value)
@@ -60,9 +61,13 @@ function _materialize_dispatch(type::AbstractString, value)
     type == "Relationship" && return _mat_relationship(value)
     type == "Path" && return _mat_path(value)
     type == "Vector" && return _mat_vector(value)
-    type == "Unsupported" && return value  # pass-through string
-    # Unknown type – return raw
-    return value
+    type == "Unsupported" && return value  # server-declared passthrough (documented escape hatch)
+    # F-13: an unknown $type must NOT silently return its raw _value — that passthrough hid F-06
+    # (a ZonedDateTime that fell through here and surfaced as a raw String, indistinguishable from
+    # a genuine String). Fail loud, naming the offending type AND echoing the raw value so the wire
+    # mismatch is diagnosable at the call site, and point at a version/media-type gap.
+    error("Unknown Neo4j Typed JSON \$type $(repr(type)) — refusing to materialize silently. " *
+          "Raw _value: $(repr(value)). A newer Neo4jQuery (or media-type) version may be required.")
 end
 
 # ── Individual type materialisers ───────────────────────────────────────────
@@ -107,29 +112,44 @@ function _mat_date(v)
     return Dates.Date(string(v))
 end
 
-function _mat_time(v)
-    # Zoned time, e.g. "12:50:35.556+01:00"
-    s = string(v)
-    # Split time from offset: find last +/- that starts the timezone offset
-    m = match(r"^(.+?)([+-]\d{2}:\d{2})$", s)
-    if m !== nothing
-        time_part = m.captures[1]
-        tz = TimeZones.FixedTimeZone(m.captures[2])
-    elseif endswith(s, "Z")
-        time_part = s[1:end-1]
-        tz = TimeZones.FixedTimeZone("UTC")
-    else
-        error("Cannot parse zoned time: $s")
-    end
-    t = Dates.Time(time_part)
-    return (time=t, timezone=tz)
+"""
+    _parse_time_frac(s) -> Dates.Time
+
+Parse `HH:MM[:SS[.fraction]]` (fraction 1–9 digits) into a nanosecond-resolution
+`Dates.Time`, losslessly. Neo4j emits micro/nanosecond time-of-day fractions, but
+`Dates.Time(::AbstractString)` only accepts ≤3 fractional digits (F-05: it throws
+`ArgumentError` on µs/ns). We right-pad the fraction to 9 digits and add it as a
+`Nanosecond` offset — `Dates.Time` already stores nanoseconds internally, so no
+precision is lost. Strings that don't match the grammar (e.g. a 10-digit fraction)
+raise loudly instead of silently truncating.
+"""
+function _parse_time_frac(s::AbstractString)::Dates.Time
+    m = match(r"^(\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d{1,9}))?$", s)
+    m === nothing && error("Cannot parse time value: $(repr(s))")
+    h = parse(Int, m.captures[1])
+    mi = parse(Int, m.captures[2])
+    sec = m.captures[3] === nothing ? 0 : parse(Int, m.captures[3])
+    ns = m.captures[4] === nothing ? 0 : parse(Int, rpad(m.captures[4], 9, '0'))
+    return Dates.Time(h, mi, sec) + Dates.Nanosecond(ns)
 end
 
-function _mat_localtime(v)
+function _mat_time(v)
+    # Zoned time, e.g. "12:50:35.556+01:00" or "12:50:35Z".
     s = string(v)
-    # Handle variable fractional-second precision
-    return Dates.Time(s)
+    # F-26: delegate offset parsing to the shared, tested `_parse_offset` (handles
+    # ±HH:MM and Z, errors otherwise) instead of duplicating the offset→FixedTimeZone
+    # decode here.
+    tz = _parse_offset(s)
+    # The offset is always the trailing 6-char ±HH:MM (or a single 'Z'); strip it to
+    # recover the bare time component.
+    time_part = endswith(s, "Z") ? chop(s) : chop(s; tail=6)
+    # F-12: a typed `CypherTime` (was an anonymous NamedTuple whose `to_typed_json`
+    # threw). F-05: `_parse_time_frac` handles µs/ns fractions `Dates.Time(::String)` rejects.
+    return CypherTime(_parse_time_frac(time_part), tz)
 end
+
+# F-05: sub-millisecond LocalTime fractions (µs/ns) parsed losslessly into ns-resolution Time.
+_mat_localtime(v) = _parse_time_frac(string(v))
 
 """
     _normalize_frac_ms(s) -> String
@@ -154,6 +174,37 @@ function _mat_offset_datetime(v)
     # Neo4j OffsetDateTime: yyyy-MM-ddTHH:mm:ss[.f{1,9}]±HH:MM (µs/ns → ms).
     return TimeZones.ZonedDateTime(_normalize_frac_ms(string(v)),
         TimeZones.dateformat"yyyy-mm-ddTHH:MM:SS.ssszzzzz")
+end
+
+"""
+    _mat_zoned_datetime(v) -> TimeZones.ZonedDateTime
+
+Materialise a Neo4j `ZonedDateTime`, whose wire form carries a named IANA zone in a
+trailing bracket: `yyyy-MM-ddTHH:mm:ss[.f{1,9}]±HH:MM[Area/City]` (e.g.
+`2024-01-15T10:30:00+01:00[Europe/Paris]` — F-06). We parse the offset-bearing prefix into
+a fixed-offset instant, then `astimezone` it onto the *named* zone so `timezone(result)`
+is the DST-aware `VariableTimeZone`, not the bare offset. The IANA name is validated via
+`TimeZones.Class(:ALL)` (accepts FIXED/STANDARD/LEGACY zones); an unknown name raises a
+loud, actionable error naming the zone and the offending value instead of silently
+degrading. A payload with no `[...]` suffix (a bare offset) falls through to
+[`_mat_offset_datetime`](@ref). Sub-millisecond fractions (µs/ns) are truncated to
+milliseconds by [`_normalize_frac_ms`](@ref): Julia's `ZonedDateTime` wraps a
+ms-resolution `DateTime`, so ns cannot be represented (lossy by design, symmetric with
+`_mat_offset_datetime`).
+"""
+function _mat_zoned_datetime(v)
+    s = string(v)
+    m = match(r"^(.*)\[([^\]]+)\]$", s)
+    m === nothing && return _mat_offset_datetime(s)  # bare offset in a ZonedDateTime envelope
+    fixed = TimeZones.ZonedDateTime(_normalize_frac_ms(m.captures[1]),
+        TimeZones.dateformat"yyyy-mm-ddTHH:MM:SS.ssszzzzz")
+    tz = try
+        TimeZones.TimeZone(m.captures[2], TimeZones.Class(:ALL))
+    catch e
+        error("Unknown IANA timezone $(repr(m.captures[2])) in Neo4j ZonedDateTime " *
+              "$(repr(s)): $(sprint(showerror, e))")
+    end
+    return TimeZones.astimezone(fixed, tz)
 end
 
 function _mat_local_datetime(v)
@@ -219,19 +270,29 @@ end
 
 _materialize_properties(::Nothing) = JSON.Object{String,Any}()
 
-"""Parse a WKT‑like string `"SRID=7203;POINT (1.2 3.4)"` into a `CypherPoint`."""
+"""Parse a WKT‑like string `"SRID=7203;POINT (1.2 3.4)"`, or the 3D form
+`"SRID=9157;POINT Z (1.0 2.0 3.0)"`, into a `CypherPoint`. The optional `Z` marker
+(cartesian-3d / wgs-84-3d, which the server emits between `POINT` and the coordinate
+list) carries no data — dimensionality is the coordinate count. Matching is
+case-sensitive on `SRID`/`POINT`/`Z`, mirroring the server's fixed uppercase emission."""
 function _parse_wkt(s::AbstractString)
-    m = match(r"SRID=(\d+);\s*POINT\s*\(([^)]+)\)", s)
+    m = match(r"SRID=(\d+);\s*POINT\s*(?:Z\s*)?\(([^)]+)\)", s)
     m === nothing && error("Cannot parse WKT point: $s")
     srid = parse(Int, m.captures[1])
     coords = [parse(Float64, x) for x in split(strip(m.captures[2]))]
     return CypherPoint(srid, coords)
 end
 
-"""Convert a `CypherPoint` back to WKT."""
+"""Convert a `CypherPoint` back to WKT. A 3D point emits the `POINT Z (…)` marker the
+server requires; 2D stays `POINT (…)`. A WKT point is 2D or 3D only, so any other
+coordinate count errors loudly rather than emit malformed WKT the server would reject."""
 function _to_wkt(pt::CypherPoint)
+    n = length(pt.coordinates)
+    (n == 2 || n == 3) ||
+        error("Cannot serialize CypherPoint to WKT: a point must have 2 or 3 coordinates, got $n: $(pt.coordinates)")
     coords = join(pt.coordinates, " ")
-    return "SRID=$(pt.srid);POINT ($coords)"
+    z = n == 3 ? "Z " : ""
+    return "SRID=$(pt.srid);POINT $(z)($coords)"
 end
 
 """Parse a UTC offset string like `+01:00` or `Z` into a `TimeZones.FixedTimeZone`."""
@@ -245,13 +306,34 @@ function _parse_offset(s::AbstractString)
     error("Cannot parse timezone offset from: $s")
 end
 
+"""
+    _offset_string(tz::TimeZones.FixedTimeZone) -> String
+
+Render a fixed UTC offset as the Typed JSON `Time` wire suffix: `±HH:MM`, or `Z`
+for a zero offset. Exact inverse of [`_parse_offset`](@ref). A zero offset
+canonicalizes to `Z` (the server's UTC emission for zoned `TIME`), so a value read
+via `_mat_time` re-serializes byte-identically. Verified against the installed
+TimeZones (1.22): `FixedTimeZone`'s `offset::UTCOffset` decomposes into
+`.std + .dst`, both `Dates.Second`, and sums to the total offset.
+"""
+function _offset_string(tz::TimeZones.FixedTimeZone)
+    total = Dates.value(Dates.Second(tz.offset.std + tz.offset.dst))
+    total == 0 && return "Z"
+    sign = total < 0 ? "-" : "+"
+    total = abs(total)
+    return string(sign, lpad(total ÷ 3600, 2, '0'), ":", lpad((total % 3600) ÷ 60, 2, '0'))
+end
+
 # ── Serialization (Julia → request Typed JSON) ─────────────────────────────
 
 """
     to_typed_json(val) -> Dict{String,Any}
 
 Convert a Julia value into its Neo4j Typed JSON envelope representation for use
-as a query parameter.
+as a query parameter. Every `AbstractDict` is encoded as a Cypher `Map` — there is
+no pre-encoded-envelope passthrough, so an envelope-shaped dict (with `\$type`/`_value`
+keys) is wrapped as a `Map` like any other. A value with no `to_typed_json` method
+raises `ErrorException` rather than being silently passed through.
 """
 to_typed_json(::Nothing) = Dict{String,Any}("\$type" => "Null", "_value" => nothing)
 to_typed_json(v::Bool) = Dict{String,Any}("\$type" => "Boolean", "_value" => v)
@@ -261,11 +343,38 @@ to_typed_json(v::AbstractString) = Dict{String,Any}("\$type" => "String", "_valu
 
 to_typed_json(v::Dates.Date) = Dict{String,Any}("\$type" => "Date", "_value" => string(v))
 to_typed_json(v::Dates.Time) = Dict{String,Any}("\$type" => "LocalTime", "_value" => string(v))
-to_typed_json(v::Dates.DateTime) = Dict{String,Any}("\$type" => "LocalDateTime", "_value" => Dates.format(v, dateformat"yyyy-mm-ddTHH:MM:SS"))
+to_typed_json(v::Dates.DateTime) = Dict{String,Any}("\$type" => "LocalDateTime", "_value" => Dates.format(v, dateformat"yyyy-mm-ddTHH:MM:SS.sss"))
 
+"""
+    to_typed_json(v::TimeZones.ZonedDateTime)
+
+Serialize a `ZonedDateTime` to its Neo4j Typed JSON envelope. A **named** IANA zone
+(`VariableTimeZone`) lowers to a `ZonedDateTime` envelope whose `_value` carries the
+`±HH:MM[Area/City]` suffix the server expects (e.g.
+`2024-01-15T10:30:00+01:00[Europe/Paris]`), so the zone name survives the round-trip
+(F-06). A **fixed offset** (`FixedTimeZone`) lowers to an `OffsetDateTime` envelope —
+byte-stable with 0.3.x, where every `ZonedDateTime` serialized as a bare offset.
+`string(::ZonedDateTime)` emits the offset form and renders a millisecond fraction only
+when non-zero; Julia's ms resolution means no sub-millisecond digits are ever produced.
+"""
 function to_typed_json(v::TimeZones.ZonedDateTime)
-    Dict{String,Any}("\$type" => "OffsetDateTime", "_value" => string(v))
+    if TimeZones.timezone(v) isa TimeZones.FixedTimeZone
+        return Dict{String,Any}("\$type" => "OffsetDateTime", "_value" => string(v))
+    end
+    return Dict{String,Any}("\$type" => "ZonedDateTime",
+        "_value" => string(string(v), "[", TimeZones.name(TimeZones.timezone(v)), "]"))
 end
+
+"""
+    to_typed_json(v::CypherTime)
+
+Serialize a zoned `TIME` back to its Typed JSON `Time` envelope, emitting the same
+`_value` the server sent — `"<time><±HH:MM>"`, or `"<time>Z"` for a zero offset
+(the pinned UTC form, e.g. `"09:00:00Z"`) — for a byte-identical F-12 round-trip.
+`string(::Dates.Time)` preserves nanoseconds, so sub-second fractions survive.
+"""
+to_typed_json(v::CypherTime) =
+    Dict{String,Any}("\$type" => "Time", "_value" => string(v.time, _offset_string(v.timezone)))
 
 to_typed_json(v::CypherDuration) = Dict{String,Any}("\$type" => "Duration", "_value" => v.value)
 to_typed_json(v::CypherPoint) = Dict{String,Any}("\$type" => "Point", "_value" => _to_wkt(v))
@@ -292,14 +401,11 @@ function to_typed_json(v::CypherVector)
             "coordinates" => v.coordinates))
 end
 
-# Fallback: pass through raw values that are already typed-json dicts
+# Fallback: no serializer is defined for this type — fail loud with an extension hint.
 function to_typed_json(v::Any)
-    # If it's already a dict with $type, pass through
-    if v isa AbstractDict && haskey(v, "\$type")
-        return v
-    end
     error("Cannot convert $(typeof(v)) to Neo4j Typed JSON. " *
-          "Define `Neo4jQuery.to_typed_json(::$(typeof(v)))` to add support.")
+          "Define `Neo4jQuery.to_typed_json(::$(typeof(v)))` to add support. " *
+          "Note: AbstractDict values are always encoded as Cypher Map parameters.")
 end
 
 function _float_str(v::AbstractFloat)

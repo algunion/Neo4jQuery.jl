@@ -16,10 +16,12 @@ Base.showerror(io::IO, e::ReadOnlyViolationError) = print(io,
     "ReadOnlyViolationError: refused write clause '", e.matched,
     "' on a read-only connection.\n  statement: ", e.statement)
 
-# Write clauses. (?<![.\w]) blocks property access (`.set`) and identifiers
-# (`xcreate`); \b closes the right side. Case-insensitive.
+# Write + admin/DDL clauses. (?<![.\w]) blocks property access (`.set`) and
+# identifiers (`xcreate`); \b closes the right side. Case-insensitive. Multi-word
+# admin forms (START/STOP DATABASE, ENABLE SERVER) only trip on the full phrase,
+# so a bare `START`/`STOP`/`ENABLE` alias does not over-refuse.
 const _WRITE_CLAUSE_RE =
-    r"(?i)(?<![.\w])(?:CREATE|MERGE|DELETE|SET|REMOVE|DROP|FOREACH|LOAD\s+CSV|IN\s+TRANSACTIONS)\b"
+    r"(?i)(?<![.\w])(?:CREATE|MERGE|DELETE|SET|REMOVE|DROP|FOREACH|LOAD\s+CSV|IN\s+TRANSACTIONS|ALTER|GRANT|DENY|REVOKE|RENAME|TERMINATE|(?:START|STOP)\s+DATABASE|ENABLE\s+SERVER|DEALLOCATE|REALLOCATE)\b"
 
 """
     _strip_cypher_literals_and_comments(s) -> String
@@ -60,6 +62,15 @@ end
 
 `:write` if `statement` contains any write clause (after stripping comments and
 literals), else `:read`. Conservative / fail-closed.
+
+Guarded clauses: `CREATE`, `MERGE`, `DELETE`, `SET`, `REMOVE`, `DROP`, `FOREACH`,
+`LOAD CSV`, `IN TRANSACTIONS`, plus the admin/DDL commands `ALTER`, `GRANT`,
+`DENY`, `REVOKE`, `RENAME`, `TERMINATE`, `START`/`STOP DATABASE`, `ENABLE SERVER`,
+`DEALLOCATE`, `REALLOCATE`. The admin/DDL keywords are a fail-fast convenience
+only — a [`ReadOnlyConnection`](@ref) already forces `access_mode=:read`, so the
+server rejects them regardless. `SET` remains the noisiest false-positive source;
+the admin keywords add negligible extra FP risk (they are rare as bare aliases,
+and the multi-word forms above only match the full phrase).
 
 Because it scans for keywords lexically (it is not a Cypher parser), it has two
 known, opposite inaccuracies:
@@ -107,21 +118,35 @@ function _assert_read(statement::AbstractString)
 end
 
 """
-    read_query(roc, statement; parameters, include_counters, bookmarks, impersonated_user) -> QueryResult
+    read_query(roc, statement; parameters, include_counters, bookmarks, impersonated_user, max_execution_time, tx_metadata, cypher_version, timeout) -> QueryResult
 
 Run a read-only query. Rejects any write statement before contacting the server;
 `access_mode` is always `:read`. Because reads are provably side-effect-free
 (server-enforced, not just client intent), a transient transport failure (e.g.
 a stale pooled connection) is automatically retried once — see [`query`](@ref).
+A read timeout, however, is never retried (HTTP.jl treats it as unrecoverable);
+it surfaces as `Neo4jHTTPError`. `timeout::Union{Int,Nothing}=nothing` overrides
+the connection's `readtimeout` for this call (F-10).
+`max_execution_time::Union{Int,Nothing}` (seconds, `> 0`) and
+`tx_metadata::Union{AbstractDict,Nothing}` are the server-side execution controls
+from [`query`](@ref) (**require Neo4j 2026.04+**; `nothing` omits them).
+`cypher_version::Union{Int,Nothing}` (`5` or `25`) pins the statement's Cypher
+language version (F-29); the read-only classifier still runs on the RAW statement,
+so the inert `CYPHER <version> ` prefix cannot smuggle a write past the guard.
 """
 function read_query(roc::ReadOnlyConnection, statement::AbstractString;
     parameters::Dict{String,<:Any}=Dict{String,Any}(),
     include_counters::Bool=false,
     bookmarks::Vector{String}=String[],
-    impersonated_user::Union{String,Nothing}=nothing)
+    impersonated_user::Union{String,Nothing}=nothing,
+    max_execution_time::Union{Int,Nothing}=nothing,
+    tx_metadata::Union{AbstractDict,Nothing}=nothing,
+    cypher_version::Union{Int,Nothing}=nothing,
+    timeout::Union{Int,Nothing}=nothing)
     _assert_read(statement)
     return query(roc.conn, statement; parameters, access_mode=:read,
-        include_counters, bookmarks, impersonated_user)
+        include_counters, bookmarks, impersonated_user,
+        max_execution_time, tx_metadata, cypher_version, timeout)
 end
 
 function read_query(roc::ReadOnlyConnection, q::CypherQuery;
@@ -134,10 +159,47 @@ end
     read_stream(roc, statement; parameters, kwargs...) -> StreamingResult
 
 Streaming variant of [`read_query`](@ref); same read-only guarantee, including
-the auto-retry of a transient transport failure (see [`stream`](@ref)).
+the auto-retry of a transient transport failure (see [`stream`](@ref)). The
+per-call `timeout` override (F-10) and the server-side `max_execution_time`,
+`tx_metadata`, and `cypher_version` (F-29, `5` or `25`) controls all ride through
+`kwargs...` to [`stream`](@ref).
+
+`access_mode` is NOT among the forwardable kwargs: `read_stream` always runs
+`accessMode=Read`, and supplying `access_mode` throws `ArgumentError`. Because
+`kwargs...` is spliced rightmost when forwarding to [`stream`](@ref), a caller's
+`access_mode=:write` would otherwise override the explicit `:read` and defeat the
+server-side read-only backstop — exactly where the lexical guard's documented
+false negatives (a write inside `CALL some.write.proc()`) rely on it.
 """
 function read_stream(roc::ReadOnlyConnection, statement::AbstractString;
     parameters::Dict{String,<:Any}=Dict{String,Any}(), kwargs...)
+    _reject_access_mode_override(kwargs)
     _assert_read(statement)
     return stream(roc.conn, statement; parameters, access_mode=:read, kwargs...)
 end
+
+function read_stream(roc::ReadOnlyConnection, q::CypherQuery;
+    parameters::Dict{String,<:Any}=Dict{String,Any}(), kwargs...)
+    _reject_access_mode_override(kwargs)
+    _assert_read(q.statement)
+    return read_stream(roc, q.statement; parameters=merge(q.parameters, parameters), kwargs...)
+end
+
+# read_stream forwards `kwargs...` rightmost into stream(...; access_mode=:read, kwargs...),
+# where a duplicate key wins — so an incoming access_mode would silently override the forced
+# :read. read_query is immune (fixed signature, no access_mode kwarg); read_stream must reject
+# the key outright. The read-only backstop is non-negotiable, so this fails loud before any dial.
+function _reject_access_mode_override(kwargs)
+    haskey(kwargs, :access_mode) && throw(ArgumentError(
+        "read_stream always runs accessMode=Read; access_mode cannot be overridden"))
+    return nothing
+end
+
+# ── Guard the unguarded write API ─────────────────────────────────────────────
+# `query`/`stream` reach the server without the read-only classifier. Invoking
+# them on a ReadOnlyConnection is a mistake that would otherwise surface as a bare
+# MethodError; redirect to the guarded read_query/read_stream with a loud hint.
+query(::ReadOnlyConnection, args...; kwargs...) =
+    throw(ArgumentError("use read_query/read_stream on a ReadOnlyConnection (query() bypasses the guard)"))
+stream(::ReadOnlyConnection, args...; kwargs...) =
+    throw(ArgumentError("use read_stream on a ReadOnlyConnection (stream() bypasses the guard)"))

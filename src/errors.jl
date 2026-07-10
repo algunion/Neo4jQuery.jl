@@ -39,8 +39,17 @@ end
 """
     TransactionExpiredError <: Neo4jError
 
-Raised when a request targets a transaction that has already expired or been
-rolled back on the server side.
+Raised when a request that references an existing explicit transaction
+(`query(tx, …)`, `commit!`, `stream(tx, …)`) fails because the server no
+longer has that transaction — it expired, timed out, or was rolled back
+server-side.
+
+Classified by error code (`Neo.ClientError.Transaction.TransactionNotFound`,
+`…TransactionTimedOut`, `…TransactionTimedOutClientConfiguration`) plus the
+documented expired-tx shape `Neo.ClientError.Request.Invalid` with a
+"was not found" message. Errors outside a transaction context — e.g. a plain
+query hitting a lock-acquisition timeout — are never classified as this; they
+raise [`Neo4jQueryError`](@ref) with the server's code instead.
 """
 struct TransactionExpiredError <: Neo4jError
     message::String
@@ -49,3 +58,39 @@ end
 function Base.showerror(io::IO, e::TransactionExpiredError)
     print(io, "TransactionExpiredError: ", e.message)
 end
+
+"""
+    Neo4jHTTPError <: Neo4jError
+
+Raised when the server (or an intermediary such as a proxy/load balancer)
+returns an HTTP failure that carries no Neo4j `errors` array — e.g. a 5xx with
+an HTML body, or an unexpected status with an unparseable payload.
+"""
+struct Neo4jHTTPError <: Neo4jError
+    status::Int
+    message::String
+end
+
+Base.showerror(io::IO, e::Neo4jHTTPError) =
+    print(io, "Neo4jHTTPError (HTTP ", e.status, "): ", e.message)
+
+# ── Transient-error classification (F-23) ────────────────────────────────────
+
+"""
+    is_transient(e::Neo4jError) -> Bool
+
+`true` when the error is safe to retry per Neo4j's status-code taxonomy
+(`Neo.TransientError.*`) or an HTTP 429/503. Cypher errors ride HTTP 202, so
+status-based classification alone is impossible — use this predicate in agent
+retry loops (retry the *work*, idempotently; the transport-level read retry
+inside Neo4jQuery is separate and automatic).
+
+Everything else is `false`, including deterministic failures that a blind retry
+cannot fix: syntax/constraint errors, `AuthenticationError` (same credentials
+loop forever), and [`TransactionExpiredError`](@ref) — an expired tx is not
+blind-retryable, the caller must re-`begin_transaction` and replay the work
+against a fresh handle rather than re-send against the dead one.
+"""
+is_transient(e::Neo4jQueryError) = startswith(e.code, "Neo.TransientError.")
+is_transient(e::Neo4jHTTPError) = e.status in (429, 503)
+is_transient(::Neo4jError) = false

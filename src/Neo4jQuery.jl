@@ -19,6 +19,7 @@ include("query.jl")
 include("transactions.jl")
 include("streaming.jl")
 include("readonly.jl")
+include("introspect.jl")
 include("env.jl")
 
 # ── DSL (depends on query.jl, types.jl) ────────────────────────────────────
@@ -31,6 +32,9 @@ include("dsl/cypher.jl")
 
 #! format: off
 public auth_header, to_typed_json
+# GraphSchema field types: docstrings direct users to `Neo4jQuery.PropertyInfo`
+# etc. (see introspect.jl) without exporting them.
+public PropertyInfo, LabelInfo, RelTypeInfo, IndexInfo
 #! format: on
 
 # Connection
@@ -48,6 +52,15 @@ export query, @cypher_str, CypherQuery
 # Read-only guard
 export ReadOnlyConnection, read_query, read_stream, ReadOnlyViolationError
 
+# Introspection (server-truth validation)
+export validate_cypher
+
+# Schema introspection (grounding text-to-Cypher)
+export graph_schema, schema_prompt, GraphSchema
+
+# GraphRAG (vector KNN search + vector-index management)
+export vector_search, create_vector_index
+
 # Transactions
 export Transaction, begin_transaction, commit!, rollback!, transaction
 
@@ -58,10 +71,11 @@ export stream, StreamingResult, summary
 export QueryResult, QueryCounters, Notification
 
 # Graph types
-export Node, Relationship, Path, CypherPoint, CypherDuration, CypherVector
+export Node, Relationship, Path, CypherPoint, CypherDuration, CypherVector, CypherTime
 
 # Errors
-export Neo4jError, AuthenticationError, Neo4jQueryError, TransactionExpiredError
+export Neo4jError, AuthenticationError, Neo4jQueryError, TransactionExpiredError, Neo4jHTTPError
+export is_transient
 
 # ── DSL API ─────────────────────────────────────────────────────────────────
 
