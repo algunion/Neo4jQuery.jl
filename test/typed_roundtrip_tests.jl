@@ -306,7 +306,10 @@ end
 # separately were therefore never equal, so `Set`/`Dict` dedup of query results silently
 # kept duplicates. Graph entities (Node/Relationship) now take identity from the element
 # id (official-driver parity); value types (Path/Point/Duration/Vector) compare by
-# content. Each `==` pairs with a matching `hash` (the a == b ⟹ hash(a) == hash(b) law).
+# content. Each `==` pairs with a matching `hash`, obeying Julia's actual hash law —
+# isequal(a,b) ⟹ hash(a) == hash(b). For the String/element-id-keyed types `==` and
+# `isequal` coincide; CypherPoint's Float64 coordinates split them (±0.0, NaN), so it
+# carries an explicit `isequal` mirroring Float64 — pinned in the polarity testset below.
 @testset "graph entity equality (F-17)" begin
     n1 = Node("4:db:1", ["A"], JSON.parse("{\"x\":1}"))
     n2 = Node("4:db:1", ["A"], JSON.parse("{\"x\":1}"))
@@ -324,10 +327,11 @@ end
     @test v1 == v2
 end
 
-# Polarity + the `==`/`hash` consistency law, per type. `==` and `hash` must move together:
-# a lone `==` (or a `hash` keying on more than `==` observes) breaks the type in hashed
-# collections, so every equal pair below is also asserted hash-equal, and every unequal
-# case pins the discriminating field.
+# Polarity + Julia's hash law — isequal(a,b) ⟹ hash(a) == hash(b) — per type. `isequal`
+# and `hash` must move together: a lone `==` (with the generic isequal fallback) or a
+# `hash` observing more than `isequal` breaks the type in hashed collections. Every
+# isequal pair below is asserted hash-equal, every unequal case pins the discriminating
+# field, and CypherPoint's ±0.0/NaN pins cover the two places `==` and `isequal` diverge.
 @testset "graph entity equality — polarity & hash law (F-17)" begin
     # Graph entities: element-id identity. Different ids ⇒ unequal …
     @test Node("4:db:1", ["A"], JSON.parse("{\"x\":1}")) !=
@@ -353,14 +357,48 @@ end
     @test hash(Path(Union{Node,Relationship}[x, y])) ==
           hash(Path(Union{Node,Relationship}[x, y]))
 
+    # Composed Path semantics: paths whose nodes share element_ids but differ in
+    # labels/props compare EQUAL (and hash equal) — the element-id identity composes
+    # through Path, so props are ignored inside paths too.
+    @test Path(Union{Node,Relationship}[na]) == Path(Union{Node,Relationship}[nb])
+    @test hash(Path(Union{Node,Relationship}[na])) == hash(Path(Union{Node,Relationship}[nb]))
+
     # CypherPoint: differing srid or coordinates ⇒ unequal; 2D ≠ 3D by coordinate count.
     @test CypherPoint(7203, [1.0, 2.0]) != CypherPoint(4326, [1.0, 2.0])
     @test CypherPoint(7203, [1.0, 2.0]) != CypherPoint(7203, [1.0, 9.0])
     @test CypherPoint(7203, [1.0, 2.0]) != CypherPoint(7203, [1.0, 2.0, 3.0])
 
-    # CypherDuration: CONTENT equality, not string egality. A duration built from a
-    # non-literal string still compares (and hashes) equal to the literal form — the
-    # `===` default would have said false here (fresh String object): the exact F-17 trap.
+    # Signed zero: CypherPoint mirrors bare Float64 — `==` says equal (IEEE 0.0 == -0.0)
+    # while `isequal` distinguishes, so Julia's hash law (isequal ⟹ hash-equal) holds via
+    # the isequal branch, and a Set keeps BOTH, exactly like Set([0.0, -0.0]). Pre-fix the
+    # generic isequal fell back to `==` (true) with differing hashes — law REFUTED: one
+    # Set held two "isequal" members.
+    pz = CypherPoint(7203, [0.0, 2.0])
+    pn = CypherPoint(7203, [-0.0, 2.0])
+    @test pz == pn                       # Float ==: +0.0 == -0.0
+    @test !isequal(pz, pn)               # mirrors isequal(0.0, -0.0) — FAILS pre-fix
+    @test hash(pz) != hash(pn)           # hash follows isequal, like hash(0.0) ≠ hash(-0.0)
+    @test length(Set([pz, pn])) == 2     # same cardinality as Set([0.0, -0.0])
+
+    # NaN, Float64's other ==/isequal split: `==` false, `isequal` true ⇒ hash-equal and
+    # Set DEDUPS. Pre-fix a NaN point was not isequal to a content-identical twin (or to
+    # itself!) — unfindable in any hashed collection; composing isequal fixes it. (A
+    # zero-normalizing-hash fix would have left this corner broken.)
+    qa = CypherPoint(7203, [NaN, 2.0])
+    qb = CypherPoint(7203, [NaN, 2.0])
+    @test qa != qb                       # NaN != NaN under ==
+    @test isequal(qa, qb)                # but isequal-identical — FAILS pre-fix
+    @test hash(qa) == hash(qb)           # law: isequal ⟹ hash-equal
+    @test length(Set([qa, qb])) == 1     # FAILS pre-fix (was 2)
+
+    # Ordinary pair: isequal ⟹ hash-equal spot-check on the law's positive branch.
+    @test isequal(CypherPoint(7203, [1.0, 2.0]), CypherPoint(7203, [1.0, 2.0]))
+    @test hash(CypherPoint(7203, [1.0, 2.0])) == hash(CypherPoint(7203, [1.0, 2.0]))
+
+    # CypherDuration: content equality, pinned. NOTE: Julia's `===` on String is
+    # CONTENT-based (egal memcmps immutable bytes), so the pre-fix default `==` was
+    # ALREADY true for string("P","1D") — the explicit `==`/`hash` are for uniformity
+    # and documented intent across the value types, not a behavior change here.
     @test CypherDuration("P1D") == CypherDuration(string("P", "1D"))
     @test hash(CypherDuration("P1D")) == hash(CypherDuration(string("P", "1D")))
     @test CypherDuration("P1D") != CypherDuration("P2D")

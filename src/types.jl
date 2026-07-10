@@ -65,7 +65,11 @@ end
 A Cypher spatial point value.  Stored as an SRID integer and a coordinate vector.
 Serialised on the wire as a WKT string, e.g. `"SRID=7203;POINT (1.2 3.4)"`.
 
-Two points are equal (and hash equal) when their `srid` and `coordinates` match.
+Two points are equal when their `srid` and `coordinates` match; `==`, `isequal`, and
+`hash` each compose the corresponding field relation, so a point mirrors its wrapped
+`Float64`s exactly — `±0.0` points are `==` but not `isequal` (and hash apart), NaN
+points are `isequal` but not `==`, and a `Set` of points behaves like a `Set` of the
+underlying floats.
 """
 struct CypherPoint
     srid::Int
@@ -214,8 +218,11 @@ Base.hash(t::CypherTime, h::UInt) =
 # struct's heap-allocated containers (labels vector, property `JSON.Object`, coordinate
 # vector). Two content-identical values built from *separate* parses therefore compared
 # unequal, so `Set`/`Dict` dedup of query results silently kept duplicates (F-17). Every
-# custom `==` here obeys the `==`/`hash` law (a == b ⟹ hash(a) == hash(b)), so each pairs
-# with a matching `hash` (mandatory — a lone `==` breaks the type in hashed collections).
+# type here obeys Julia's actual hash law — isequal(a,b) ⟹ hash(a) == hash(b) — so each
+# custom `==` pairs with a matching `hash` (mandatory — a lone `==` breaks the type in
+# hashed collections). For the String/element-id-keyed types `==` and `isequal` coincide,
+# so the generic `isequal(a,b) = a == b` fallback is already lawful; CypherPoint's Float64
+# coordinates split the two relations (±0.0, NaN) and need an explicit `isequal` — below.
 # `getfield` is used for Node/Relationship/Path: Node/Relationship override `getproperty`
 # for dot-access to *properties*, so `a.element_id` would route through that machinery.
 
@@ -232,7 +239,18 @@ Base.hash(r::Relationship, h::UInt) = hash(getfield(r, :element_id), hash(:Neo4j
 # Value types compare by content (order-sensitive for the Path element sequence).
 Base.:(==)(a::Path, b::Path) = getfield(a, :elements) == getfield(b, :elements)
 Base.hash(p::Path, h::UInt) = hash(getfield(p, :elements), hash(:Neo4jPath, h))
+
+# CypherPoint mirrors Float64's three-relation semantics by composing each relation
+# field-wise: `==` composes `==` (±0.0 equal, NaN unequal), `isequal` composes `isequal`
+# (±0.0 distinct, NaNs identical), `hash` composes the fields' isequal-consistent hashes —
+# so isequal(a,b) ⟹ hash(a) == hash(b) holds structurally. Without the explicit `isequal`,
+# the generic fallback (`isequal(a,b) = a == b`) declared ±0.0 points isequal while their
+# coordinate hashes differed — REFUTING the law: a Set held two "equal" members. It also
+# left a NaN point non-isequal to itself (== fallback, NaN != NaN), making it unfindable
+# in hashed collections; composing `isequal` fixes both corners at once.
 Base.:(==)(a::CypherPoint, b::CypherPoint) = a.srid == b.srid && a.coordinates == b.coordinates
+Base.isequal(a::CypherPoint, b::CypherPoint) =
+    isequal(a.srid, b.srid) && isequal(a.coordinates, b.coordinates)
 Base.hash(p::CypherPoint, h::UInt) = hash((p.srid, p.coordinates), h)
 Base.:(==)(a::CypherDuration, b::CypherDuration) = a.value == b.value
 Base.hash(d::CypherDuration, h::UInt) = hash(d.value, h)
