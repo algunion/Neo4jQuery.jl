@@ -2,6 +2,8 @@
 
 For large result sets, streaming avoids loading all rows into memory at once. Results arrive as JSONL (one JSON object per line) and are parsed lazily.
 
+Streaming is genuinely incremental: `stream` issues the HTTP request on a background task that drains the response body into a buffer as bytes arrive, and each `iterate` reads the next row as soon as it lands — a consumer can process the first row long before the server has sent the last. (The request itself is bounded by the connection's read timeout, which covers the whole transfer, not idle time; see [Connections](@ref connections).)
+
 ```@setup stream
 using Neo4jQuery
 import Neo4jQuery: summary
@@ -89,6 +91,31 @@ println("Names: ", names)
 println("Ages: ", ages)
 ```
 
+## Stopping early
+
+If you only need part of a stream, call `close` to abandon the rest and release the
+underlying HTTP connection:
+
+```@example stream
+sr = stream(conn, "MATCH (p:Person) RETURN p.name AS name")
+for row in sr
+    println(row.name)
+    if row.name == "Alice"
+        close(sr)   # stop early — releases the connection
+        break
+    end
+end
+```
+
+After `close(sr)`, further iteration yields nothing and a second `close` is a no-op.
+
+!!! warning
+    Do not simply drop a partially-consumed `StreamingResult` on the floor. Until it
+    is either fully consumed or `close`d, the background task keeps draining the
+    response and the HTTP connection stays checked out until the server finishes
+    sending. Prefer `close(sr)` (or consume to the end) so the connection is released
+    promptly.
+
 ## Streaming with parameters
 
 ```@example stream
@@ -149,6 +176,11 @@ A `StreamingResult` tracks its consumption state:
 | `fields`   | `Vector` | Column names                                      |
 | `consumed` | `Bool`   | `true` after all rows have been read              |
 | `_summary` | internal | Populated after consumption; access via `summary` |
+
+Internally a `StreamingResult` also owns the background task running the HTTP
+request and the buffer it drains into; `close(sr)` tears both down. The task
+surfaces any transport error (a dropped connection, a read timeout) when the
+stream ends, so a truncated result raises rather than silently ending short.
 
 The iterator protocol (`Base.iterate`) is implemented, so streaming results
 work with `for` loops, `collect`, comprehensions, and any iterator combinator.

@@ -437,3 +437,76 @@ end
     @test_throws ArgumentError connect_from_env(path="no-such-file.env", readtimeout=-1)
     @test_throws ArgumentError connect_from_env(path="no-such-file.env", connect_timeout=-1)
 end
+
+# Task 8 (F-08): streaming used to buffer the WHOLE response before returning —
+# stream() blocked in HTTP.request until the server closed the connection, so a
+# consumer could not process row 1 until the last byte arrived (refuted "streaming"
+# for a long/slow result). True streaming now runs the request in a spawned task
+# that drains the body into a Base.BufferStream; the iterator reads lines as they
+# arrive. The falsifier below is meaningful only because http_harness's
+# incremental_server flushes each line onto the wire (Connection Nagle toggle):
+# the RED against the old buffering code is `timedwait === :timed_out` (evidence in
+# task-8-report.md); GREEN requires the first row to arrive while the server still
+# holds the response open (no Summary sent yet).
+@testset "streaming is incremental (F-08)" begin
+    HttpHarness.incremental_server() do conn, ch
+        put!(ch, "{\"\$event\":\"Header\",\"_body\":{\"fields\":[\"n\"]}}")
+        put!(ch, "{\"\$event\":\"Record\",\"_body\":[{\"\$type\":\"Integer\",\"_value\":\"1\"}]}")
+        # Summary NOT sent yet — the old (fully-buffering) impl cannot even return
+        # from stream() here, so first(iterate(sr)) would never complete.
+        row_task = @async begin
+            sr = stream(conn, "RETURN 1 AS n"; access_mode=:read)
+            first(iterate(sr)), sr
+        end
+        @test timedwait(() -> istaskdone(row_task), 10.0) === :ok   # RED: :timed_out pre-fix
+        (row, sr) = fetch(row_task)
+        @test row.n == 1
+        put!(ch, "{\"\$event\":\"Summary\",\"_body\":{}}")
+        close(ch)
+        @test iterate(sr) === nothing
+        @test Neo4jQuery.summary(sr).counters === nothing
+    end
+end
+
+# Task 8 (F-08 × 401): a 401 is now raised by _request_core INSIDE the spawned
+# writer task. It must cross the task boundary and reach the consumer as the same
+# AuthenticationError (with the real code/message from the 401 body's errors[]),
+# not as a Neo4jQueryError, a TaskFailedException, or a hang — String(response_stream)
+# on the still-open BufferStream would otherwise deadlock the writer task.
+@testset "stream 401 → AuthenticationError (F-08)" begin
+    errbody = "{\"errors\":[{\"code\":\"Neo.ClientError.Security.Unauthorized\",\"message\":\"Invalid credentials.\"}]}"
+    HttpHarness.scripted_server(401, errbody) do conn
+        err = try stream(conn, "RETURN 1 AS x"); nothing catch e; e end
+        @test err isa AuthenticationError
+        @test err.code == "Neo.ClientError.Security.Unauthorized"
+        @test occursin("Invalid credentials", err.message)
+    end
+    # 401 with a non-errors[] body still surfaces as AuthenticationError (generic).
+    HttpHarness.scripted_server(401, "nope") do conn
+        @test_throws AuthenticationError stream(conn, "RETURN 1 AS x")
+    end
+end
+
+# Task 8 (F-08 × close): a consumer that abandons a stream mid-flight calls close(sr)
+# to release it. iterate must then return nothing (no hang), a second close must be a
+# no-op, and once the server finishes the writer task must finish too (no leaked task
+# / connection held forever).
+@testset "close(sr) early exit (F-08)" begin
+    captured = Ref{Any}(nothing)
+    HttpHarness.incremental_server() do conn, ch
+        put!(ch, "{\"\$event\":\"Header\",\"_body\":{\"fields\":[\"n\"]}}")
+        put!(ch, "{\"\$event\":\"Record\",\"_body\":[{\"\$type\":\"Integer\",\"_value\":\"1\"}]}")
+        put!(ch, "{\"\$event\":\"Record\",\"_body\":[{\"\$type\":\"Integer\",\"_value\":\"2\"}]}")
+        sr = stream(conn, "RETURN 1 AS n"; access_mode=:read)
+        captured[] = sr
+        @test first(iterate(sr)).n == 1     # consume one row, then bail
+        close(sr)
+        @test iterate(sr) === nothing        # done: no hang, no more rows
+        close(sr)                            # second close is a no-op (no throw)
+        @test iterate(sr) === nothing
+    end
+    # incremental_server's finally has now closed ch + server, so the writer task
+    # drains to EOF and finishes — proving no task/connection is left hanging.
+    sr = captured[]
+    @test timedwait(() -> istaskdone(sr._task), 10.0) === :ok
+end

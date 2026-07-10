@@ -1318,6 +1318,7 @@ TEST_KEY4=no_quotes
             (:name, :age),
             HTTP.Response(200),
             IOBuffer(),
+            Threads.@spawn(nothing),   # dummy writer task (not awaited by show)
             nothing,
             false,
             nothing,
@@ -1338,7 +1339,8 @@ TEST_KEY4=no_quotes
 
     @testset "StreamingResult show: empty fields" begin
         sr = Neo4jQuery.StreamingResult(
-            String[], (), HTTP.Response(200), IOBuffer(), nothing, true, nothing, false,
+            String[], (), HTTP.Response(200), IOBuffer(), Threads.@spawn(nothing),
+            nothing, true, nothing, false,
         )
         buf = IOBuffer()
         show(buf, sr)
@@ -1349,7 +1351,8 @@ TEST_KEY4=no_quotes
 
     @testset "StreamingResult summary: no summary yet" begin
         sr = Neo4jQuery.StreamingResult(
-            String[], (), HTTP.Response(200), IOBuffer(), nothing, false, nothing, false,
+            String[], (), HTTP.Response(200), IOBuffer(), Threads.@spawn(nothing),
+            nothing, false, nothing, false,
         )
         s = Neo4jQuery.summary(sr)
         @test isempty(s.bookmarks)

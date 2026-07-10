@@ -117,7 +117,20 @@ function _request_core(url::AbstractString, method::Symbol, body;
     # Authentication errors — surface the real code/message from the 401 body's
     # errors[] when present (consuming the body here is safe: we throw immediately).
     if resp.status == 401
-        resp_body = _parse_body(resp)
+        # In the streaming path `resp.body` is the caller's still-open response_stream
+        # (a Base.BufferStream), so reading it to EOF via String(resp.body) would block
+        # forever. HTTP.jl has already written the full 401 body into it (MessageRequest
+        # copies context[:response_body] into any non-byte response body before
+        # returning), so read exactly what is buffered. Consuming it also empties the
+        # buffer, so the streaming reader hits EOF and re-raises this error via _await
+        # instead of re-classifying the errors[] line as a generic Neo4jQueryError.
+        rb = resp.body
+        resp_body = if rb isa Base.BufferStream
+            n = bytesavailable(rb)
+            _parse_body_str(n > 0 ? String(read(rb, n)) : "")
+        else
+            _parse_body(resp)
+        end
         if resp_body !== nothing
             errs = _extract_errors(resp_body)
             if !isempty(errs)
