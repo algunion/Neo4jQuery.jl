@@ -163,17 +163,36 @@ the auto-retry of a transient transport failure (see [`stream`](@ref)). The
 per-call `timeout` override (F-10) and the server-side `max_execution_time`,
 `tx_metadata`, and `cypher_version` (F-29, `5` or `25`) controls all ride through
 `kwargs...` to [`stream`](@ref).
+
+`access_mode` is NOT among the forwardable kwargs: `read_stream` always runs
+`accessMode=Read`, and supplying `access_mode` throws `ArgumentError`. Because
+`kwargs...` is spliced rightmost when forwarding to [`stream`](@ref), a caller's
+`access_mode=:write` would otherwise override the explicit `:read` and defeat the
+server-side read-only backstop — exactly where the lexical guard's documented
+false negatives (a write inside `CALL some.write.proc()`) rely on it.
 """
 function read_stream(roc::ReadOnlyConnection, statement::AbstractString;
     parameters::Dict{String,<:Any}=Dict{String,Any}(), kwargs...)
+    _reject_access_mode_override(kwargs)
     _assert_read(statement)
     return stream(roc.conn, statement; parameters, access_mode=:read, kwargs...)
 end
 
 function read_stream(roc::ReadOnlyConnection, q::CypherQuery;
     parameters::Dict{String,<:Any}=Dict{String,Any}(), kwargs...)
+    _reject_access_mode_override(kwargs)
     _assert_read(q.statement)
     return read_stream(roc, q.statement; parameters=merge(q.parameters, parameters), kwargs...)
+end
+
+# read_stream forwards `kwargs...` rightmost into stream(...; access_mode=:read, kwargs...),
+# where a duplicate key wins — so an incoming access_mode would silently override the forced
+# :read. read_query is immune (fixed signature, no access_mode kwarg); read_stream must reject
+# the key outright. The read-only backstop is non-negotiable, so this fails loud before any dial.
+function _reject_access_mode_override(kwargs)
+    haskey(kwargs, :access_mode) && throw(ArgumentError(
+        "read_stream always runs accessMode=Read; access_mode cannot be overridden"))
+    return nothing
 end
 
 # ── Guard the unguarded write API ─────────────────────────────────────────────

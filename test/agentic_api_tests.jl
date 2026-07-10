@@ -871,6 +871,49 @@ end
     @test Neo4jQuery._build_query_body("RETURN 1", Dict{String,Any}(); access_mode=:write) isa Dict
 end
 
+@testset "read_stream rejects access_mode override (SAFETY)" begin
+    # read_stream forwards `kwargs...` rightmost into stream(...; access_mode=:read, kwargs...),
+    # where a duplicate key WINS — so pre-fix a caller's access_mode=:write silently overrode the
+    # forced :read and defeated the server-side read-only backstop (the guarantee the lexical
+    # classifier's documented false negatives, e.g. CALL some.write.proc(), rely on). The guard
+    # must refuse the key outright, BEFORE any dial. 192.0.2.1 is TEST-NET-1 (RFC 5737): pre-fix
+    # RED reaches it and fails with a transport error (NOT ArgumentError) after the 1s timeouts;
+    # post-fix the guard throws before any socket is opened.
+    roc = ReadOnlyConnection(Neo4jConnection("http://192.0.2.1:7474", "neo4j", BasicAuth("x", "y"), 1, 1))
+
+    # String overload: access_mode=:write is refused (the dangerous override) …
+    e1 = try read_stream(roc, "MATCH (n) RETURN n"; access_mode=:write); nothing catch e; e end
+    @test e1 isa ArgumentError
+    @test e1 isa ArgumentError && occursin("access_mode", e1.msg)
+    # … and the guard keys on PRESENCE, so even a redundant :read is refused (read_stream OWNS it).
+    @test_throws ArgumentError read_stream(roc, "MATCH (n) RETURN n"; access_mode=:read)
+
+    # CypherQuery overload: same guard, before any dial.
+    @test_throws ArgumentError read_stream(
+        roc, CypherQuery("MATCH (n) RETURN n", Dict{String,Any}()); access_mode=:write)
+
+    # Control (guards against an over-broad reject): a LEGIT kwarg still forwards, and the
+    # forced accessMode Read survives — captured on the wire, no live DB.
+    cap = Ref{String}("")
+    server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+        cap[] = String(read(http))
+        HTTP.setstatus(http, 202)
+        HTTP.setheader(http, "Content-Type" => HttpHarness.TYPED_JSONL_MEDIA)
+        HTTP.startwrite(http)
+        write(http, "{\"\$event\":\"Header\",\"_body\":{\"fields\":[]}}\n")
+    end
+    try
+        roc2 = ReadOnlyConnection(Neo4jConnection(
+            "http://127.0.0.1:$(HTTP.port(server))", "neo4j", BasicAuth("u", "p")))
+        sr = read_stream(roc2, "RETURN 1"; max_execution_time=5)
+        close(sr)
+        @test occursin("\"accessMode\":\"Read\"", cap[])
+        @test occursin("\"maxExecutionTime\":5", cap[])
+    finally
+        close(server)
+    end
+end
+
 @testset "is_transient (F-23)" begin
     # Retryable per Neo4j's status-code taxonomy (Neo.TransientError.*).
     @test is_transient(Neo4jQueryError("Neo.TransientError.Transaction.DeadlockDetected", "x"))
