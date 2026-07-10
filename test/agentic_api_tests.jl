@@ -25,3 +25,25 @@ isdefined(@__MODULE__, :HttpHarness) ||
     @test Neo4jQuery._build_query_body("RETURN 1", Dict{String,Any}(); access_mode=:read) isa Dict
     @test Neo4jQuery._build_query_body("RETURN 1", Dict{String,Any}(); access_mode=:write) isa Dict
 end
+
+@testset "is_transient (F-23)" begin
+    # Retryable per Neo4j's status-code taxonomy (Neo.TransientError.*).
+    @test is_transient(Neo4jQueryError("Neo.TransientError.Transaction.DeadlockDetected", "x"))
+    @test is_transient(Neo4jQueryError("Neo.TransientError.Transaction.LockAcquisitionTimeout", "x"))
+    # Client/database errors are deterministic — never retry.
+    @test !is_transient(Neo4jQueryError("Neo.ClientError.Statement.SyntaxError", "x"))
+    @test !is_transient(Neo4jQueryError("Neo.DatabaseError.General.UnknownError", "x"))
+    # Transport overload: 503 (Service Unavailable) and 429 (Too Many Requests) are
+    # retryable; a bare 500 is not (server may have half-applied the write).
+    @test is_transient(Neo4jHTTPError(503, "overloaded"))
+    @test is_transient(Neo4jHTTPError(429, "rate limited"))
+    @test !is_transient(Neo4jHTTPError(500, "boom"))
+    # Auth failure is never transient — retrying with the same credentials loops forever.
+    @test !is_transient(AuthenticationError("Neo.ClientError.Security.Unauthorized", "x"))
+    # An expired tx is NOT blind-retryable: the agent must re-begin the transaction and
+    # replay the work, not re-send against a dead tx handle — so the predicate is false.
+    @test !is_transient(TransactionExpiredError("tx expired"))
+    # Client-side read-only refusal (no .code, no .status field) must hit the abstract
+    # fallback and return false — pins that the fallback assumes neither field.
+    @test !is_transient(ReadOnlyViolationError("CREATE (n)", "CREATE"))
+end

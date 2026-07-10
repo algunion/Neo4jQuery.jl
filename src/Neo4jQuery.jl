@@ -62,6 +62,7 @@ export Node, Relationship, Path, CypherPoint, CypherDuration, CypherVector
 
 # Errors
 export Neo4jError, AuthenticationError, Neo4jQueryError, TransactionExpiredError, Neo4jHTTPError
+export is_transient
 
 # ── DSL API ─────────────────────────────────────────────────────────────────
 
