@@ -1380,6 +1380,12 @@ TEST_KEY4=no_quotes
         @test isempty(s.notifications)
     end
 
+    @testset "summary extends Base.summary" begin
+        # Regression: a package-local `summary` shadowed Base.summary, so plain
+        # `summary(sr)` after `using Neo4jQuery` was ambiguous in consumer code.
+        @test Neo4jQuery.summary === Base.summary
+    end
+
     @testset "StreamingResult IteratorSize and eltype" begin
         @test Base.IteratorSize(Neo4jQuery.StreamingResult) == Base.SizeUnknown()
         @test Base.eltype(Neo4jQuery.StreamingResult) == NamedTuple

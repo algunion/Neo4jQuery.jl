@@ -9,7 +9,6 @@
 # ══════════════════════════════════════════════════════════════════════════════
 
 using Neo4jQuery
-import Neo4jQuery: summary   # required — Base.summary shadows the export
 using Test
 
 if !isdefined(@__MODULE__, :TestGraphUtils)
