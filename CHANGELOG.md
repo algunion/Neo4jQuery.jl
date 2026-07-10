@@ -12,6 +12,7 @@ Agentic-hardening release: fail-loud transport, lossless temporals, validation &
 - `TransactionExpiredError` is raised only for requests inside an explicit transaction, classified by error code where possible; plain-query lock timeouts surface as `Neo4jQueryError` (F-11).
 - `BearerAuth` base64-wraps the token on the wire per the Query API auth spec; pass the raw SSO token — pre-encoded tokens are now double-wrapped and rejected (F-20).
 - `query`/`stream` on a `ReadOnlyConnection` throw an informative `ArgumentError` pointing at `read_query`/`read_stream` instead of a `MethodError` (F-16).
+- `read_stream` rejects any `access_mode` kwarg (even a redundant `:read`) with an `ArgumentError` — the read-only access mode is owned by the connection and cannot be overridden.
 
 ### Fixed
 - `nothing` parameters serialize as the full `Null` envelope (`{"$type":"Null","_value":null}`); the server rejected the truncated form (F-01).
