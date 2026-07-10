@@ -54,8 +54,15 @@ Pages = [
     "guide/transactions.md",
     "guide/streaming.md",
     "guide/dsl.md",
+    "guide/agentic.md",
     "guide/biomedical_case_study.md",
     "api.md",
 ]
 Depth = 1
 ```
+
+## LLM Reference
+
+For LLM and agentic integrators there is a single-page, machine-oriented API
+reference at [llm.md](llm.md) (kept out of the navigation on purpose — it is
+meant to be handed to an agent whole).

@@ -6,6 +6,10 @@ using TimeZones
 using Dates
 using Base64
 
+# `summary` extends Base.summary rather than shadowing it, so `using Neo4jQuery`
+# never conflicts with Base's export in consumer code.
+import Base: summary
+
 # ── Includes (order matters) ────────────────────────────────────────────────
 include("errors.jl")
 include("auth.jl")

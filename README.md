@@ -230,6 +230,11 @@ end
 
 Full documentation is available at [algunion.github.io/Neo4jQuery.jl](https://algunion.github.io/Neo4jQuery.jl/dev/).
 
+For LLM and agentic integrators there is a single-page, machine-oriented API
+reference: [docs/src/llm.md](docs/src/llm.md) in the repo, deployed at
+[algunion.github.io/Neo4jQuery.jl/dev/llm/](https://algunion.github.io/Neo4jQuery.jl/dev/llm/) —
+point your agent at either.
+
 ## Performance Workflow
 
 Run the DSL micro-benchmarks to validate performance claims and compare changes:
