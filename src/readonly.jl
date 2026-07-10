@@ -107,7 +107,7 @@ function _assert_read(statement::AbstractString)
 end
 
 """
-    read_query(roc, statement; parameters, include_counters, bookmarks, impersonated_user, max_execution_time, tx_metadata, timeout) -> QueryResult
+    read_query(roc, statement; parameters, include_counters, bookmarks, impersonated_user, max_execution_time, tx_metadata, cypher_version, timeout) -> QueryResult
 
 Run a read-only query. Rejects any write statement before contacting the server;
 `access_mode` is always `:read`. Because reads are provably side-effect-free
@@ -119,6 +119,9 @@ the connection's `readtimeout` for this call (F-10).
 `max_execution_time::Union{Int,Nothing}` (seconds, `> 0`) and
 `tx_metadata::Union{AbstractDict,Nothing}` are the server-side execution controls
 from [`query`](@ref) (**require Neo4j 2026.04+**; `nothing` omits them).
+`cypher_version::Union{Int,Nothing}` (`5` or `25`) pins the statement's Cypher
+language version (F-29); the read-only classifier still runs on the RAW statement,
+so the inert `CYPHER <version> ` prefix cannot smuggle a write past the guard.
 """
 function read_query(roc::ReadOnlyConnection, statement::AbstractString;
     parameters::Dict{String,<:Any}=Dict{String,Any}(),
@@ -127,11 +130,12 @@ function read_query(roc::ReadOnlyConnection, statement::AbstractString;
     impersonated_user::Union{String,Nothing}=nothing,
     max_execution_time::Union{Int,Nothing}=nothing,
     tx_metadata::Union{AbstractDict,Nothing}=nothing,
+    cypher_version::Union{Int,Nothing}=nothing,
     timeout::Union{Int,Nothing}=nothing)
     _assert_read(statement)
     return query(roc.conn, statement; parameters, access_mode=:read,
         include_counters, bookmarks, impersonated_user,
-        max_execution_time, tx_metadata, timeout)
+        max_execution_time, tx_metadata, cypher_version, timeout)
 end
 
 function read_query(roc::ReadOnlyConnection, q::CypherQuery;

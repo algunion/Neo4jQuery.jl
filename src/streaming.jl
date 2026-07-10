@@ -78,7 +78,7 @@ end
 # ── Stream constructors ─────────────────────────────────────────────────────
 
 """
-    stream(conn, statement; parameters, access_mode, bookmarks, impersonated_user, max_execution_time, tx_metadata) -> StreamingResult
+    stream(conn, statement; parameters, access_mode, bookmarks, impersonated_user, max_execution_time, tx_metadata, cypher_version) -> StreamingResult
 
 Execute a Cypher query with streaming enabled.  Returns a `StreamingResult` that
 yields `NamedTuple` rows via iteration.
@@ -86,6 +86,8 @@ yields `NamedTuple` rows via iteration.
 `max_execution_time::Union{Int,Nothing}` (seconds, `> 0`) and
 `tx_metadata::Union{AbstractDict,Nothing}` are the same server-side execution
 controls as on [`query`](@ref) (**require Neo4j 2026.04+**; `nothing` omits them).
+`cypher_version::Union{Int,Nothing}` (`5` or `25`) pins the Cypher language version
+for this statement, exactly as on [`query`](@ref); `nothing` leaves it to the DB.
 
 Rows arrive incrementally: the HTTP request runs in a background task that drains
 the response body into a buffer, and each `iterate` reads the next line as it lands
@@ -120,10 +122,11 @@ function stream(conn::Neo4jConnection, statement::AbstractString;
     impersonated_user::Union{String,Nothing}=nothing,
     max_execution_time::Union{Int,Nothing}=nothing,
     tx_metadata::Union{AbstractDict,Nothing}=nothing,
+    cypher_version::Union{Int,Nothing}=nothing,
     timeout::Union{Int,Nothing}=nothing)
     body = _build_query_body(statement, parameters;
         access_mode, include_counters, bookmarks, impersonated_user,
-        max_execution_time, tx_metadata)
+        max_execution_time, tx_metadata, cypher_version)
     readtimeout = timeout === nothing ? conn.readtimeout : timeout
     return _start_stream(_query_url(conn), body, conn.auth, nothing;
         retryable=(access_mode === :read),

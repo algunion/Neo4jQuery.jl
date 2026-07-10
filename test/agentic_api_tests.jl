@@ -409,3 +409,141 @@ end
         end
     end
 end
+
+# ── Task 29: cypher_version per-statement pin (F-29) ─────────────────────────
+# F-29: no way to pin the Cypher language version for a single statement. Neo4j
+# accepts a leading `CYPHER <version> ` prefix (5 or 25) that overrides the
+# database's default Cypher version for that one query. `_prepare_statement` gains a
+# `cypher_version` kwarg that prepends the prefix; query/stream/read_query plumb it
+# (read_stream and every CypherQuery overload ride `kwargs...`). Pre-fix RED: those
+# functions have no such kwarg → MethodError. These capture-server tests pin the exact
+# wire statement (prefix present for 5/25, byte-equal-untouched for `nothing`), the
+# ArgumentError on any other version across the public API, and that the read path
+# keeps accessMode Read while gaining the prefix. The per-DB default is a separate
+# server setting (not a client concern); this pins only the per-statement override.
+
+@testset "cypher_version wire statement (F-29)" begin
+    # Capture the raw request body; reply with a fixed success envelope. `ctype`/`reply`
+    # serve both the JSON query path and the JSONL stream path (needs a Header event so
+    # _read_header! returns instead of failing loud).
+    function capture(f, cap::Ref{String}; ctype=HttpHarness.TYPED_MEDIA, reply="{}")
+        server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+            cap[] = String(read(http))
+            HTTP.setstatus(http, 202)
+            HTTP.setheader(http, "Content-Type" => ctype)
+            HTTP.startwrite(http)
+            write(http, reply)
+        end
+        try
+            f(Neo4jConnection("http://127.0.0.1:$(HTTP.port(server))", "neo4j", BasicAuth("u", "p")))
+        finally
+            close(server)
+        end
+    end
+    HEADER = "{\"\$event\":\"Header\",\"_body\":{\"fields\":[]}}\n"
+
+    # 1) query path, cypher_version=25 → statement prefixed on the wire. (MethodError pre-fix.)
+    cap = Ref{String}("")
+    capture(cap) do conn
+        query(conn, "RETURN 1"; cypher_version=25)
+    end
+    @test occursin("\"statement\":\"CYPHER 25 RETURN 1\"", cap[])
+
+    # 2) cypher_version=5 → CYPHER 5 prefix (guards against a hard-coded 25).
+    cap = Ref{String}("")
+    capture(cap) do conn
+        query(conn, "RETURN 1"; cypher_version=5)
+    end
+    @test occursin("\"statement\":\"CYPHER 5 RETURN 1\"", cap[])
+
+    # 3) nothing (default) → statement byte-equal untouched, NO CYPHER prefix anywhere.
+    cap = Ref{String}("")
+    capture(cap) do conn
+        query(conn, "RETURN 1")
+    end
+    @test occursin("\"statement\":\"RETURN 1\"", cap[])
+    @test !occursin("CYPHER", cap[])
+
+    # 4) stream path: independent serializer (_start_stream), same prefix contract.
+    cap = Ref{String}("")
+    capture(cap; ctype=HttpHarness.TYPED_JSONL_MEDIA, reply=HEADER) do conn
+        sr = stream(conn, "RETURN 1"; cypher_version=25)
+        close(sr)
+    end
+    @test occursin("\"statement\":\"CYPHER 25 RETURN 1\"", cap[])
+
+    # 5) read_query (ReadOnlyConnection): prefix present AND accessMode Read retained.
+    #    The RO wrapper enumerates its kwargs, so without plumbing cypher_version is
+    #    UNREACHABLE on exactly the connection type read-only agents use.
+    cap = Ref{String}("")
+    capture(cap) do conn
+        r = read_query(ReadOnlyConnection(conn), "RETURN 1"; cypher_version=25)
+        @test r isa QueryResult
+    end
+    @test occursin("\"statement\":\"CYPHER 25 RETURN 1\"", cap[])
+    @test occursin("\"accessMode\":\"Read\"", cap[])
+
+    # 6) read_stream forwards via kwargs... into stream (also keeps accessMode Read).
+    cap = Ref{String}("")
+    capture(cap; ctype=HttpHarness.TYPED_JSONL_MEDIA, reply=HEADER) do conn
+        sr = read_stream(ReadOnlyConnection(conn), "RETURN 1"; cypher_version=5)
+        close(sr)
+    end
+    @test occursin("\"statement\":\"CYPHER 5 RETURN 1\"", cap[])
+    @test occursin("\"accessMode\":\"Read\"", cap[])
+end
+
+@testset "cypher_version validation + builder contract (F-29)" begin
+    # Prefix is applied at the _prepare_statement chokepoint; the builder forwards it.
+    @test Neo4jQuery._prepare_statement("RETURN 1", Dict{String,Any}(); cypher_version=25) ==
+          "CYPHER 25 RETURN 1"
+    @test Neo4jQuery._prepare_statement("RETURN 1", Dict{String,Any}(); cypher_version=5) ==
+          "CYPHER 5 RETURN 1"
+    # nothing (explicit and defaulted) → untouched, byte-equal.
+    @test Neo4jQuery._prepare_statement("RETURN 1", Dict{String,Any}()) == "RETURN 1"
+    @test Neo4jQuery._prepare_statement("RETURN 1", Dict{String,Any}(); cypher_version=nothing) == "RETURN 1"
+    # Builder wires it into the "statement" field (present) / leaves it raw (absent).
+    @test Neo4jQuery._build_query_body("RETURN 1", Dict{String,Any}(); cypher_version=25)["statement"] ==
+          "CYPHER 25 RETURN 1"
+    @test Neo4jQuery._build_query_body("RETURN 1", Dict{String,Any}())["statement"] == "RETURN 1"
+
+    # Any version other than 5/25 fails loud with ArgumentError — at the chokepoint AND
+    # through the public query/stream/read_query API (proves the kwarg is plumbed:
+    # pre-fix these throw MethodError, not ArgumentError). 192.0.2.1 = TEST-NET-1
+    # (RFC 5737), never dialed — validation precedes any request.
+    for v in (24, 26, 0, -1, 4, 100)
+        @test_throws ArgumentError Neo4jQuery._prepare_statement("RETURN 1", Dict{String,Any}(); cypher_version=v)
+    end
+    conn = Neo4jConnection("http://192.0.2.1:7474", "neo4j", BasicAuth("x", "y"), 3, 3)
+    @test_throws ArgumentError query(conn, "RETURN 1"; cypher_version=24)
+    @test_throws ArgumentError query(conn, "RETURN 1"; cypher_version=0)
+    @test_throws ArgumentError stream(conn, "RETURN 1"; cypher_version=-1)
+    @test_throws ArgumentError read_query(ReadOnlyConnection(conn), "RETURN 1"; cypher_version=26)
+
+    # Prefix composes with {{param}} conversion: it is prepended AFTER the conversion,
+    # so both the version pin and the $-placeholder survive on the same statement.
+    prepared = Neo4jQuery._prepare_statement("MATCH (n) WHERE n.id = {{id}} RETURN n",
+        Dict{String,Any}("id" => 1); cypher_version=25)
+    @test startswith(prepared, "CYPHER 25 ")
+    @test occursin("\$id", prepared)   # placeholder still converted
+
+    # Read-only classifier runs on the RAW statement (pre-prefix): a write is still
+    # refused with cypher_version set, and the inert `CYPHER n ` prefix never reaches
+    # the classifier (it carries no write clause). Fail-closed in both directions.
+    @test_throws ReadOnlyViolationError read_query(ReadOnlyConnection(conn), "CREATE (n)"; cypher_version=25)
+end
+
+# Live-gated pin (F-29, Step 4): SKIPPED offline (no credentials/). A real server
+# must ACCEPT the `CYPHER 25 ` prefix (Cypher 25 is a valid language version on a
+# current Neo4j) and return the row — proving the prefix is syntactically wired, not
+# just present on the wire.
+@testset "F-29 cypher_version live pin (test01)" begin
+    conn = load_readwrite_test01()
+    if conn === nothing
+        @info "F-29 live cypher_version pin skipped — test01 credentials absent/unreachable"
+        @test_skip false
+    else
+        r = query(conn, "RETURN 1 AS x"; access_mode=:read, cypher_version=25)
+        @test r[1].x == 1
+    end
+end

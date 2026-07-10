@@ -12,6 +12,7 @@
 - Deterministic `AuthenticationError` classification for HTTP 401 on the streaming path regardless of task scheduling.
 
 ### Added
+- `cypher_version` kwarg on `query`/`stream`/`read_query`/`read_stream` pins the Cypher language version (`5` or `25`) for a single statement via a `CYPHER <version> ` prefix; any other value throws `ArgumentError`, `nothing` leaves the database default in effect.
 - Client-side timeouts: `readtimeout`/`connect_timeout` on `Neo4jConnection`/`connect`/`connect_from_env`, per-call `timeout` on `query`/`stream`/`read_query`/`read_stream`; timeouts surface as `Neo4jHTTPError`.
 - `Neo4jHTTPError` exception type for transport-level failures.
 - True incremental streaming: `stream` yields rows as they arrive instead of buffering the whole response; `Base.close(::StreamingResult)` abandons an unfinished stream.
