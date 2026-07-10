@@ -426,6 +426,15 @@ function _validate_vector_search(index::AbstractString, embedding::AbstractVecto
     k >= 1 || throw(ArgumentError("vector_search: k must be ≥ 1 (got $k)"))
     isempty(embedding) &&
         throw(ArgumentError("vector_search: embedding must be non-empty"))
+    # Server contract (verified live against Neo4j Aura): "Vector must only contain
+    # finite values, and have positive and finite l2-norm." Reject client-side, before
+    # dialing — an all-zero query vector is undefined for cosine KNN, and NaN/Inf can
+    # never be a real embedding (integration finding: the zeros(…) placebo sketch was
+    # itself invalid input).
+    all(isfinite, embedding) || throw(ArgumentError(
+        "vector_search: embedding must only contain finite values (found NaN or Inf)"))
+    all(iszero, embedding) && throw(ArgumentError(
+        "vector_search: embedding must have positive finite l2-norm; got a zero vector"))
     return nothing
 end
 
@@ -457,8 +466,11 @@ statement is a pure read (`CALL … YIELD … RETURN`), so it passes the lexical
 runs under server-enforced `accessMode=Read`. Safe against a production read replica.
 
 # Validation (fail loud)
-`ArgumentError` if `k < 1`, `embedding` is empty, or `index` is empty — before any
-request is issued.
+`ArgumentError` — before any request is issued — if `k < 1`, `index` is empty, or
+`embedding` is empty, contains a non-finite value (NaN/Inf), or is all-zero. The
+last two mirror the server's own contract ("Vector must only contain finite values,
+and have positive and finite l2-norm"): a zero vector has no direction, so cosine
+KNN against it is undefined.
 
 # Deprecation note
 Neo4j 2026.04 deprecates `db.index.vector.queryNodes` in favour of the Cypher-25

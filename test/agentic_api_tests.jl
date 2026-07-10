@@ -784,6 +784,19 @@ end
     @test_throws ArgumentError vector_search(roc, "vector", [0.1]; k=0)
     @test_throws ArgumentError vector_search(roc, "", [0.1])
 
+    # Zero-norm / non-finite embeddings are refused CLIENT-SIDE, before any dial
+    # (integration finding: leny01 rejected zeros(384) — "Vector must only contain
+    # finite values, and have positive and finite l2-norm"; the plan's zeros(…)
+    # sketch was itself invalid cosine-KNN input).
+    @test_throws ArgumentError vector_search(conn, "vector", zeros(Float64, 384))
+    @test_throws ArgumentError vector_search(conn, "vector", [0, 0, 0])          # integer zeros too
+    @test_throws ArgumentError vector_search(conn, "vector", [0.1, NaN])
+    @test_throws ArgumentError vector_search(conn, "vector", [0.1, Inf])
+    @test_throws ArgumentError vector_search(conn, "vector", [-Inf, 0.2])
+    @test_throws ArgumentError vector_search(roc, "vector", zeros(Float64, 4))
+    zerr = try vector_search(conn, "vector", zeros(Float64, 3)); nothing catch e; e end
+    @test zerr isa ArgumentError && occursin("l2-norm", zerr.msg)                # actionable message
+
     # create_vector_index: dimensions ≥ 1, similarity ∈ (:cosine,:euclidean), non-empty name.
     @test_throws ArgumentError create_vector_index(conn, "n", "L", "p"; dimensions=0)
     @test_throws ArgumentError create_vector_index(conn, "n", "L", "p"; dimensions=384, similarity=:manhattan)
@@ -806,7 +819,9 @@ end
     if roc === nothing
         @warn "Skipping vector_search live — leny01 credentials absent or unreachable"
     else
-        r = vector_search(roc, "vector", zeros(Float64, 384); k=2)
+        # A unit-l2-norm probe vector — the server requires positive finite l2-norm
+        # for cosine KNN (zeros(…) is invalid input and now refused client-side).
+        r = vector_search(roc, "vector", ones(Float64, 384) ./ sqrt(384); k=2)
         @test r isa QueryResult
         @test length(r) <= 2
         for row in r
