@@ -15,7 +15,11 @@ A modern Julia client for [Neo4j](https://neo4j.com/) using the **Query API v2**
 - **Parameterised Cypher** — `@cypher_str` macro captures local variables as safe query parameters
 - **Explicit & implicit transactions** — auto-commit queries and full begin/commit/rollback lifecycle with a convenient do-block API
 - **Streaming results** — row-by-row JSONL iteration for memory-efficient processing of large result sets
-- **Rich type mapping** — automatic round-trip conversion between Julia types (`Int64`, `Float64`, `Date`, `DateTime`, `ZonedDateTime`, …) and Neo4j's type system, including spatial (`CypherPoint`), temporal (`CypherDuration`), and vector (`CypherVector`) values
+- **Agent-ready read safety** — `ReadOnlyConnection` gives a two-layer guard (client-side lexical write-clause scan + server-enforced `access_mode=:read`); pair it with a least-privilege DB user for defense in depth
+- **Pre-flight validation** — `validate_cypher` plans LLM-generated Cypher with `EXPLAIN` (never executes; `PROFILE` stripped) and returns the server's line/column for model self-correction
+- **Schema grounding & GraphRAG** — `graph_schema`/`schema_prompt` render the live schema into a text-to-Cypher system prompt; `vector_search`/`create_vector_index` provide KNN retrieval with client-side input validation
+- **Timeouts & retry taxonomy** — client `timeout`/`readtimeout` plus server-side `max_execution_time` (Neo4j 2026.04+), and `is_transient` to classify which failures a retry loop should replay
+- **Rich type mapping** — automatic round-trip conversion between Julia types (`Int64`, `Float64`, `Date`, `DateTime`, `ZonedDateTime`, …) and Neo4j's type system, including spatial (`CypherPoint`), temporal (`CypherDuration`, `CypherTime`), and vector (`CypherVector`) values
 - **Graph DSL** — the unified `@cypher` macro plus `@create`, `@merge`, `@relate` compile to parameterised Cypher at macro-expansion time. `@cypher` provides `>>` chain operators, function-call clauses, auto-SET, and comprehension forms
 - **Full Cypher coverage** — the DSL supports directed, left-arrow, and undirected patterns; variable-length relationships; CASE/WHEN expressions; EXISTS subqueries; regex matching; UNION/UNION ALL; CALL subqueries; LOAD CSV; FOREACH; and index/constraint management
 - **Schema declarations** — `@node` and `@rel` register typed schemas with property validation
@@ -205,7 +209,18 @@ end
     create_index(:Person, :name)
 end
 @cypher conn begin
+    create_index(:Person, :email, :if_not_exists)   # trailing :if_not_exists → IF NOT EXISTS
+end
+@cypher conn begin
     create_constraint(:Person, :email, :unique)
+end
+
+# Vector and full-text indexes (GraphRAG)
+@cypher conn begin
+    create_vector_index(:chunk_vec, :Chunk, :embedding, 384, :cosine)
+end
+@cypher conn begin
+    create_fulltext_index(:doc_fts, :Document, :title, :body)
 end
 ```
 

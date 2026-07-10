@@ -159,8 +159,10 @@ end
     read_stream(roc, statement; parameters, kwargs...) -> StreamingResult
 
 Streaming variant of [`read_query`](@ref); same read-only guarantee, including
-the auto-retry of a transient transport failure (see [`stream`](@ref)). Accepts
-the same per-call `timeout` override (F-10) via `kwargs...`.
+the auto-retry of a transient transport failure (see [`stream`](@ref)). The
+per-call `timeout` override (F-10) and the server-side `max_execution_time`,
+`tx_metadata`, and `cypher_version` (F-29, `5` or `25`) controls all ride through
+`kwargs...` to [`stream`](@ref).
 """
 function read_stream(roc::ReadOnlyConnection, statement::AbstractString;
     parameters::Dict{String,<:Any}=Dict{String,Any}(), kwargs...)

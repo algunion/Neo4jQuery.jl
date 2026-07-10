@@ -280,7 +280,10 @@ All clauses use plain function-call syntax — no `@` prefixes:
 | `load_csv_headers(url => :row)`             | `LOAD CSV WITH HEADERS FROM url AS row`     |
 | `foreach(var, :in, expr, begin ... end)`    | `FOREACH (var IN expr \| ...)`              |
 | `create_index(:Label, :prop)`               | `CREATE INDEX FOR (n:Label) ON (n.prop)`    |
+| `create_index(:Label, :prop, :if_not_exists)` | trailing `:if_not_exists` → `IF NOT EXISTS` (also on `create_constraint`) |
 | `drop_index(:name)`                         | `DROP INDEX name IF EXISTS`                 |
+| `create_vector_index(:name, :Label, :prop, dims::Int, :sim)` | `CREATE VECTOR INDEX ... IF NOT EXISTS ... OPTIONS {…}` (`:sim` = `:cosine`/`:euclidean`) |
+| `create_fulltext_index(:name, :Label, :prop...)` | `CREATE FULLTEXT INDEX name IF NOT EXISTS FOR (n:Label) ON EACH [n.prop, …]` |
 | `create_constraint(:Label, :prop, :unique)` | `CREATE CONSTRAINT ... IS UNIQUE`           |
 | `create_constraint(:L, :p, :not_null, :n)`  | NOT NULL constraint (`:notnull` also works) |
 | `drop_constraint(:name)`                    | `DROP CONSTRAINT name IF EXISTS`            |

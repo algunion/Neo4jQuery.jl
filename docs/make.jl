@@ -1,8 +1,16 @@
 using Documenter
 using Neo4jQuery
 
-# Load .env only when it exists (local dev); in CI the env vars are already set
-let envfile = joinpath(@__DIR__, "..", ".env")
+# Live-DB credentials for the executable `@example` blocks. Precedence (first
+# wins — `dotenv` never clobbers a key already present in `ENV`):
+#   1. ambient ENV — CI injects NEO4J_* from GitHub secrets (test01, read-write)
+#   2. credentials/test01-read-write.txt — local dev. The docs `@example` blocks
+#      purge-and-write, so they need the disposable read-write instance; leny01 is
+#      read-only / qa-reserved. This file is git-ignored, so it is absent in CI.
+#   3. ../.env — legacy fallback (may point at a decommissioned instance).
+let creds = joinpath(@__DIR__, "..", "credentials", "test01-read-write.txt"),
+    envfile = joinpath(@__DIR__, "..", ".env")
+    isfile(creds) && Neo4jQuery.dotenv(creds)
     isfile(envfile) && Neo4jQuery.dotenv(envfile)
 end
 
@@ -29,6 +37,7 @@ makedocs(;
             "Transactions" => "guide/transactions.md",
             "Streaming" => "guide/streaming.md",
             "DSL" => "guide/dsl.md",
+            "Agentic Systems" => "guide/agentic.md",
             "Biomedical Case Study" => "guide/biomedical_case_study.md",
         ],
         "API Reference" => "api.md",
