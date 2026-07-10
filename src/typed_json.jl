@@ -107,6 +107,27 @@ function _mat_date(v)
     return Dates.Date(string(v))
 end
 
+"""
+    _parse_time_frac(s) -> Dates.Time
+
+Parse `HH:MM[:SS[.fraction]]` (fraction 1–9 digits) into a nanosecond-resolution
+`Dates.Time`, losslessly. Neo4j emits micro/nanosecond time-of-day fractions, but
+`Dates.Time(::AbstractString)` only accepts ≤3 fractional digits (F-05: it throws
+`ArgumentError` on µs/ns). We right-pad the fraction to 9 digits and add it as a
+`Nanosecond` offset — `Dates.Time` already stores nanoseconds internally, so no
+precision is lost. Strings that don't match the grammar (e.g. a 10-digit fraction)
+raise loudly instead of silently truncating.
+"""
+function _parse_time_frac(s::AbstractString)::Dates.Time
+    m = match(r"^(\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d{1,9}))?$", s)
+    m === nothing && error("Cannot parse time value: $(repr(s))")
+    h = parse(Int, m.captures[1])
+    mi = parse(Int, m.captures[2])
+    sec = m.captures[3] === nothing ? 0 : parse(Int, m.captures[3])
+    ns = m.captures[4] === nothing ? 0 : parse(Int, rpad(m.captures[4], 9, '0'))
+    return Dates.Time(h, mi, sec) + Dates.Nanosecond(ns)
+end
+
 function _mat_time(v)
     # Zoned time, e.g. "12:50:35.556+01:00" or "12:50:35Z".
     s = string(v)
@@ -117,14 +138,12 @@ function _mat_time(v)
     # The offset is always the trailing 6-char ±HH:MM (or a single 'Z'); strip it to
     # recover the bare time component.
     time_part = endswith(s, "Z") ? chop(s) : chop(s; tail=6)
-    return (time=Dates.Time(time_part), timezone=tz)
+    # F-05: `_parse_time_frac` handles µs/ns fractions that `Dates.Time(::String)` rejects.
+    return (time=_parse_time_frac(time_part), timezone=tz)
 end
 
-function _mat_localtime(v)
-    s = string(v)
-    # Handle variable fractional-second precision
-    return Dates.Time(s)
-end
+# F-05: sub-millisecond LocalTime fractions (µs/ns) parsed losslessly into ns-resolution Time.
+_mat_localtime(v) = _parse_time_frac(string(v))
 
 """
     _normalize_frac_ms(s) -> String
