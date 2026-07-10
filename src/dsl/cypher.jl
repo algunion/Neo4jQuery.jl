@@ -394,9 +394,23 @@ const _MUTATION_CLAUSES = Set{Symbol}([
     _has_mutations(clauses) -> Bool
 
 Return `true` if any clause is a mutation (write) operation.
+
+Recurses into `call()` subqueries: a write clause nested inside a `CALL {}`
+block (e.g. `call(begin create(x::X) end)`) still makes the whole query a
+write, so access-mode inference must not stop at the top level (F-09).
 """
-_has_mutations(clauses::Vector{Tuple{Symbol,Vector{Any}}})::Bool =
-    any(kind ∈ _MUTATION_CLAUSES for (kind, _) in clauses)
+function _has_mutations(clauses::Vector{Tuple{Symbol,Vector{Any}}})::Bool
+    for (kind, args) in clauses
+        kind ∈ _MUTATION_CLAUSES && return true
+        if kind === :call_subquery && !isempty(args)
+            sub = args[1]
+            if sub isa Expr && sub.head === :block
+                _has_mutations(_parse_cypher_block(sub)) && return true
+            end
+        end
+    end
+    return false
+end
 
 # ── Clause function map ──────────────────────────────────────────────────────
 
