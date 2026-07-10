@@ -132,15 +132,38 @@ end
     @test to_typed_json(ms)["_value"] == "2024-01-15T10:30:00.123+01:00[Europe/Paris]"
 
     # sub-millisecond (µs/ns) fraction: Julia ZonedDateTime is ms-resolution, so the
-    # server's ns are TRUNCATED to ms (.123456789 → .123). Pinned, not silently rounded.
+    # server's ns are TRUNCATED to ms (.123456789 → .123). Note .123456789 alone cannot
+    # distinguish truncation from rounding (4th digit 4 → both give .123); the
+    # discriminating pin follows.
     ns = mz("2024-01-15T10:30:00.123456789+01:00[Europe/Paris]")
     @test ns == ZonedDateTime(2024, 1, 15, 10, 30, 0, 123, tz"Europe/Paris")
+
+    # DISCRIMINATING truncation pin: .9999999 must truncate to .999. A rounding
+    # regression in `_normalize_frac_ms` would carry into the next second
+    # (10:30:00.9999999 → 10:30:01.000) — so pin the ms AND that the second is unmoved.
+    t9 = mz("2024-01-15T10:30:00.9999999+01:00[Europe/Paris]")
+    @test t9 == ZonedDateTime(2024, 1, 15, 10, 30, 0, 999, tz"Europe/Paris")
+    @test Dates.second(t9) == 0          # rounding would shift the second
+    @test Dates.millisecond(t9) == 999   # truncate, never round-half-up
 
     # DST edge: an instant just after the Europe/Paris spring-forward (CEST, +02:00)
     # round-trips byte-perfectly and keeps the named zone.
     dst = mz("2024-03-31T03:00:00+02:00[Europe/Paris]")
     @test TimeZones.timezone(dst) == tz"Europe/Paris"
     @test to_typed_json(dst)["_value"] == "2024-03-31T03:00:00+02:00[Europe/Paris]"
+
+    # DST autumn overlap (adversarial): 02:30 occurs TWICE in Europe/Paris on 2024-10-27
+    # (the fold). Both wire instants must materialize onto the named zone with their
+    # distinct offsets intact — naive wall-clock construction raises AmbiguousTimeError,
+    # which `astimezone` from the unambiguous fixed instant never can. This discriminates
+    # astimezone from any wall-clock-based reconstruction.
+    fold_cest = mz("2024-10-27T02:30:00+02:00[Europe/Paris]")   # first pass (CEST)
+    fold_cet = mz("2024-10-27T02:30:00+01:00[Europe/Paris]")    # second pass (CET)
+    @test TimeZones.timezone(fold_cest) == tz"Europe/Paris"
+    @test TimeZones.timezone(fold_cet) == tz"Europe/Paris"
+    @test fold_cet - fold_cest == Dates.Hour(1)                 # same wall clock, 1h apart
+    @test to_typed_json(fold_cest)["_value"] == "2024-10-27T02:30:00+02:00[Europe/Paris]"
+    @test to_typed_json(fold_cet)["_value"] == "2024-10-27T02:30:00+01:00[Europe/Paris]"
 
     # unknown IANA zone → actionable error naming the zone and the offending value.
     @test_throws ErrorException mz("2024-01-15T10:30:00+01:00[Mars/Olympus]")
