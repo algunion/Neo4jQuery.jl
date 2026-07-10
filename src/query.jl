@@ -1,7 +1,7 @@
 # ── Query (implicit transactions) ────────────────────────────────────────────
 
 """
-    query(conn, statement; parameters, access_mode, include_counters, bookmarks, impersonated_user) -> QueryResult
+    query(conn, statement; parameters, access_mode, include_counters, bookmarks, impersonated_user, max_execution_time, tx_metadata, cypher_version, timeout) -> QueryResult
 
 Execute a Cypher `statement` against the database using an implicit transaction.
 
@@ -21,6 +21,23 @@ Execute a Cypher `statement` against the database using an implicit transaction.
 - `include_counters::Bool=false` — whether to request query counters.
 - `bookmarks::Vector{String}=String[]` — bookmarks for causal consistency.
 - `impersonated_user::Union{String,Nothing}=nothing` — run as another user.
+- `max_execution_time::Union{Int,Nothing}=nothing` — server-side execution budget
+  in seconds (**requires Neo4j 2026.04+**). When set (must be `> 0`), the database
+  itself aborts the query after this wall-clock time and returns a Cypher error.
+  This is the *server* half of F-10; the client-side `timeout` is the *client*
+  half. Set the client `timeout` **larger** than `max_execution_time` so the
+  server's own abort wins and surfaces as a clean error, rather than the client
+  giving up first and leaving the query running. Older servers reject the unknown
+  field — that server error is the intended signal. `nothing` omits it.
+- `tx_metadata::Union{AbstractDict,Nothing}=nothing` — metadata stamped on the
+  transaction (visible in `SHOW TRANSACTIONS` and the query log), e.g.
+  `Dict("app" => "qa")` (**requires Neo4j 2026.04+**). Keys are coerced to
+  `String`; values are serialized as typed-JSON. `nothing` omits it.
+- `cypher_version::Union{Int,Nothing}=nothing` — pin the Cypher language version
+  for *this statement only* by prepending a `CYPHER <version> ` prefix. Valid
+  values are `5` and `25`; any other throws `ArgumentError`. `nothing` (the default)
+  sends the statement untouched, letting the *database's* default Cypher version
+  apply — that per-DB default is a separate server setting, not set from the client.
 - `timeout::Union{Int,Nothing}=nothing` — per-call read-timeout override in
   seconds (F-10). `nothing` uses the connection's `readtimeout`; an integer
   overrides it for this call only (`0` = wait indefinitely). A fired timeout
@@ -50,10 +67,14 @@ function query(conn::Neo4jConnection, statement::AbstractString;
     include_counters::Bool=false,
     bookmarks::Vector{String}=String[],
     impersonated_user::Union{String,Nothing}=nothing,
+    max_execution_time::Union{Int,Nothing}=nothing,
+    tx_metadata::Union{AbstractDict,Nothing}=nothing,
+    cypher_version::Union{Int,Nothing}=nothing,
     timeout::Union{Int,Nothing}=nothing)
 
     body = _build_query_body(statement, parameters;
-        access_mode, include_counters, bookmarks, impersonated_user)
+        access_mode, include_counters, bookmarks, impersonated_user,
+        max_execution_time, tx_metadata, cypher_version)
 
     readtimeout = timeout === nothing ? conn.readtimeout : timeout
     parsed, _ = _neo4j_request(_query_url(conn), :POST, body;
@@ -79,7 +100,7 @@ end
 # ── Statement preparation ────────────────────────────────────────────────────
 
 """
-    _prepare_statement(statement, parameters) -> String
+    _prepare_statement(statement, parameters; cypher_version=nothing) -> String
 
 Prepare a Cypher statement for the Neo4j Query API:
 
@@ -87,8 +108,14 @@ Prepare a Cypher statement for the Neo4j Query API:
    This lets callers avoid the `\\\$` escape required in Julia string literals.
 2. Warn when `parameters` are supplied but none appear as `\$key` placeholders
    in the final statement — a likely sign of accidental Julia interpolation.
+3. When `cypher_version` is given (`5` or `25`), prepend a `CYPHER <version> `
+   prefix pinning the Cypher language version for this one statement (F-29). Any
+   other value throws `ArgumentError`; `nothing` (the default) leaves the statement
+   untouched. The prefix is prepended LAST so the interpolation warning scans the
+   caller's real statement, not the prefix.
 """
-function _prepare_statement(statement::AbstractString, parameters::Dict{String,<:Any})
+function _prepare_statement(statement::AbstractString, parameters::Dict{String,<:Any};
+    cypher_version::Union{Int,Nothing}=nothing)
     # Convert {{param}} → $param for Neo4j
     prepared = replace(statement, r"\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}" => s"$\1")
 
@@ -103,6 +130,17 @@ function _prepare_statement(statement::AbstractString, parameters::Dict{String,<
         end
     end
 
+    # Per-statement Cypher-version pin (F-29). Neo4j only accepts `CYPHER 5`/`CYPHER 25`,
+    # so anything else fails loud here rather than reaching the server as a syntax error.
+    # The prefix is lexically inert to the read-only classifier (which scans the RAW
+    # statement upstream in `_assert_read`, never this prefixed form) — `CYPHER 25 `
+    # carries no write clause.
+    if cypher_version !== nothing
+        cypher_version in (5, 25) ||
+            throw(ArgumentError("cypher_version must be 5 or 25, got $cypher_version"))
+        prepared = "CYPHER $(cypher_version) " * prepared
+    end
+
     return prepared
 end
 
@@ -113,8 +151,19 @@ function _build_query_body(statement::AbstractString,
     access_mode::Symbol=:write,
     include_counters::Bool=false,
     bookmarks::Vector{String}=String[],
-    impersonated_user::Union{String,Nothing}=nothing)
-    prepared = _prepare_statement(statement, parameters)
+    impersonated_user::Union{String,Nothing}=nothing,
+    max_execution_time::Union{Int,Nothing}=nothing,
+    tx_metadata::Union{AbstractDict,Nothing}=nothing,
+    cypher_version::Union{Int,Nothing}=nothing)
+    # Single chokepoint for every body (query, stream, DSL): reject an invalid
+    # access_mode loudly. Without this a typo like :reed or wrong case :READ silently
+    # fell through the `access_mode == :read` check below and routed as :write —
+    # dropping read-routing AND the read-only retry with no error (F-14). The tx paths
+    # never pass access_mode (always the valid default :write), so this is a no-op for
+    # them.
+    access_mode in (:read, :write) ||
+        throw(ArgumentError("access_mode must be :read or :write, got $(repr(access_mode))"))
+    prepared = _prepare_statement(statement, parameters; cypher_version)
     body = Dict{String,Any}("statement" => prepared)
 
     if !isempty(parameters)
@@ -137,5 +186,41 @@ function _build_query_body(statement::AbstractString,
         body["impersonatedUser"] = impersonated_user
     end
 
+    _apply_execution_controls!(body; max_execution_time, tx_metadata)
+
+    return body
+end
+
+"""
+    _apply_execution_controls!(body; max_execution_time, tx_metadata) -> body
+
+Attach the optional server-side execution controls to a request `body`, in place,
+and return it. A single validation/serialization chokepoint shared by
+`_build_query_body` (query/stream and the statement-bearing `begin_transaction`
+branches) and `begin_transaction`'s no-statement branch — which builds its body
+outside `_build_query_body` and would otherwise drift.
+
+- `max_execution_time` (seconds, must be `> 0`) → `body["maxExecutionTime"]`: the
+  server itself aborts the query after this wall-clock budget.
+- `tx_metadata` → `body["txMetadata"]`: metadata stamped on the transaction. Keys
+  are coerced to `String`; values are serialized as typed-JSON envelopes (the
+  Query-API contract for this field, per the 2026.04 fact sheet).
+
+Requires Neo4j **2026.04+**. Older servers reject the unknown fields — that server
+error is the intended signal, not a client-side version check. `nothing` (the
+default for both) omits the corresponding key entirely.
+"""
+function _apply_execution_controls!(body::Dict{String,Any};
+    max_execution_time::Union{Int,Nothing}=nothing,
+    tx_metadata::Union{AbstractDict,Nothing}=nothing)
+    if max_execution_time !== nothing
+        max_execution_time > 0 ||
+            throw(ArgumentError("max_execution_time must be positive seconds, got $max_execution_time"))
+        body["maxExecutionTime"] = max_execution_time      # seconds; server ≥ 2026.04
+    end
+    if tx_metadata !== nothing
+        body["txMetadata"] =
+            Dict{String,Any}(String(k) => to_typed_json(v) for (k, v) in tx_metadata)
+    end
     return body
 end

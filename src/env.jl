@@ -104,7 +104,26 @@ function connect_from_env(; path::AbstractString=".env", prefix::AbstractString=
     return conn
 end
 
-"""Parse a Neo4j URI like `neo4j+s://host` into `(http_scheme, host, port)`."""
+"""
+    _parse_neo4j_uri(uri) -> (http_scheme, host, port)
+
+Parse a Neo4j driver URI (e.g. `neo4j+s://host`) into the HTTP Query-API triple.
+
+Only the `neo4j`/`bolt` scheme family (`+s`/`+ssc` variants included) is accepted;
+`+s`/`+ssc` map to `https`+443, the plain forms to `http`+7474. An explicit port
+overrides the default. An explicit `http://`/`https://` URI is **rejected** (throws),
+not parsed — see the 7687 note below.
+
+**Bolt-port footgun (F-27).** 7687 is the *Bolt* protocol port; the HTTP Query API
+never listens there. Because the default port here is only ever 443/7474, a parsed
+port of 7687 can only have arrived as an explicit `:7687` on a `neo4j`/`bolt` URI —
+i.e. a copy-pasted Aura/Bolt endpoint, a protocol-confusion artifact. Such a port is
+rewritten to the scheme's real HTTP port (`https`→443, `http`→7474) with a `@warn`;
+pass an explicit HTTP port (e.g. 7474/443) to silence it. We deliberately rewrite
+*only* the `neo4j`/`bolt` schemes: a literal `http://host:7687` is a deliberate HTTP
+claim on a nonstandard port (e.g. a proxy), so — since the regex already refuses
+`http://` — it fails loud upstream rather than being silently second-guessed.
+"""
 function _parse_neo4j_uri(uri::AbstractString)
     m = match(r"^(neo4j\+s|neo4j\+ssc|neo4j|bolt\+s|bolt\+ssc|bolt)://([^/:]+)(?::(\d+))?", uri)
     m === nothing && error("Cannot parse Neo4j URI: $uri")
@@ -117,6 +136,14 @@ function _parse_neo4j_uri(uri::AbstractString)
     scheme = is_secure ? "https" : "http"
     default_port = is_secure ? 443 : 7474
     port = explicit_port !== nothing ? parse(Int, explicit_port) : default_port
+
+    # F-27: a neo4j/bolt URI on 7687 targets the Bolt protocol port, not the HTTP Query
+    # API — rewrite to the scheme's HTTP port and warn loudly (naming the escape hatch).
+    if port == 7687
+        @warn "URI $(uri) targets port 7687 (the Bolt protocol port), but Neo4jQuery speaks the HTTP Query API. " *
+              "Rewriting to the HTTP port $(is_secure ? 443 : 7474). Pass an explicit HTTP port (e.g. 7474 or 443) to silence this."
+        port = is_secure ? 443 : 7474
+    end
 
     return (scheme, host, port)
 end

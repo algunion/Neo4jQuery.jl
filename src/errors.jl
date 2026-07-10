@@ -73,3 +73,24 @@ end
 
 Base.showerror(io::IO, e::Neo4jHTTPError) =
     print(io, "Neo4jHTTPError (HTTP ", e.status, "): ", e.message)
+
+# ── Transient-error classification (F-23) ────────────────────────────────────
+
+"""
+    is_transient(e::Neo4jError) -> Bool
+
+`true` when the error is safe to retry per Neo4j's status-code taxonomy
+(`Neo.TransientError.*`) or an HTTP 429/503. Cypher errors ride HTTP 202, so
+status-based classification alone is impossible — use this predicate in agent
+retry loops (retry the *work*, idempotently; the transport-level read retry
+inside Neo4jQuery is separate and automatic).
+
+Everything else is `false`, including deterministic failures that a blind retry
+cannot fix: syntax/constraint errors, `AuthenticationError` (same credentials
+loop forever), and [`TransactionExpiredError`](@ref) — an expired tx is not
+blind-retryable, the caller must re-`begin_transaction` and replay the work
+against a fresh handle rather than re-send against the dead one.
+"""
+is_transient(e::Neo4jQueryError) = startswith(e.code, "Neo.TransientError.")
+is_transient(e::Neo4jHTTPError) = e.status in (429, 503)
+is_transient(::Neo4jError) = false
