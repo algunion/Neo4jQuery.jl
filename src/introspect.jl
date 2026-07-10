@@ -388,3 +388,176 @@ end
 
 schema_prompt(conn_or_roc::Union{Neo4jConnection,ReadOnlyConnection}; kwargs...)::String =
     schema_prompt(graph_schema(conn_or_roc); kwargs...)
+
+# ── Vector search & index management (F-29, GraphRAG) ─────────────────────────
+# The GraphRAG retrieval primitive: k-nearest-neighbour search over a vector index,
+# plus a runtime helper to create one. `vector_search` parameterizes the index name,
+# k, and the embedding ($idx/$k/$vec) so nothing user-supplied is interpolated into
+# the Cypher. `create_vector_index` is DDL, which the server does not allow to be
+# parameterized, so its identifiers are interpolated — and therefore sanitized.
+
+# The RETURN projection. The default extracts `elementId(node) AS id` (a stable
+# String) plus labels/properties/score; `return_node=true` returns the raw
+# `node, score`. Kept as a pure function so a regression test can assert the built
+# statement stays :read-classified by the write-guard (the index name rides as a
+# `$idx` PARAMETER, never in this text, so a write-looking name can't bypass it).
+function _vector_search_statement(return_node::Bool)::String
+    projection = return_node ? "node, score" :
+        "elementId(node) AS id, labels(node) AS labels, properties(node) AS properties, score"
+    return string("CALL db.index.vector.queryNodes(\$idx, \$k, \$vec) YIELD node, score RETURN ",
+        projection)
+end
+
+# Coerce the embedding to `Vector{Float64}` so it always serializes as a typed List
+# of Float entries (an integer-typed input vector would otherwise ship Integer
+# envelopes, which the vector procedure rejects). Parameters are heterogeneous by
+# construction (String idx, Integer k, List vec) — Dict{String,Any} is intrinsic.
+function _vector_search_params(index::AbstractString, embedding::AbstractVector{<:Real},
+    k::Int)::Dict{String,Any}
+    return Dict{String,Any}(
+        "idx" => String(index),
+        "k" => k,
+        "vec" => collect(Float64, embedding),
+    )
+end
+
+function _validate_vector_search(index::AbstractString, embedding::AbstractVector, k::Int)
+    isempty(index) && throw(ArgumentError("vector_search: index name must be non-empty"))
+    k >= 1 || throw(ArgumentError("vector_search: k must be ≥ 1 (got $k)"))
+    isempty(embedding) &&
+        throw(ArgumentError("vector_search: embedding must be non-empty"))
+    return nothing
+end
+
+"""
+    vector_search(conn_or_roc, index::AbstractString, embedding::AbstractVector{<:Real};
+                  k::Int=5, return_node::Bool=false) -> QueryResult
+
+k-nearest-neighbour search over a Neo4j **vector index** — the retrieval half of a
+GraphRAG loop. Runs the parameterized
+
+```cypher
+CALL db.index.vector.queryNodes(\$idx, \$k, \$vec) YIELD node, score
+RETURN elementId(node) AS id, labels(node) AS labels, properties(node) AS properties, score
+```
+
+and returns a [`QueryResult`](@ref) of up to `k` rows, ordered by descending
+similarity `score::Float64`. With `return_node=true` the projection is `node, score`
+(the raw [`Node`](@ref)) instead of the `id`/`labels`/`properties` columns.
+
+The `index`, `k`, and `embedding` are sent as **parameters** (`\$idx`, `\$k`, `\$vec`),
+never string-interpolated — so a hostile or write-looking index name cannot inject
+Cypher, and cannot bypass the read-only guard (it is not part of the statement text).
+`embedding` is coerced to `Vector{Float64}`, so an integer vector is promoted rather
+than rejected by the procedure.
+
+# ReadOnlyConnection
+On a [`ReadOnlyConnection`](@ref) the call funnels through [`read_query`](@ref): the
+statement is a pure read (`CALL … YIELD … RETURN`), so it passes the lexical guard and
+runs under server-enforced `accessMode=Read`. Safe against a production read replica.
+
+# Validation (fail loud)
+`ArgumentError` if `k < 1`, `embedding` is empty, or `index` is empty — before any
+request is issued.
+
+# Deprecation note
+Neo4j 2026.04 deprecates `db.index.vector.queryNodes` in favour of the Cypher-25
+`SEARCH` clause. This helper will migrate to `SEARCH` transparently; the signature
+above is the stable contract and callers do not change.
+
+# Example
+```julia
+roc = ReadOnlyConnection(conn)
+hits = vector_search(roc, "chunk_vec", query_embedding; k=5)
+for h in hits
+    println(h.score, "  ", h.properties["text"])
+end
+```
+"""
+function vector_search(conn::Neo4jConnection, index::AbstractString,
+    embedding::AbstractVector{<:Real}; k::Int=5, return_node::Bool=false)::QueryResult
+    _validate_vector_search(index, embedding, k)
+    return query(conn, _vector_search_statement(return_node);
+        parameters=_vector_search_params(index, embedding, k), access_mode=:read)
+end
+
+"""
+    vector_search(roc::ReadOnlyConnection, index, embedding; kwargs...)
+
+`ReadOnlyConnection` overload — routes through [`read_query`](@ref), keeping the
+read-only guard. See the main [`vector_search`](@ref) docstring.
+"""
+function vector_search(roc::ReadOnlyConnection, index::AbstractString,
+    embedding::AbstractVector{<:Real}; k::Int=5, return_node::Bool=false)::QueryResult
+    _validate_vector_search(index, embedding, k)
+    return read_query(roc, _vector_search_statement(return_node);
+        parameters=_vector_search_params(index, embedding, k))
+end
+
+# A DDL identifier is interpolated into the CREATE statement (Cypher DDL cannot be
+# parameterized). A runtime `String` is a wider attack surface than the DSL's Symbol
+# literals, so reject anything that could break out of a backtick-quoted identifier
+# or inject a clause: backticks, quotes, whitespace, and control characters. The
+# accepted remainder is backtick-wrapped at the call site. This is a deliberately
+# restrictive rule — a legal-but-exotic identifier (embedded space/backtick) is
+# refused rather than escaped, trading a rare convenience for an un-injectable surface.
+_bad_ddl_char(c::AbstractChar)::Bool =
+    c == '`' || c == '\'' || c == '"' || isspace(c) || iscntrl(c)
+
+function _ddl_identifier(kind::AbstractString, s::AbstractString)::String
+    isempty(s) && throw(ArgumentError("create_vector_index: $kind must be non-empty"))
+    if any(_bad_ddl_char, s)
+        throw(ArgumentError(string("create_vector_index: ", kind, " ", repr(s),
+            " contains a backtick, quote, whitespace, or control character — refused ",
+            "(DDL identifiers cannot be parameterized, so runtime input is sanitized ",
+            "to prevent Cypher injection)")))
+    end
+    return String(s)
+end
+
+"""
+    create_vector_index(conn, name, label, property;
+                        dimensions::Int, similarity::Symbol=:cosine) -> QueryResult
+
+Create a Neo4j **vector index** named `name` on `(:label).property`, idempotently:
+
+```cypher
+CREATE VECTOR INDEX `name` IF NOT EXISTS
+FOR (n:`label`) ON (n.`property`)
+OPTIONS {indexConfig: {`vector.dimensions`: <dimensions>, `vector.similarity_function`: '<similarity>'}}
+```
+
+`dimensions` is the embedding length; `similarity` is `:cosine` (default) or
+`:euclidean`. Returns the write [`QueryResult`](@ref). This is the **runtime** helper;
+the `@cypher`-DSL macro form (Symbol literals) is a separate surface.
+
+# Validation (fail loud)
+`ArgumentError` if `dimensions < 1`, `similarity ∉ (:cosine, :euclidean)`, or if
+`name`/`label`/`property` is empty or contains a backtick, quote, whitespace, or
+control character. Cypher DDL cannot be parameterized, so these identifiers are
+interpolated; the sanitizer makes the interpolation un-injectable (see also the DSL,
+whose inputs are Symbol literals and hence a narrower surface).
+
+# Example
+```julia
+create_vector_index(conn, "chunk_vec", "Chunk", "embedding";
+                    dimensions=384, similarity=:cosine)
+```
+"""
+function create_vector_index(conn::Neo4jConnection, name::AbstractString,
+    label::AbstractString, property::AbstractString;
+    dimensions::Int, similarity::Symbol=:cosine)::QueryResult
+    dimensions >= 1 ||
+        throw(ArgumentError("create_vector_index: dimensions must be ≥ 1 (got $dimensions)"))
+    similarity in (:cosine, :euclidean) || throw(ArgumentError(
+        "create_vector_index: similarity must be :cosine or :euclidean (got :$similarity)"))
+    iname = _ddl_identifier("index name", name)
+    ilabel = _ddl_identifier("label", label)
+    iprop = _ddl_identifier("property", property)
+    stmt = string(
+        "CREATE VECTOR INDEX `", iname, "` IF NOT EXISTS ",
+        "FOR (n:`", ilabel, "`) ON (n.`", iprop, "`) ",
+        "OPTIONS {indexConfig: {`vector.dimensions`: ", dimensions,
+        ", `vector.similarity_function`: '", string(similarity), "'}}")
+    return query(conn, stmt)
+end

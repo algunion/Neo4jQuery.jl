@@ -55,6 +55,9 @@ export validate_cypher
 # Schema introspection (grounding text-to-Cypher)
 export graph_schema, schema_prompt, GraphSchema
 
+# GraphRAG (vector KNN search + vector-index management)
+export vector_search, create_vector_index
+
 # Transactions
 export Transaction, begin_transaction, commit!, rollback!, transaction
 

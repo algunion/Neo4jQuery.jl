@@ -297,3 +297,171 @@ isdefined(@__MODULE__, :load_readonly_leny01) ||
         @info "graph_schema live" nlabels = length(sch.labels) nreltypes = length(sch.reltypes) nindexes = length(sch.indexes)
     end
 end
+
+# ── Task 35: vector_search + create_vector_index (F-29, GraphRAG) ──────────────
+# `vector_search` runs a parameterized `CALL db.index.vector.queryNodes($idx,$k,$vec)`
+# (index name is a PARAMETER, never interpolated → injection-safe; a write-looking
+# name can't trip the read-only guard). `create_vector_index` is a runtime DDL
+# helper: its name/label/property CANNOT be parameterized (DDL), so they are a wider
+# attack surface than the DSL's Symbol literals — sanitized + backtick-wrapped here.
+
+const _VEC_EMPTY_BODY = "{\"data\":{\"fields\":[],\"values\":[]}}"
+
+@testset "vector_search statement + parameter encoding (offline, F-29)" begin
+    # Default RETURN projection + typed-envelope encoding of $idx/$k/$vec.
+    _capture_validate_server(202, _VEC_EMPTY_BODY) do conn, captured
+        r = vector_search(conn, "vector", [0.5, -0.25, 0.75]; k=2)
+        @test r isa QueryResult
+        req = JSON.parse(captured[end])
+        stmt = req["statement"]
+        @test occursin("CALL db.index.vector.queryNodes(\$idx, \$k, \$vec)", stmt)
+        @test occursin("YIELD node, score", stmt)
+        @test occursin("elementId(node) AS id", stmt)
+        @test occursin("labels(node) AS labels", stmt)
+        @test occursin("properties(node) AS properties", stmt)
+        @test endswith(stmt, "score")
+        @test req["accessMode"] == "Read"                       # conn path forces :read
+        p = req["parameters"]
+        @test p["idx"]["\$type"] == "String" && p["idx"]["_value"] == "vector"
+        @test p["k"]["\$type"] == "Integer" && p["k"]["_value"] == "2"
+        @test p["vec"]["\$type"] == "List"                       # typed List envelope…
+        @test all(e -> e["\$type"] == "Float", p["vec"]["_value"])  # …of Float entries
+        @test [parse(Float64, e["_value"]) for e in p["vec"]["_value"]] == [0.5, -0.25, 0.75]
+    end
+
+    # return_node=true → `RETURN node, score` (no elementId/properties projection).
+    _capture_validate_server(202, _VEC_EMPTY_BODY) do conn, captured
+        vector_search(conn, "vector", [0.1, 0.2]; k=1, return_node=true)
+        stmt = JSON.parse(captured[end])["statement"]
+        @test occursin("YIELD node, score RETURN node, score", stmt)
+        @test !occursin("elementId", stmt)
+        @test !occursin("properties(node)", stmt)
+    end
+
+    # Integer embedding is coerced to Float entries (embeddings are floating-point).
+    _capture_validate_server(202, _VEC_EMPTY_BODY) do conn, captured
+        vector_search(conn, "vector", Int[1, 2, 3])
+        p = JSON.parse(captured[end])["parameters"]
+        @test all(e -> e["\$type"] == "Float", p["vec"]["_value"])
+        @test [parse(Float64, e["_value"]) for e in p["vec"]["_value"]] == [1.0, 2.0, 3.0]
+    end
+
+    # GUARD-lane pin: both built statements classify :read (survive the write-guard).
+    @test Neo4jQuery._classify_cypher(Neo4jQuery._vector_search_statement(false)) === :read
+    @test Neo4jQuery._classify_cypher(Neo4jQuery._vector_search_statement(true)) === :read
+end
+
+@testset "vector_search ReadOnlyConnection routes through read_query (F-29)" begin
+    # roc variant funnels through read_query → reaches the wire under accessMode=Read.
+    _capture_validate_server(202, _VEC_EMPTY_BODY) do conn, captured
+        roc = ReadOnlyConnection(conn)
+        r = vector_search(roc, "vector", [0.5, -0.25]; k=3)
+        @test r isa QueryResult
+        req = JSON.parse(captured[end])
+        @test req["accessMode"] == "Read"
+        @test occursin("db.index.vector.queryNodes", req["statement"])
+        @test req["parameters"]["k"]["_value"] == "3"
+    end
+
+    # A write-looking index NAME cannot bypass the guard: it is a $idx PARAMETER,
+    # never interpolated into the statement text, so the classifier still sees :read.
+    _capture_validate_server(202, _VEC_EMPTY_BODY) do conn, captured
+        roc = ReadOnlyConnection(conn)
+        r = vector_search(roc, "DELETE", [0.1])          # must NOT throw ReadOnlyViolationError
+        @test r isa QueryResult
+        req = JSON.parse(captured[end])
+        @test req["parameters"]["idx"]["_value"] == "DELETE"
+        @test !occursin("DELETE", req["statement"])       # name never reaches the statement
+    end
+end
+
+@testset "create_vector_index statement shape (offline, F-29)" begin
+    _capture_validate_server(202, _VEC_EMPTY_BODY) do conn, captured
+        r = create_vector_index(conn, "chunk_vec", "Chunk", "embedding";
+            dimensions=384, similarity=:cosine)
+        @test r isa QueryResult
+        req = JSON.parse(captured[end])
+        stmt = req["statement"]
+        @test occursin("CREATE VECTOR INDEX `chunk_vec` IF NOT EXISTS", stmt)
+        @test occursin("FOR (n:`Chunk`)", stmt)
+        @test occursin("ON (n.`embedding`)", stmt)
+        @test occursin("OPTIONS {indexConfig:", stmt)
+        @test occursin("`vector.dimensions`: 384", stmt)
+        @test occursin("`vector.similarity_function`: 'cosine'", stmt)
+        @test !haskey(req, "accessMode")                  # write path → accessMode absent
+    end
+
+    # :euclidean renders; dimensions interpolate as a bare Integer literal.
+    _capture_validate_server(202, _VEC_EMPTY_BODY) do conn, captured
+        create_vector_index(conn, "vec2", "Doc", "vecprop"; dimensions=1536, similarity=:euclidean)
+        stmt = JSON.parse(captured[end])["statement"]
+        @test occursin("`vector.dimensions`: 1536", stmt)
+        @test occursin("`vector.similarity_function`: 'euclidean'", stmt)
+    end
+end
+
+@testset "vector_search + create_vector_index validation (fail loud, F-29)" begin
+    # 3-arg constructor does not dial (TEST-NET-1); validation throws before any HTTP.
+    conn = Neo4jConnection("http://192.0.2.1:7474", "neo4j", BasicAuth("x", "y"))
+    roc = ReadOnlyConnection(conn)
+
+    # vector_search: k ≥ 1, non-empty embedding, non-empty index — both overloads.
+    @test_throws ArgumentError vector_search(conn, "vector", [0.1]; k=0)
+    @test_throws ArgumentError vector_search(conn, "vector", [0.1]; k=-3)
+    @test_throws ArgumentError vector_search(conn, "vector", Float64[])
+    @test_throws ArgumentError vector_search(conn, "", [0.1])
+    @test_throws ArgumentError vector_search(roc, "vector", [0.1]; k=0)
+    @test_throws ArgumentError vector_search(roc, "", [0.1])
+
+    # create_vector_index: dimensions ≥ 1, similarity ∈ (:cosine,:euclidean), non-empty name.
+    @test_throws ArgumentError create_vector_index(conn, "n", "L", "p"; dimensions=0)
+    @test_throws ArgumentError create_vector_index(conn, "n", "L", "p"; dimensions=384, similarity=:manhattan)
+    @test_throws ArgumentError create_vector_index(conn, "", "L", "p"; dimensions=384)
+
+    # DDL identifier sanitization — backtick / quote / whitespace / control chars are
+    # refused (DDL cannot be parameterized; a runtime String is the injection surface).
+    @test_throws ArgumentError create_vector_index(conn, "n`x", "L", "p"; dimensions=384)   # backtick in name
+    @test_throws ArgumentError create_vector_index(conn, "n", "La bel", "p"; dimensions=384) # whitespace in label
+    @test_throws ArgumentError create_vector_index(conn, "n", "L", "pr'op"; dimensions=384)  # squote in property
+    @test_throws ArgumentError create_vector_index(conn, "n", "L", "pr\"op"; dimensions=384) # dquote in property
+    # Full injection attempt (backtick-breakout + clause) is refused.
+    @test_throws ArgumentError create_vector_index(
+        conn, "x` OPTIONS {} ; DROP DATABASE neo4j //", "L", "p"; dimensions=384)
+end
+
+# ── Live-gated (both write, per lane rule) — SKIP without credentials/ ─────────
+@testset "vector_search live falsifier (leny01 read-only, F-29)" begin
+    roc = load_readonly_leny01()
+    if roc === nothing
+        @warn "Skipping vector_search live — leny01 credentials absent or unreachable"
+    else
+        r = vector_search(roc, "vector", zeros(Float64, 384); k=2)
+        @test r isa QueryResult
+        @test length(r) <= 2
+        for row in r
+            @test row.score isa Float64
+            @test row.id isa AbstractString
+            @test row.labels isa AbstractVector
+        end
+        @info "vector_search live" nrows = length(r)
+    end
+end
+
+@testset "create_vector_index live write path (test01, F-29)" begin
+    conn = load_readwrite_test01()
+    if conn === nothing
+        @warn "Skipping create_vector_index live — test01 credentials absent or unreachable"
+    else
+        idxname = "__nq_vec_test__"
+        try
+            r = create_vector_index(conn, idxname, "__NqVecTest__", "embedding";
+                dimensions=8, similarity=:cosine)
+            @test r isa QueryResult
+            sch = graph_schema(ReadOnlyConnection(conn))       # server-truth: it now exists
+            @test any(ix -> ix.name == idxname && ix.kind == "VECTOR", sch.indexes)
+        finally
+            query(conn, "DROP INDEX `$idxname` IF EXISTS")     # cleanup
+        end
+        @info "create_vector_index live" idxname
+    end
+end

@@ -68,6 +68,13 @@ schema_prompt
 GraphSchema
 ```
 
+## GraphRAG (vector search)
+
+```@docs
+vector_search
+create_vector_index
+```
+
 ## Result Types
 
 ```@docs

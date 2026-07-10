@@ -424,6 +424,55 @@ Labels beyond `max_labels` are reported with an explicit `… and N more labels`
 
 ---
 
+## GraphRAG — Vector Search
+
+`vector_search` is the retrieval half of a GraphRAG loop: k-nearest-neighbour search over a Neo4j vector index.
+
+```julia
+roc = ReadOnlyConnection(conn)
+hits = vector_search(roc, "chunk_vec", query_embedding; k=5)   # query_embedding::Vector{<:Real}
+for h in hits
+    println(h.score, "  ", h.properties["text"])
+end
+```
+
+```julia
+vector_search(conn_or_roc, index::AbstractString, embedding::AbstractVector{<:Real};
+              k::Int=5, return_node::Bool=false) -> QueryResult
+```
+
+Runs the parameterized
+
+```cypher
+CALL db.index.vector.queryNodes($idx, $k, $vec) YIELD node, score
+RETURN elementId(node) AS id, labels(node) AS labels, properties(node) AS properties, score
+```
+
+- Rows are ordered by descending similarity `score::Float64`; the `id` column is `elementId(node)` (a stable String).
+- `return_node=true` switches the projection to `node, score` (the raw `Node`).
+- `index`, `k`, and `embedding` are sent as **parameters** (`$idx`, `$k`, `$vec`) — never string-interpolated. A hostile or write-looking index name can neither inject Cypher nor bypass the read-only guard (it is not part of the statement text). `embedding` is coerced to `Vector{Float64}`.
+- On a `ReadOnlyConnection` it funnels through `read_query` (server-enforced `accessMode=Read`) — safe against a production read replica.
+- **Validation (fail loud):** `ArgumentError` if `k < 1`, `embedding` is empty, or `index` is empty — before any request.
+
+> **Deprecation:** Neo4j 2026.04 deprecates `db.index.vector.queryNodes` in favour of the Cypher-25 `SEARCH` clause. The helper will migrate to `SEARCH` transparently; the signature above is the stable contract.
+
+### `create_vector_index`
+
+```julia
+create_vector_index(conn, name, label, property;
+                    dimensions::Int, similarity::Symbol=:cosine) -> QueryResult
+```
+
+Creates a vector index idempotently (`CREATE VECTOR INDEX … IF NOT EXISTS … OPTIONS {indexConfig: …}`). `similarity` is `:cosine` (default) or `:euclidean`.
+
+```julia
+create_vector_index(conn, "chunk_vec", "Chunk", "embedding"; dimensions=384, similarity=:cosine)
+```
+
+**Validation (fail loud):** `ArgumentError` if `dimensions < 1`, `similarity ∉ (:cosine, :euclidean)`, or if `name`/`label`/`property` is empty or contains a backtick, quote, whitespace, or control character. Cypher DDL cannot be parameterized, so these identifiers are interpolated (and backtick-wrapped); the sanitizer makes that interpolation un-injectable.
+
+---
+
 ## DSL — Schema System
 
 ### `@node`
