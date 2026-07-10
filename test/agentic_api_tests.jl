@@ -8,7 +8,7 @@ using HTTP, JSON
 isdefined(@__MODULE__, :HttpHarness) ||
     include(joinpath(@__DIR__, "http_harness.jl"))
 
-using Neo4jQuery: _has_mutations, _parse_cypher_block
+using Neo4jQuery: _has_mutations, _parse_cypher_block, _compile_cypher_block
 
 # ── Task 19 (F-09): @cypher access-mode inference must recurse into call() ─────
 # A write clause (create/set/delete/…) nested inside a CALL {} subquery must
@@ -62,4 +62,72 @@ end
     # Positive control / regression guard: a correct on_create/on_match @merge
     # still expands (macroexpand only expands — no runtime, no network needed).
     @test (@macroexpand @merge conn Person(name="x") on_create(age=1) on_match(seen="now")) isa Expr
+end
+
+# ── Task 31 (F-25): unified CALL subquery compiler — nesting + scoped CALL ─────
+# `_compile_cypher_subquery` (a ~145-LOC near-duplicate of the block compiler
+# that rejected nested call()) is deleted; the `:call_subquery` arm now recurses
+# into `_compile_cypher_block_into!` with the SHARED param collections. New:
+#   • Cypher-25 scoped form  call(p, q, begin…end) → CALL (p, q) { … }
+#   • bare  call(begin…end)  → CALL { … }  (byte-identical to the pre-F-25 form)
+#   • nested call() COMPILES instead of erroring
+# Pre-fix RED (recorded): scoped form → MethodError (block-typed subquery fn);
+#   nested call() → "Unsupported clause in call() subquery: call_subquery".
+@testset "CALL subquery unification (F-25)" begin
+    # Scoped CALL (vars) { … } — the Cypher-25 importing form.
+    ex = @macroexpand @cypher conn begin
+        p::Person
+        call(p, begin
+            p >> r::KNOWS >> f::Person
+            ret(count(f) => :c)
+        end)
+        ret(p.name, c)
+    end
+    s = string(ex)
+    @test occursin("CALL (p) { MATCH (p)-[r:KNOWS]->(f:Person) RETURN count(f) AS c }", s)
+
+    # Nested call() now COMPILES (pre-fix: expansion error).
+    nested = @macroexpand @cypher conn begin
+        call(begin
+            call(begin
+                ret(1 => :one)
+            end)
+            ret(one)
+        end)
+        ret(one)
+    end
+    @test occursin("CALL { CALL { RETURN 1 AS one } RETURN one } RETURN one", string(nested))
+
+    # Byte-identity guard: bare call() still emits the pre-F-25 `CALL { … }` shape
+    # (no scope parens) — protects the existing cypher_dsl_tests.jl CALL cases.
+    bare = Meta.parse("begin\n p::Person\n call(begin\n with(p)\n" *
+                      " p >> r::KNOWS >> f::Person\n ret(count(f) => :c)\n end)\n ret(p)\nend")
+    bcyph, _ = _compile_cypher_block(_parse_cypher_block(bare))
+    @test occursin("CALL { WITH p MATCH (p)-[r:KNOWS]->(f:Person) RETURN count(f) AS c }", bcyph)
+    @test !occursin("CALL (", bcyph)
+
+    # Shared param collections: a `\$param` used INSIDE and OUTSIDE call() registers
+    # exactly once (dedup via the shared param_seen threaded through the recursion).
+    shared = Meta.parse("begin\n p::Person\n where(p.age > \$threshold)\n" *
+                        " call(p, begin\n p >> r::KNOWS >> f::Person\n" *
+                        " where(f.age > \$threshold)\n ret(count(f) => :c)\n end)\n ret(p.name, c)\nend")
+    _, params = _compile_cypher_block(_parse_cypher_block(shared))
+    @test count(==(:threshold), params) == 1
+
+    # Task-19 interaction (F-09 × F-25): mode inference must find a mutation inside
+    # a SCOPED call. Pre-fix `_has_mutations` read args[1] (the scope Symbol :p),
+    # not the block, and misinferred :read. Fixed to args[end] with a :block guard.
+    scoped_write = Meta.parse("begin\n p::Person\n call(p, begin\n create(x::X)\n end)\n ret(p)\nend")
+    @test _has_mutations(_parse_cypher_block(scoped_write))        # ← FAILS pre-fix
+    scoped_read = Meta.parse("begin\n p::Person\n call(p, begin\n" *
+                             " p >> r::KNOWS >> f::Person\n ret(count(f) => :c)\n end)\n ret(p)\nend")
+    @test !_has_mutations(_parse_cypher_block(scoped_read))
+
+    # Error cases — all must fail at COMPILATION with an actionable message.
+    @test_throws "call() expects a begin...end block" _compile_cypher_block(
+        _parse_cypher_block(Meta.parse("begin\n call()\nend")))
+    @test_throws "last argument must be a begin...end block" _compile_cypher_block(
+        _parse_cypher_block(Meta.parse("begin\n call(p, q)\nend")))
+    @test_throws "scope variables must be plain symbols" _compile_cypher_block(
+        _parse_cypher_block(Meta.parse("begin\n call(p.x, begin\n ret(1 => :one)\n end)\nend")))
 end

@@ -11,7 +11,7 @@ using Neo4jQuery: _node_to_cypher, _rel_bracket_to_cypher, _match_to_cypher,
     _is_mixed_chain, _flatten_mixed_chain, _mixed_chain_to_cypher,
     _parse_cypher_block, _compile_cypher_block,
     _compile_cypher_comprehension,
-    _compile_cypher_subquery, _compile_cypher_foreach,
+    _compile_cypher_foreach,
     _parse_cypher_foreach_body, _compile_cypher_foreach_body,
     _pair_or_kw_to_set_cypher,
     # Mutation detection

@@ -398,12 +398,16 @@ Return `true` if any clause is a mutation (write) operation.
 Recurses into `call()` subqueries: a write clause nested inside a `CALL {}`
 block (e.g. `call(begin create(x::X) end)`) still makes the whole query a
 write, so access-mode inference must not stop at the top level (F-09).
+
+The subquery block is the **last** `call()` argument. For the scoped form
+`call(p, q, begin … end)` (F-25) the leading arguments are scope Symbols, so
+we look at `args[end]` — never `args[1]` — and guard on `head === :block`.
 """
 function _has_mutations(clauses::Vector{Tuple{Symbol,Vector{Any}}})::Bool
     for (kind, args) in clauses
         kind ∈ _MUTATION_CLAUSES && return true
         if kind === :call_subquery && !isempty(args)
-            sub = args[1]
+            sub = args[end]
             if sub isa Expr && sub.head === :block
                 _has_mutations(_parse_cypher_block(sub)) && return true
             end
@@ -728,165 +732,23 @@ function _compile_cypher_foreach(args::Vector{Any}, params::Vector{Symbol},
     return "FOREACH ($alias_str IN $source_cypher | $body_str)"
 end
 
-# ── CALL subquery compilation ────────────────────────────────────────────────
-
-"""
-    _compile_cypher_subquery(block::Expr, params, seen) -> String
-
-Compile a `begin...end` block inside `call()` into a Cypher subquery body.
-Uses the full block parser recursively — subqueries can contain any valid clauses.
-"""
-function _compile_cypher_subquery(block::Expr, params::Vector{Symbol},
-    seen::Dict{Symbol,Nothing})::String
-    block.head == :block || error("call() expects a begin...end block")
-
-    clauses = _parse_cypher_block(block)
-    cypher_parts = String[]
-    set_parts = String[]
-
-    function _flush_sub_set!()
-        if !isempty(set_parts)
-            push!(cypher_parts, "SET " * join(set_parts, ", "))
-            empty!(set_parts)
-        end
-    end
-
-    for (kind, args) in clauses
-        if kind == :match
-            if length(args) == 1
-                push!(cypher_parts, "MATCH " * _pattern_to_cypher(args[1]))
-            else
-                patterns = [_pattern_to_cypher(a) for a in args]
-                push!(cypher_parts, "MATCH " * join(patterns, ", "))
-            end
-
-        elseif kind == :optional_match
-            if length(args) == 1
-                push!(cypher_parts, "OPTIONAL MATCH " * _pattern_to_cypher(args[1]))
-            else
-                patterns = [_pattern_to_cypher(a) for a in args]
-                push!(cypher_parts, "OPTIONAL MATCH " * join(patterns, ", "))
-            end
-
-        elseif kind == :match_path
-            pathvar = args[1]::Symbol
-            pattern = _pattern_to_cypher(args[2])
-            push!(cypher_parts, "MATCH $pathvar = $pattern")
-
-        elseif kind == :selector_match
-            pathvar = args[1]      # Symbol or nothing
-            selector = args[2]::Symbol
-            k = args[3]            # Integer/Expr or nothing
-            pattern_expr = args[4]
-
-            cypher_pattern = _pattern_to_cypher(pattern_expr)
-
-            selector_str = if selector == :shortest
-                "SHORTEST $k"
-            elseif selector == :all_shortest
-                "ALL SHORTEST"
-            elseif selector == :shortest_groups
-                "SHORTEST $k GROUPS"
-            elseif selector == :any_paths
-                k === nothing ? "ANY" : "ANY $k"
-            else
-                error("Unknown path selector: $selector")
-            end
-
-            if pathvar !== nothing
-                push!(cypher_parts, "MATCH $pathvar = $selector_str $cypher_pattern")
-            else
-                push!(cypher_parts, "MATCH $selector_str $cypher_pattern")
-            end
-
-        elseif kind == :where
-            conds = [_condition_to_cypher(a, params, seen) for a in args]
-            push!(cypher_parts, "WHERE " * join(conds, " AND "))
-
-        elseif kind == :return
-            _flush_sub_set!()
-            if !isempty(args) && args[1] === :distinct
-                items = args[2:end]
-                ret_expr = length(items) == 1 ? items[1] : Expr(:tuple, items...)
-                push!(cypher_parts, "RETURN DISTINCT " * _return_to_cypher(ret_expr))
-            else
-                ret_expr = length(args) == 1 ? args[1] : Expr(:tuple, args...)
-                push!(cypher_parts, "RETURN " * _return_to_cypher(ret_expr))
-            end
-
-        elseif kind == :with
-            _flush_sub_set!()
-            w_expr = length(args) == 1 ? args[1] : Expr(:tuple, args...)
-            push!(cypher_parts, "WITH " * _with_to_cypher(w_expr))
-
-        elseif kind == :unwind
-            push!(cypher_parts, "UNWIND " * _unwind_to_cypher(args[1], params, seen))
-
-        elseif kind == :create
-            if length(args) == 1
-                push!(cypher_parts, "CREATE " * _pattern_to_cypher(args[1]))
-            else
-                patterns = [_pattern_to_cypher(a) for a in args]
-                push!(cypher_parts, "CREATE " * join(patterns, ", "))
-            end
-
-        elseif kind == :merge_clause
-            push!(cypher_parts, "MERGE " * _pattern_to_cypher(args[1]))
-
-        elseif kind == :set
-            push!(set_parts, _set_to_cypher(args[1], params, seen))
-
-        elseif kind == :delete
-            _flush_sub_set!()
-            items = [_expr_to_cypher(a) for a in args]
-            push!(cypher_parts, "DELETE " * join(items, ", "))
-
-        elseif kind == :detach_delete
-            _flush_sub_set!()
-            items = [_expr_to_cypher(a) for a in args]
-            push!(cypher_parts, "DETACH DELETE " * join(items, ", "))
-
-        elseif kind == :orderby
-            _flush_sub_set!()
-            push!(cypher_parts, "ORDER BY " * _orderby_to_cypher(args))
-
-        elseif kind == :skip
-            _flush_sub_set!()
-            push!(cypher_parts, "SKIP " * _limit_skip_to_cypher(args[1], params, seen))
-
-        elseif kind == :limit
-            _flush_sub_set!()
-            push!(cypher_parts, "LIMIT " * _limit_skip_to_cypher(args[1], params, seen))
-
-        elseif kind == :union
-            _flush_sub_set!()
-            push!(cypher_parts, "UNION")
-
-        elseif kind == :union_all
-            _flush_sub_set!()
-            push!(cypher_parts, "UNION ALL")
-
-        else
-            error("Unsupported clause in call() subquery: $kind")
-        end
-    end
-
-    _flush_sub_set!()
-    return join(cypher_parts, " ")
-end
-
 # ── Block compiler ───────────────────────────────────────────────────────────
 
 """
-    _compile_cypher_block(clauses) -> (cypher::String, params::Vector{Symbol})
+    _compile_cypher_block_into!(clauses, param_syms, param_seen) -> (cypher::String, params::Vector{Symbol})
 
-Compile parsed `(clause_kind, args)` pairs into a Cypher string and parameter
-symbol list. Reuses compilation primitives from `compile.jl`.
+Compile parsed `(clause_kind, args)` pairs into a Cypher string, appending every
+`\$parameter` symbol into the **shared** `param_syms`/`param_seen` collections
+passed in. Sharing the collections is what lets a `call()` subquery — compiled
+by recursing into this same function — register each `\$param` exactly once
+across the outer query and its nested `CALL {}` blocks (a param used both inside
+and outside `call()` binds once). Reuses primitives from `compile.jl`.
+
+`_compile_cypher_block` is the top-level entry point that seeds fresh collections.
 """
-function _compile_cypher_block(clauses::Vector{Tuple{Symbol,Vector{Any}}})
+function _compile_cypher_block_into!(clauses::Vector{Tuple{Symbol,Vector{Any}}},
+    param_syms::Vector{Symbol}, param_seen::Dict{Symbol,Nothing})
     cypher_parts = String[]
-    param_syms = Symbol[]
-    param_seen = Dict{Symbol,Nothing}()
     set_parts = String[]
 
     function _flush_set!()
@@ -1036,11 +898,25 @@ function _compile_cypher_block(clauses::Vector{Tuple{Symbol,Vector{Any}}})
             push!(cypher_parts, "UNION ALL")
 
         elseif kind == :call_subquery
+            # call(begin … end)               → CALL { … }
+            # call(p, q, begin … end)         → CALL (p, q) { … }   (Cypher-25, F-25)
+            # The block is always the LAST argument; any leading args are the
+            # (importing) scope variables. Compiled by recursing into this same
+            # function with the SHARED param collections so nested `$params`
+            # register once.
             _flush_set!()
-            # call(begin ... end) — first arg is the block
-            length(args) >= 1 || error("call() expects a begin...end block argument")
-            sub_cypher = _compile_cypher_subquery(args[1], param_syms, param_seen)
-            push!(cypher_parts, "CALL { $sub_cypher }")
+            length(args) >= 1 ||
+                error("call() expects a begin...end block (optionally preceded by scope variables)")
+            block = args[end]
+            block isa Expr && block.head == :block ||
+                error("call(): last argument must be a begin...end block, got $(repr(block))")
+            scope_vars = args[1:end-1]
+            all(v -> v isa Symbol, scope_vars) ||
+                error("call(): scope variables must be plain symbols, got $(repr(scope_vars))")
+            sub_clauses = _parse_cypher_block(block)
+            sub_cypher, _ = _compile_cypher_block_into!(sub_clauses, param_syms, param_seen)
+            scope = isempty(scope_vars) ? "" : "(" * join(string.(scope_vars), ", ") * ") "
+            push!(cypher_parts, "CALL " * scope * "{ " * sub_cypher * " }")
 
         elseif kind == :load_csv
             push!(cypher_parts, "LOAD CSV FROM " *
@@ -1073,6 +949,20 @@ function _compile_cypher_block(clauses::Vector{Tuple{Symbol,Vector{Any}}})
 
     _flush_set!()
     return join(cypher_parts, " "), param_syms
+end
+
+"""
+    _compile_cypher_block(clauses) -> (cypher::String, params::Vector{Symbol})
+
+Top-level entry point: compile parsed `(clause_kind, args)` pairs into a Cypher
+string and its parameter-symbol list. Seeds fresh param collections and delegates
+to `_compile_cypher_block_into!` (which `call()` subqueries recurse into with the
+same collections).
+"""
+function _compile_cypher_block(clauses::Vector{Tuple{Symbol,Vector{Any}}})
+    param_syms = Symbol[]
+    param_seen = Dict{Symbol,Nothing}()
+    return _compile_cypher_block_into!(clauses, param_syms, param_seen)
 end
 
 # ── Comprehension compiler ───────────────────────────────────────────────────
