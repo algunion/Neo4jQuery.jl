@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 — 2026-07-10
 
 Fixes driven by the Phase G falsification experiments (adversarial guard corpus,
 wire fuzz, live retry volume, LLM A/B eval, local-container matrix).
