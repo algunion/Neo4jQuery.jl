@@ -151,7 +151,10 @@ function stream(tx::Transaction, statement::AbstractString;
     _assert_open(tx)
     body = _build_query_body(statement, parameters; include_counters)
     url = "$(_tx_url(tx.conn))/$(tx.id)"
-    return _start_stream(url, body, tx.conn.auth, tx.cluster_affinity; tx_context=true)
+    # Bound the streaming request by the connection's timeouts too — a stalled
+    # server must fire the readtimeout before the Header, never hang stream(tx, …).
+    return _start_stream(url, body, tx.conn.auth, tx.cluster_affinity; tx_context=true,
+        readtimeout=tx.conn.readtimeout, connect_timeout=tx.conn.connect_timeout)
 end
 
 function stream(tx::Transaction, q::CypherQuery;

@@ -80,8 +80,12 @@ function begin_transaction(conn::Neo4jConnection;
     end
 
     # tx_context stays false: a begin references no existing transaction, so its
-    # errors can never mean "that transaction is gone".
-    parsed, resp = _neo4j_request(_tx_url(conn), :POST, body; auth=conn.auth)
+    # errors can never mean "that transaction is gone". The connection's timeouts
+    # bound this request too — otherwise `begin_transaction` (and the whole
+    # `transaction(conn) do … end` pattern) would wait forever on a stalled server,
+    # contradicting the "every request is bounded" guarantee.
+    parsed, resp = _neo4j_request(_tx_url(conn), :POST, body; auth=conn.auth,
+        readtimeout=conn.readtimeout, connect_timeout=conn.connect_timeout)
 
     tx_meta = parsed["transaction"]
     tx_id = string(tx_meta["id"])
@@ -110,7 +114,8 @@ function query(tx::Transaction, statement::AbstractString;
     parsed, resp = _neo4j_request(url, :POST, body;
         auth=tx.conn.auth,
         cluster_affinity=tx.cluster_affinity,
-        tx_context=true)
+        tx_context=true,
+        readtimeout=tx.conn.readtimeout, connect_timeout=tx.conn.connect_timeout)
 
     # Update transaction metadata
     if haskey(parsed, "transaction")
@@ -161,7 +166,8 @@ function commit!(tx::Transaction;
     parsed, _ = _neo4j_request(url, :POST, body;
         auth=tx.conn.auth,
         cluster_affinity=tx.cluster_affinity,
-        tx_context=true)
+        tx_context=true,
+        readtimeout=tx.conn.readtimeout, connect_timeout=tx.conn.connect_timeout)
     tx.committed = true
     return String[string(b) for b in get(parsed, "bookmarks", [])]
 end
@@ -176,7 +182,8 @@ Roll back an open transaction, discarding all changes.
 function rollback!(tx::Transaction)
     _assert_open(tx)
     url = "$(_tx_url(tx.conn))/$(tx.id)"
-    _neo4j_delete(url; auth=tx.conn.auth, cluster_affinity=tx.cluster_affinity)
+    _neo4j_delete(url; auth=tx.conn.auth, cluster_affinity=tx.cluster_affinity,
+        readtimeout=tx.conn.readtimeout, connect_timeout=tx.conn.connect_timeout)
     tx.rolled_back = true
     return nothing
 end

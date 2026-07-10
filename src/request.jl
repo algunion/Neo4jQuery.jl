@@ -217,10 +217,23 @@ function _neo4j_request(url::AbstractString, method::Symbol, body;
     return (parsed, resp)
 end
 
-"""Issue a DELETE request (used for rollback)."""
+"""
+Issue a DELETE request (used for rollback).
+
+`readtimeout::Int=0` / `connect_timeout::Int=-1` bound the request exactly as
+[`_request_core`](@ref) bounds the POST paths (F-10): a fired `readtimeout`
+surfaces as a typed [`Neo4jHTTPError`](@ref), never a bare
+`HTTP.Exceptions.TimeoutError`, and `connect_timeout < 0` is the "unset" sentinel
+(not forwarded → HTTP.jl keeps its 30s connect default). `rollback!` passes the
+connection's configured values so an explicit-transaction rollback is bounded too
+— otherwise a stalled server would hang it, the last unbounded hole in the "every
+request is bounded" guarantee.
+"""
 function _neo4j_delete(url::AbstractString;
     auth::AbstractAuth,
-    cluster_affinity::Union{String,Nothing}=nothing)
+    cluster_affinity::Union{String,Nothing}=nothing,
+    readtimeout::Int=0,
+    connect_timeout::Int=-1)
     headers = Pair{String,String}[
         "Accept"=>_TYPED_JSON_MEDIA,
         auth_header(auth),
@@ -228,7 +241,19 @@ function _neo4j_delete(url::AbstractString;
     if cluster_affinity !== nothing
         push!(headers, "neo4j-cluster-affinity" => cluster_affinity)
     end
-    resp = HTTP.request("DELETE", url, headers; status_exception=false)
+    resp = try
+        if connect_timeout < 0
+            HTTP.request("DELETE", url, headers; status_exception=false, readtimeout)
+        else
+            HTTP.request("DELETE", url, headers;
+                status_exception=false, readtimeout, connect_timeout)
+        end
+    catch e
+        # Same F-10 remap as _request_core: a read timeout is typed + actionable.
+        _is_timeout(e) && throw(Neo4jHTTPError(0,
+            "request timed out after $(readtimeout)s (readtimeout): DELETE $(url)"))
+        rethrow()
+    end
     if resp.status == 401
         throw(AuthenticationError("Neo.ClientError.Security.Unauthorized", "HTTP 401"))
     end

@@ -324,6 +324,67 @@ end
     end
 end
 
+# The EXPLICIT-transaction path (begin_transaction / query(tx) / commit! / rollback! /
+# stream(tx)) reached the request layer with NO timeout — default readtimeout=0 = wait
+# forever — so `transaction(conn) do … end` on a stalled server hung indefinitely, making
+# the "every request is bounded" claim (connection.jl / connections.md) FALSE on exactly the
+# natural agent pattern. Now every tx call plumbs the connection's readtimeout/connect_timeout.
+# RED pre-fix: sleep_s=3 > readtimeout=1, but with no timeout plumbed each call waits the full
+# 3s stall then RETURNS (no throw) — failing BOTH @test_throws Neo4jHTTPError AND the <2.5s
+# wall-clock bound. Post-fix the readtimeout=1 fires a typed Neo4jHTTPError at ~1s. Offline:
+# the stalled scripted_server never touches a DB (Transactions built directly against it).
+@testset "transaction path honors connection timeouts (F-10)" begin
+    mk(base) = Neo4jConnection(base.base_url, base.database, base.auth, 1, 10)  # readtimeout=1
+
+    @testset "begin_transaction" begin
+        HttpHarness.scripted_server(202,
+            "{\"transaction\":{\"id\":\"tx-1\",\"expires\":\"2026-07-10T00:00:00Z\"}}"; sleep_s=3.0) do base
+            conn = mk(base)
+            t0 = time()
+            @test_throws Neo4jHTTPError begin_transaction(conn)
+            @test time() - t0 < 2.5
+        end
+    end
+
+    @testset "query(tx, …)" begin
+        HttpHarness.scripted_server(202, "{\"data\":{\"fields\":[],\"values\":[]}}"; sleep_s=3.0) do base
+            tx = Transaction(mk(base), "tx-1", "2026-07-10T00:00:00Z", nothing, false, false)
+            t0 = time()
+            @test_throws Neo4jHTTPError query(tx, "RETURN 1")
+            @test time() - t0 < 2.5
+        end
+    end
+
+    @testset "commit!(tx)" begin
+        HttpHarness.scripted_server(202, "{\"bookmarks\":[]}"; sleep_s=3.0) do base
+            tx = Transaction(mk(base), "tx-1", "2026-07-10T00:00:00Z", nothing, false, false)
+            t0 = time()
+            @test_throws Neo4jHTTPError commit!(tx)
+            @test time() - t0 < 2.5
+        end
+    end
+
+    @testset "rollback!(tx) — _neo4j_delete honors the timeout too" begin
+        HttpHarness.scripted_server(202, "{}"; sleep_s=3.0) do base
+            tx = Transaction(mk(base), "tx-1", "2026-07-10T00:00:00Z", nothing, false, false)
+            t0 = time()
+            @test_throws Neo4jHTTPError rollback!(tx)
+            @test time() - t0 < 2.5
+        end
+    end
+
+    @testset "stream(tx, …) fires before the Header" begin
+        HttpHarness.scripted_server(202,
+            "{\"\$event\":\"Header\",\"_body\":{\"fields\":[]}}\n";
+            ctype=HttpHarness.TYPED_JSONL_MEDIA, sleep_s=3.0) do base
+            tx = Transaction(mk(base), "tx-1", "2026-07-10T00:00:00Z", nothing, false, false)
+            t0 = time()
+            @test_throws Neo4jHTTPError stream(tx, "RETURN 1")
+            @test time() - t0 < 2.5
+        end
+    end
+end
+
 @testset "timed-out READ is NOT retried (F-10 × read-retry gate)" begin
     # The read-retry gate (retry a transient transport failure once for a
     # provably side-effect-free :read) must NOT fire on a timeout: HTTP.jl treats
