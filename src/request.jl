@@ -4,6 +4,96 @@ const _TYPED_JSON_MEDIA = "application/vnd.neo4j.query.v1.1"
 const _TYPED_JSONL_MEDIA = "application/vnd.neo4j.query.v1.1+jsonl"
 
 """
+    _request_core(url, method, body; auth, accept, extra_headers, cluster_affinity,
+                  retryable, response_stream, readtimeout, connect_timeout) -> HTTP.Response
+
+The single HTTP chokepoint shared by every Neo4j Query API call: builds headers,
+encodes the request body, issues the request, and maps HTTP 401 to
+[`AuthenticationError`](@ref). Both callers layer their own body parsing on the
+returned `HTTP.Response`:
+- [`_neo4j_request`](@ref) adds `_parse_body_str` + `_throw_query_error` + status
+  checks (Typed JSON).
+- `_start_stream` reads the JSONL body line-by-line (`accept=_TYPED_JSONL_MEDIA`).
+
+On any non-401 status the raw response is returned untouched — its body buffer is
+NOT consumed here, so the caller owns it (streaming wraps it in an `IOBuffer`,
+the query path calls `String(resp.body)` once).
+
+- `accept` selects the response media type — the only wire difference between the
+  two callers.
+- Body: `""` for `nothing`/empty, else `JSON.json(body)`. No `omit_null`: the Typed
+  JSON Null envelope is `{"\$type":"Null","_value":null}` and the server rejects an
+  envelope missing `_value` (Neo.ClientError.Request.Invalid) — F-01/F-26.
+- `retryable` → HTTP.jl `retry_non_idempotent`: only a server-enforced `:read`
+  query may retry a transient transport failure; writes must not double-apply.
+  `status_exception=false` keeps 4xx/5xx as ordinary responses (the body-riding
+  `errors[]` contract needs them non-throwing).
+- `response_stream`/`readtimeout`/`connect_timeout` are forwarded for Tasks 7–8.
+  Verified against HTTP.jl 1.10.19: `readtimeout=0` and `response_stream=nothing`
+  ARE HTTP.jl's own defaults, so forwarding them is behavior-neutral;
+  `connect_timeout=0` is NOT (HTTP.jl's default is 30s and 0 *disables* the connect
+  timeout — Connections.jl `connect_timeout > 0 ? try_with_timeout(...) : …`), so
+  0 is treated as "unset" and simply not forwarded, preserving the pre-refactor 30s.
+"""
+function _request_core(url::AbstractString, method::Symbol, body;
+    auth::AbstractAuth,
+    accept::String,
+    extra_headers::Vector{Pair{String,String}}=Pair{String,String}[],
+    cluster_affinity::Union{String,Nothing}=nothing,
+    retryable::Bool=false,
+    response_stream::Union{IO,Nothing}=nothing,
+    readtimeout::Int=0,
+    connect_timeout::Int=0)::HTTP.Response
+    headers = Pair{String,String}[
+        "Content-Type"=>_TYPED_JSON_MEDIA,
+        "Accept"=>accept,
+        auth_header(auth),
+    ]
+    append!(headers, extra_headers)
+    if cluster_affinity !== nothing
+        push!(headers, "neo4j-cluster-affinity" => cluster_affinity)
+    end
+
+    body_str = if body === nothing || isempty(body)
+        ""
+    else
+        # NOTE: no omit_null — the Typed JSON Null envelope is {"$type":"Null","_value":null}
+        # and the server rejects an envelope missing `_value` (Neo.ClientError.Request.Invalid).
+        JSON.json(body)
+    end
+
+    # connect_timeout=0 is the "unset" sentinel (see docstring): forward it only when
+    # explicitly set, so the default keeps HTTP.jl's 30s connect timeout rather than
+    # disabling it. readtimeout=0 / response_stream=nothing already ARE HTTP.jl's
+    # defaults, so those forward neutrally.
+    m = string(method)
+    resp = if connect_timeout == 0
+        HTTP.request(m, url, headers, body_str;
+            status_exception=false, retry_non_idempotent=retryable,
+            readtimeout, response_stream)
+    else
+        HTTP.request(m, url, headers, body_str;
+            status_exception=false, retry_non_idempotent=retryable,
+            readtimeout, response_stream, connect_timeout)
+    end
+
+    # Authentication errors — surface the real code/message from the 401 body's
+    # errors[] when present (consuming the body here is safe: we throw immediately).
+    if resp.status == 401
+        resp_body = _parse_body(resp)
+        if resp_body !== nothing
+            errs = _extract_errors(resp_body)
+            if !isempty(errs)
+                throw(AuthenticationError(errs[1]["code"], errs[1]["message"]))
+            end
+        end
+        throw(AuthenticationError("Neo.ClientError.Security.Unauthorized", "HTTP 401"))
+    end
+
+    return resp
+end
+
+"""
     _neo4j_request(url, method, body; auth, extra_headers, cluster_affinity, retryable, tx_context) -> (JSON.Object, HTTP.Response)
 
 Central HTTP helper for all Neo4j Query API calls.
@@ -31,38 +121,8 @@ function _neo4j_request(url::AbstractString, method::Symbol, body;
     cluster_affinity::Union{String,Nothing}=nothing,
     retryable::Bool=false,
     tx_context::Bool=false)
-    headers = Pair{String,String}[
-        "Content-Type"=>_TYPED_JSON_MEDIA,
-        "Accept"=>_TYPED_JSON_MEDIA,
-        auth_header(auth),
-    ]
-    append!(headers, extra_headers)
-    if cluster_affinity !== nothing
-        push!(headers, "neo4j-cluster-affinity" => cluster_affinity)
-    end
-
-    body_str = if body === nothing || isempty(body)
-        ""
-    else
-        # NOTE: no omit_null — the Typed JSON Null envelope is {"$type":"Null","_value":null}
-        # and the server rejects an envelope missing `_value` (Neo.ClientError.Request.Invalid).
-        JSON.json(body)
-    end
-
-    resp = HTTP.request(string(method), url, headers, body_str;
-        status_exception=false, retry_non_idempotent=retryable)
-
-    # Authentication errors
-    if resp.status == 401
-        resp_body = _parse_body(resp)
-        if resp_body !== nothing
-            errs = _extract_errors(resp_body)
-            if !isempty(errs)
-                throw(AuthenticationError(errs[1]["code"], errs[1]["message"]))
-            end
-        end
-        throw(AuthenticationError("Neo.ClientError.Security.Unauthorized", "HTTP 401"))
-    end
+    resp = _request_core(url, method, body;
+        auth, accept=_TYPED_JSON_MEDIA, extra_headers, cluster_affinity, retryable)
 
     # Read the body exactly once: `String(resp.body)` steals the buffer, so we
     # keep `body_str` for both JSON parsing and the fail-loud diagnostic snippet.

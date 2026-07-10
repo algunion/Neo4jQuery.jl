@@ -133,24 +133,11 @@ end
 
 function _start_stream(url, body, auth, cluster_affinity;
     retryable::Bool=false, tx_context::Bool=false)
-    headers = Pair{String,String}[
-        "Content-Type"=>_TYPED_JSON_MEDIA,
-        "Accept"=>_TYPED_JSONL_MEDIA,
-        auth_header(auth),
-    ]
-    if cluster_affinity !== nothing
-        push!(headers, "neo4j-cluster-affinity" => cluster_affinity)
-    end
-
-    # NOTE: no omit_null — a Null parameter must serialize as {"$type":"Null","_value":null};
-    # the server rejects an envelope missing `_value` (Neo.ClientError.Request.Invalid).
-    body_str = JSON.json(body)
-    resp = HTTP.post(url, headers, body_str;
-        status_exception=false, retry_non_idempotent=retryable)
-
-    if resp.status == 401
-        throw(AuthenticationError("Neo.ClientError.Security.Unauthorized", "HTTP 401"))
-    end
+    # Shares the single HTTP core with the query path (headers, no-omit_null body
+    # encoding, retry gate, 401 handling); the only wire difference is the JSONL
+    # Accept media type.
+    resp = _request_core(url, :POST, body;
+        auth, accept=_TYPED_JSONL_MEDIA, cluster_affinity, retryable)
 
     # For streaming we read line-by-line from the body
     io = IOBuffer(resp.body)

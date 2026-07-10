@@ -108,21 +108,16 @@ function _mat_date(v)
 end
 
 function _mat_time(v)
-    # Zoned time, e.g. "12:50:35.556+01:00"
+    # Zoned time, e.g. "12:50:35.556+01:00" or "12:50:35Z".
     s = string(v)
-    # Split time from offset: find last +/- that starts the timezone offset
-    m = match(r"^(.+?)([+-]\d{2}:\d{2})$", s)
-    if m !== nothing
-        time_part = m.captures[1]
-        tz = TimeZones.FixedTimeZone(m.captures[2])
-    elseif endswith(s, "Z")
-        time_part = s[1:end-1]
-        tz = TimeZones.FixedTimeZone("UTC")
-    else
-        error("Cannot parse zoned time: $s")
-    end
-    t = Dates.Time(time_part)
-    return (time=t, timezone=tz)
+    # F-26: delegate offset parsing to the shared, tested `_parse_offset` (handles
+    # ±HH:MM and Z, errors otherwise) instead of duplicating the offset→FixedTimeZone
+    # decode here.
+    tz = _parse_offset(s)
+    # The offset is always the trailing 6-char ±HH:MM (or a single 'Z'); strip it to
+    # recover the bare time component.
+    time_part = endswith(s, "Z") ? chop(s) : chop(s; tail=6)
+    return (time=Dates.Time(time_part), timezone=tz)
 end
 
 function _mat_localtime(v)
